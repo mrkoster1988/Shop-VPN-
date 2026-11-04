@@ -62,6 +62,13 @@ def init_db():
           expires INTEGER NOT NULL DEFAULT 0, secret TEXT, created INTEGER NOT NULL,
           attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL DEFAULT 0, error TEXT,
           UNIQUE(subscription_id,request_id));
+        CREATE TABLE IF NOT EXISTS device_rotations (
+          id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES devices(id),
+          request_id TEXT NOT NULL, old_credential_id TEXT NOT NULL, new_credential_id TEXT NOT NULL,
+          state TEXT NOT NULL DEFAULT 'revoking', created INTEGER NOT NULL,
+          attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL DEFAULT 0, error TEXT,
+          UNIQUE(device_id,request_id));
+        CREATE INDEX IF NOT EXISTS rotations_queue ON device_rotations(state,next_attempt);
         CREATE INDEX IF NOT EXISTS devices_subscription ON devices(subscription_id,state);
         CREATE TABLE IF NOT EXISTS audit (
           id INTEGER PRIMARY KEY, created INTEGER NOT NULL, action TEXT NOT NULL, order_id TEXT);
@@ -79,6 +86,13 @@ def init_db():
         if 'server_id' not in sub_columns:
             conn.execute('ALTER TABLE subscriptions ADD COLUMN server_id TEXT REFERENCES servers(id)')
         conn.execute('CREATE INDEX IF NOT EXISTS subscriptions_server ON subscriptions(server_id,state,expires)')
+        device_columns = {row['name'] for row in conn.execute('PRAGMA table_info(devices)')}
+        if 'credential_id' not in device_columns:
+            conn.execute('ALTER TABLE devices ADD COLUMN credential_id TEXT')
+        for row in conn.execute('SELECT d.id,d.secret,s.secret AS parent_secret FROM devices d JOIN subscriptions s ON s.id=d.subscription_id WHERE d.credential_id IS NULL').fetchall():
+            if row['secret'] or row['parent_secret']:
+                c.decrypt(row['secret'] or row['parent_secret'])  # Validate the existing key before encrypting migration data.
+            conn.execute('UPDATE devices SET credential_id=? WHERE id=?',(c.encrypt(row['id']),row['id']))
         # Defaults preserve the four extra profiles promised by previous versions.
         for table in ('plans','orders','subscriptions'):
             existing = {row['name'] for row in conn.execute('PRAGMA table_info('+table+')')}

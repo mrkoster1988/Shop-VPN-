@@ -358,16 +358,44 @@ async def device_create(sid: str,data: DeviceCreate,user=Depends(current_user)):
             if conn.execute("SELECT count(*) FROM devices WHERE subscription_id=? AND state!='revoked'",(sid,)).fetchone()[0]>=sub['device_limit']:
                 raise HTTPException(409,'Достигнут лимит дополнительных профилей')
             did=str(uuid.uuid4())
-            conn.execute('INSERT INTO devices(id,subscription_id,request_id,name,created) VALUES (?,?,?,?,?)',(did,sid,str(data.request_id),data.name,int(time.time())))
+            conn.execute('INSERT INTO devices(id,subscription_id,request_id,name,created,credential_id) VALUES (?,?,?,?,?,?)',(did,sid,str(data.request_id),data.name,int(time.time()),c.encrypt(did)))
             row=dict(conn.execute('SELECT * FROM devices WHERE id=?',(did,)).fetchone())
         return JSONResponse(public_device(row,sub),status_code=201)
+
+class RotationCreate(BaseModel):
+    model_config = {'extra':'forbid'}
+    request_id: UUID
+
+@app.post('/api/devices/{did}/rotate')
+async def rotate_device(did: str,data: RotationCreate,user=Depends(current_user)):
+    async with service.lock:
+        with db() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            raw=conn.execute('SELECT d.* FROM devices d JOIN subscriptions s ON s.id=d.subscription_id WHERE d.id=? AND s.user_id=?',(did,user['id'])).fetchone()
+            if not raw:raise HTTPException(404,'Устройство не найдено')
+            device=dict(raw)
+            sub=dict(conn.execute('SELECT * FROM subscriptions WHERE id=?',(device['subscription_id'],)).fetchone())
+            previous=conn.execute('SELECT id,state FROM device_rotations WHERE device_id=? AND request_id=?',(did,str(data.request_id))).fetchone()
+            if previous:return {'rotation':dict(previous),'device':public_device(device,sub)}
+            if device['state']!='active' or sub['state']!='active' or min(device['expires'],sub['expires'])<=time.time():
+                raise HTTPException(409,'Перевыпуск доступен для действующего профиля')
+            active=conn.execute("SELECT 1 FROM device_rotations WHERE device_id=? AND state NOT IN ('completed','canceled')",(did,)).fetchone()
+            if active:raise HTTPException(409,'Перевыпуск уже выполняется')
+            job=str(uuid.uuid4());identity=str(uuid.uuid4())
+            conn.execute('INSERT INTO device_rotations(id,device_id,request_id,old_credential_id,new_credential_id,created) VALUES (?,?,?,?,?,?)',
+                (job,did,str(data.request_id),device['credential_id'] or c.encrypt(did),c.encrypt(identity),int(time.time())))
+            conn.execute("UPDATE devices SET state='rotating',secret=NULL,error=NULL WHERE id=?",(did,))
+            device.update(state='rotating',secret=None,error=None)
+        return JSONResponse({'rotation':{'id':job,'state':'revoking'},'device':public_device(device,sub)},status_code=201)
 
 @app.delete('/api/devices/{did}')
 async def device_revoke(did: str,user=Depends(current_user)):
     async with service.lock:
         row=one('SELECT d.* FROM devices d JOIN subscriptions s ON s.id=d.subscription_id WHERE d.id=? AND s.user_id=?',(did,user['id']))
         if not row: raise HTTPException(404,'Устройство не найдено')
-        execute("UPDATE devices SET state='revoking',secret=NULL,next_attempt=0,error=NULL WHERE id=? AND state NOT IN ('revoking','revoked')",(did,))
+        with db() as conn:
+            conn.execute("UPDATE devices SET state='revoking',secret=NULL,next_attempt=0,error=NULL WHERE id=? AND state NOT IN ('revoking','revoked')",(did,))
+            conn.execute("UPDATE device_rotations SET state='canceling',next_attempt=0 WHERE device_id=? AND state NOT IN ('completed','canceled')",(did,))
     return {'ok':True}
 
 @app.get('/api/devices/{did}/config')

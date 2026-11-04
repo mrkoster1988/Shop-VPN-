@@ -6,7 +6,7 @@ const statusLabel = {pending:'Ожидает оплаты',checkout:'Оплат�
 const money=(amount,currency)=>amount.toLocaleString('ru-RU')+' '+(currency==='XTR'?'★':'₽');
 let catalog, me, protocol = 'xui', selectedPlan, register = false, toastTimer;
 let sessionEpoch = 0, meRequest = 0, connectionRequest = 0, connection = null, connectionTimer;
-let deviceSubscription=null, deviceRequest=0, deviceIntent=null, deviceCache=[];
+let deviceSubscription=null, deviceRequest=0, deviceIntent=null, deviceCache=[], rotationIntents=new Map();
 async function api(path, data, method) {
   const epoch = sessionEpoch;
   const response = await fetch(basePath + path, {method:method || (data ? 'POST':'GET'), credentials:'same-origin',
@@ -225,7 +225,7 @@ $('subscriptions').onclick = event => {
   if (button) openConnection(button.dataset.config).catch(e=>toast(e.message));
 };
 function clearDevices() {
-  deviceRequest++; deviceSubscription=null; deviceIntent=null; deviceCache=[];
+  deviceRequest++; deviceSubscription=null; deviceIntent=null; deviceCache=[]; rotationIntents.clear();
   $('device-form').reset(); $('devices-list').replaceChildren(); $('devices-status').textContent='';
 }
 $('devices-dialog').addEventListener('close',clearDevices);
@@ -240,8 +240,8 @@ async function refreshDevices() {
   deviceCache=result.devices;
   const parent=me?.subscriptions.find(s=>s.id===sid);
   $('device-form').hidden=!parent || parent.state!=='active' || parent.expires*1000<=Date.now() || result.devices.length>=result.max_extra;
-  const labels={pending:'Готовим профиль',active:'Профиль выдан',revoking:'Отключаем доступ',revoked:'Доступ отозван'};
-  $('devices-list').innerHTML=result.devices.map(d=>`<article class="subscription"><h3>${esc(d.name)}</h3><p>${esc(labels[d.state] || d.state)}${d.retrying?' · повторим после ошибки':''}${d.state==='active'&&!d.ready?' · срок доступа истёк':''}</p><div class="actions">${d.ready?`<button class="small" data-device-config="${esc(d.id)}">Подключить ↗</button>`:''}${['pending','active'].includes(d.state)?`<button class="small secondary" data-device-revoke="${esc(d.id)}">Отозвать доступ</button>`:''}</div></article>`).join('') || '<p>Дополнительных профилей пока нет.</p>';
+  const labels={pending:'Готовим профиль',active:'Профиль выдан',revoking:'Отключаем доступ',revoked:'Доступ отозван',rotating:'Меняем ключ'};
+  $('devices-list').innerHTML=result.devices.map(d=>`<article class="subscription"><h3>${esc(d.name)}</h3><p>${esc(labels[d.state] || d.state)}${d.retrying?' · повторим после ошибки':''}${d.state==='active'&&!d.ready?' · срок доступа истёк':''}</p><div class="actions">${d.ready?`<button class="small" data-device-config="${esc(d.id)}">Подключить ↗</button><button class="small secondary" data-device-rotate="${esc(d.id)}">Перевыпустить ключ</button>`:''}${['pending','active','rotating'].includes(d.state)?`<button class="small secondary" data-device-revoke="${esc(d.id)}">Отозвать доступ</button>`:''}</div></article>`).join('') || '<p>Дополнительных профилей пока нет.</p>';
   $('devices-status').textContent='Дополнительные профили: '+result.devices.length+' из '+result.max_extra+'. Основной профиль — отдельно.'+(result.devices.length>result.max_extra?' Уже выданные профили работают; новые недоступны до освобождения лимита.':'');
   if (connection?.deviceId) {
     const current=result.devices.find(d=>d.id===connection.deviceId);
@@ -265,6 +265,17 @@ $('device-form').onsubmit=async event=>{
 $('devices-list').onclick=async event=>{
   const connect=event.target.closest('[data-device-config]');
   if(connect){const device=deviceCache.find(d=>d.id===connect.dataset.deviceConfig);if(device?.ready)await openConnection(deviceSubscription,device).catch(e=>toast(e.message));return;}
+  const rotate=event.target.closest('[data-device-rotate]');
+  if(rotate){
+    if(!window.confirm('Старый ключ будет отключён. Новые настройки придётся импортировать заново. При сбое потребуется дождаться повтора. Перевыпустить?'))return;
+    const did=rotate.dataset.deviceRotate;rotate.disabled=true;
+    try {
+      if(!rotationIntents.has(did))rotationIntents.set(did,crypto.randomUUID());
+      await api('/api/devices/'+encodeURIComponent(did)+'/rotate',{request_id:rotationIntents.get(did)});
+      rotationIntents.delete(did);await refreshDevices();
+    } catch(e){toast(e.message);rotate.disabled=false;}
+    return;
+  }
   const revoke=event.target.closest('[data-device-revoke]');if(!revoke)return;
   if(!window.confirm('Отозвать доступ этого устройства? Его текущий ключ будет отключён.'))return;
   revoke.disabled=true;

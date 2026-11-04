@@ -221,3 +221,25 @@ test('device manager hides creation at quota and keeps grandfathered profiles vi
   assert.ok(p.element('devices-list').innerHTML.includes('data-device-config="old-device"'));
   assert.ok(p.element('devices-status').textContent.includes('Уже выданные профили работают'));
 });
+
+test('rotation confirmation can cancel without sending a request',async()=>{
+  const p=await customerPage();await p.run("openDevices('sub-a')");p.run('window.confirm=()=>false');
+  const event={target:{closest(selector){return selector==='[data-device-rotate]'?{dataset:{deviceRotate:'device-a'}}:null;}}};
+  await p.element('devices-list').onclick(event);
+  assert.ok(!p.calls.some(c=>c.url.endsWith('/rotate')));
+});
+
+test('rotation retry keeps its request ID after an ambiguous response',async()=>{
+  const p=await customerPage();await p.run("openDevices('sub-a')");p.respond('/shop/api/devices/device-a/rotate',{detail:'Retry'},503);
+  const event={target:{closest(selector){return selector==='[data-device-rotate]'?{dataset:{deviceRotate:'device-a'}}:null;}}};
+  await p.element('devices-list').onclick(event);await p.element('devices-list').onclick(event);
+  const requests=p.calls.filter(c=>c.url.endsWith('/rotate'));
+  assert.equal(requests.length,2);assert.deepEqual(JSON.parse(requests[0].opts.body),JSON.parse(requests[1].opts.body));
+});
+
+test('rotating profile hides connection and rotation controls but can be revoked',async()=>{
+  const p=await customerPage();p.state.devices=[{id:'device-a',name:'Phone',protocol:'xui',state:'rotating',ready:false,expires:p.state.customer.subscriptions[0].expires}];
+  await p.run("openDevices('sub-a')");const markup=p.element('devices-list').innerHTML;
+  assert.ok(markup.includes('Меняем ключ')&&markup.includes('data-device-revoke'));
+  assert.ok(!markup.includes('data-device-config')&&!markup.includes('data-device-rotate'));
+});

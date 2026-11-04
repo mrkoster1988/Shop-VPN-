@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # A fixed release prevents downloading a moving main branch during installation.
-VERSION=v0.014
+VERSION=v0.015
 main() {
   command -v curl >/dev/null || { echo 'Нужен curl.' >&2; exit 1; }
   command -v python3 >/dev/null || { echo 'Нужен Python 3: apt-get update && apt-get install -y python3' >&2; exit 1; }
