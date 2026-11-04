@@ -4,6 +4,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let token = '', authEpoch = 0, usersPage = 1, usersQuery = '', usersRequest = 0;
 let selectedUser = null, profilePage = 1, profileRequest = 0;
+let ordersPage = 1, ordersRequest = 0, ordersFilters = {q:'', status:'', method:'', protocol:''};
 async function api(path, {method = 'GET', data} = {}) {
   const epoch = authEpoch;
   const response = await fetch(basePath + '/api/admin/' + path, {
@@ -33,8 +34,7 @@ async function refresh({plans = true} = {}) {
   const [data, catalog] = await Promise.all([api('overview'), plans ? api('plans') : Promise.resolve(null)]);
   $('stats').innerHTML = `<div>Пользователи<strong>${data.users}</strong></div><div>Подписки<strong>${data.active}</strong></div><div>Подтверждено<strong>${data.revenue} ₽ / ${data.stars} ★</strong></div>`;
   if (catalog) $('plan-editors').innerHTML = catalog.plans.map(planForm).join('');
-  $('list').innerHTML = data.orders.map(o => `<article class="admin-order"><b>${esc(o.email || 'Telegram ' + o.telegram_id)} · ${esc(o.protocol)} · ${o.amount} ${o.currency === 'XTR' ? '★' : '₽'}</b><p>Заказ: ${esc(o.id)}</p><p>Статус: ${esc(o.status)} / ${new Date(o.created * 1000).toLocaleString('ru-RU')}</p>${o.error ? `<p>Ошибка выдачи: ${esc(o.error)} / попыток: ${o.attempts}</p>` : ''}<div class="actions">${o.status === 'pending' && o.method === 'manual' && !o.payment_id ? `<button data-action="confirm" data-id="${o.id}">Подтвердить поступление оплаты</button><button class="secondary" data-action="reject" data-id="${o.id}">Отменить заказ</button>` : ''}${o.status === 'paid' ? `<button data-action="retry" data-id="${o.id}">Повторить выдачу</button>` : ''}</div></article>`).join('');
-  await refreshUsers();
+  await Promise.all([refreshOrders(), refreshUsers()]);
 }
 $('admin-login').onsubmit = async event => {
   event.preventDefault();
@@ -47,6 +47,9 @@ $('admin-login').onsubmit = async event => {
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => {
   authEpoch++; token = ''; usersRequest++; usersPage = 1; usersQuery = '';
+  ordersRequest++; ordersPage = 1; ordersFilters = {q:'', status:'', method:'', protocol:''};
+  $('orders-search').reset(); $('orders-state').textContent = ''; $('orders-page').textContent = '';
+  $('orders-prev').disabled = true; $('orders-next').disabled = true;
   $('users-query').value = ''; $('users-list').replaceChildren(); $('users-page').textContent = ''; $('users-state').textContent = '';
   if ($('user-dialog').open) $('user-dialog').close();
   clearUser();
@@ -70,10 +73,12 @@ $('plan-editors').onsubmit = async event => {
   } catch (error) { $('error').textContent = error.message; button.disabled = false; }
 };
 $('list').onclick = async event => {
+  const buyer = event.target.closest('[data-order-user]');
+  if (buyer) { openUser(buyer.dataset.orderUser); return; }
   const button = event.target.closest('[data-action]'); if (!button) return;
   if (button.dataset.action === 'confirm' && !confirm('Вы проверили фактическое поступление денег по этому заказу?')) return;
   button.disabled = true;
-  try { await api('orders/' + button.dataset.id + '/' + button.dataset.action, {method: 'POST'}); await refresh({plans: false}); }
+  try { await api('orders/' + encodeURIComponent(button.dataset.id) + '/' + button.dataset.action, {method: 'POST'}); await refresh({plans: false}); }
   catch (error) { $('error').textContent = error.message; button.disabled = false; }
 };
 
@@ -163,11 +168,45 @@ async function loadUser(page) {
 }
 $('users-list').onclick = event => {
   const button = event.target.closest('[data-user]'); if (!button) return;
-  clearUser(); selectedUser = Number(button.dataset.user);
-  $('user-dialog').showModal(); loadUser(1);
+  openUser(button.dataset.user);
 };
 $('user-close').onclick = () => $('user-dialog').close();
 $('user-dialog').addEventListener('close', clearUser);
 $('user-orders-prev').onclick = () => loadUser(Math.max(1, profilePage - 1));
 $('user-orders-next').onclick = () => loadUser(profilePage + 1);
 $('user-refresh').onclick = () => loadUser(profilePage);
+
+function openUser(id) {
+  clearUser(); selectedUser = Number(id);
+  $('user-dialog').showModal(); loadUser(1);
+}
+async function refreshOrders() {
+  const request = ++ordersRequest;
+  $('orders-prev').disabled = true; $('orders-next').disabled = true;
+  $('orders-state').textContent = 'Загрузка заказов…';
+  try {
+    const params = new URLSearchParams({...ordersFilters, page:String(ordersPage), page_size:'25'});
+    const data = await api('orders?' + params);
+    if (request !== ordersRequest) return;
+    const pages = Math.max(1, Math.ceil(data.total / data.page_size));
+    if (data.page > pages) { ordersPage = pages; return await refreshOrders(); }
+    $('orders-state').textContent = data.total ? 'Найдено заказов: ' + data.total : 'Заказов по выбранным условиям нет.';
+    $('orders-page').textContent = 'Страница ' + data.page + ' из ' + pages;
+    $('orders-prev').disabled = data.page <= 1;
+    $('orders-next').disabled = data.page * data.page_size >= data.total;
+    $('list').innerHTML = data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${esc(protocolLabel(order.protocol))} · ${order.amount} ${order.currency === 'XTR' ? '★' : '₽'}</b><p><button class="text-link" data-order-user="${order.user_id}">${esc(order.email || 'Telegram ' + order.telegram_id)} · № ${order.user_id}</button></p><p>Заказ: ${esc(order.id)}</p><p>${esc(orderStatus[order.status] || order.status)} · ${esc(order.method)} · ${esc(dateTime(order.created))}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}<div class="actions">${order.can_confirm ? `<button data-action="confirm" data-id="${esc(order.id)}">Подтвердить поступление оплаты</button>` : ''}${order.can_reject ? `<button class="secondary" data-action="reject" data-id="${esc(order.id)}">Отменить заказ</button>` : ''}${order.can_retry ? `<button data-action="retry" data-id="${esc(order.id)}">Повторить выдачу</button>` : ''}</div></article>`).join('');
+  } catch (error) {
+    if (request === ordersRequest) { $('list').replaceChildren(); $('orders-state').textContent = error.message; }
+    throw error;
+  }
+}
+function showOrders(page) { ordersPage = page; refreshOrders().catch(() => {}); }
+$('orders-search').onsubmit = event => {
+  event.preventDefault();
+  const fields = new FormData(event.target);
+  ordersFilters = {q:String(fields.get('q') || '').trim(), status:String(fields.get('status') || ''), method:String(fields.get('method') || ''), protocol:String(fields.get('protocol') || '')};
+  showOrders(1);
+};
+$('orders-reset').onclick = () => { $('orders-search').reset(); ordersFilters = {q:'', status:'', method:'', protocol:''}; showOrders(1); };
+$('orders-prev').onclick = () => showOrders(Math.max(1, ordersPage-1));
+$('orders-next').onclick = () => showOrders(ordersPage+1);

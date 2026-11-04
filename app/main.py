@@ -385,6 +385,43 @@ async def admin_user(user_id: int = APIPath(ge=1, le=9223372036854775807),
     return {'user': dict(row), 'subscriptions': subscriptions, 'orders': orders,
             'orders_total': total, 'orders_page': orders_page, 'orders_page_size': orders_page_size}
 
+
+@app.get('/api/admin/orders', dependencies=[Depends(admin)])
+async def admin_orders(q: str = Query(default='', max_length=100),
+                       status: Literal['', 'pending', 'checkout', 'paid', 'active', 'canceled'] = '',
+                       method: Literal['', 'manual', 'yookassa', 'stars'] = '',
+                       protocol: Literal['', 'xui', 'wg'] = '',
+                       page: int = Query(default=1, ge=1, le=1000000),
+                       page_size: int = Query(default=25, ge=1, le=100)):
+    conditions, args = [], []
+    query = q.strip()
+    if query:
+        escaped = query.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        conditions.append("(o.id LIKE ? ESCAPE '\\' OR u.email LIKE ? ESCAPE '\\' OR CAST(u.telegram_id AS TEXT)=? OR CAST(u.id AS TEXT)=?)")
+        args.extend(['%' + escaped + '%', '%' + escaped + '%', query, query])
+    for field, value in (('status', status), ('method', method), ('protocol', protocol)):
+        if value:
+            conditions.append('o.' + field + '=?')
+            args.append(value)
+    where = ' WHERE ' + ' AND '.join(conditions) if conditions else ''
+    with db() as conn:
+        conn.execute('BEGIN')
+        total = conn.execute('SELECT count(*) FROM orders o JOIN users u ON u.id=o.user_id' + where, args).fetchone()[0]
+        rows = conn.execute("""SELECT o.id,o.user_id,o.protocol,o.plan,o.plan_name,o.days,o.amount,
+            o.currency,o.method,o.status,o.created,o.attempts,o.error,u.email,u.telegram_id,
+            (o.status='pending' AND o.method='manual' AND o.payment_id IS NULL) AS can_confirm,
+            (o.status='paid') AS can_retry
+            FROM orders o JOIN users u ON u.id=o.user_id""" + where +
+            ' ORDER BY o.created DESC,o.id DESC LIMIT ? OFFSET ?', [*args, page_size, (page-1)*page_size]).fetchall()
+    orders = []
+    for row in rows:
+        item = dict(row)
+        item['can_confirm'] = bool(item['can_confirm'])
+        item['can_reject'] = item['can_confirm']
+        item['can_retry'] = bool(item['can_retry'])
+        orders.append(item)
+    return {'orders': orders, 'total': total, 'page': page, 'page_size': page_size}
+
 @app.post('/api/admin/orders/{oid}/confirm', dependencies=[Depends(admin)])
 async def confirm(oid: str):
     async with service.lock:

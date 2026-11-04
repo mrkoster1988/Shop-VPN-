@@ -249,6 +249,7 @@ def test_shop_prefix_routes_sessions_and_login(client, monkeypatch):
         users = shop.get('/shop/api/admin/users', headers=headers).json()
         uid = users['users'][0]['id']
         assert users['total'] == 1
+        assert shop.get('/shop/api/admin/orders', headers=headers).json()['total'] == 0
         assert shop.get('/shop/api/admin/users/' + str(uid), headers=headers).json()['user']['email'] == 'prefix@example.com'
         assert shop.post('/shop/api/auth/logout', json={},
             headers={'Origin': 'https://evil.example'}).status_code == 403
@@ -618,3 +619,104 @@ def test_admin_user_orders_are_paginated_without_truncation(client):
 ])
 def test_admin_user_query_validation(client, path):
     assert client.get(path, headers=admin_headers()).status_code == 422
+
+
+def add_admin_order(uid, oid, status='pending', method='manual', protocol='xui', created=100, payment_id=None):
+    return execute('INSERT INTO orders(id,user_id,protocol,plan,plan_name,days,amount,currency,method,status,created,payment_id,payment_url,checkout_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+        (oid,uid,protocol,'month','На месяц',30,199,'XTR' if method=='stars' else 'RUB',method,status,created,
+         payment_id,'https://private-payment.example','private-checkout'))
+
+
+def test_admin_orders_require_admin_and_hide_payment_details(client):
+    uid = add_customer('buyer@example.com')
+    add_admin_order(uid,'private-order',method='yookassa',payment_id='private-provider-id')
+    assert client.get('/api/admin/orders').status_code == 403
+    register(client)
+    assert client.get('/api/admin/orders').status_code == 403
+    response = client.get('/api/admin/orders',headers=admin_headers())
+    assert response.status_code == 200
+    assert response.headers['cache-control'] == 'no-store'
+    assert 'private-provider-id' not in response.text and 'private-payment' not in response.text
+    assert 'private-checkout' not in response.text and 'private-password-hash' not in response.text
+    item = response.json()['orders'][0]
+    assert item['can_confirm'] is False and item['can_reject'] is False
+    assert not {'payment_id','payment_url','checkout_id','receipt_email'} & item.keys()
+
+
+def test_admin_orders_filters_combine_and_search_buyer_or_order(client):
+    alice = add_customer('alice@example.com')
+    tg = add_customer(telegram_id=987654321)
+    other = add_customer('other@example.com')
+    for args in [(alice,'manual-pending','pending','manual','xui'),(tg,'stars-pending','pending','stars','wg'),
+                 (other,'yoo-pending','pending','yookassa','xui'),(alice,'paid-row','paid','manual','wg'),
+                 (tg,'active-row','active','stars','xui'),(other,'canceled-row','canceled','manual','xui')]:
+        add_admin_order(*args)
+    cases = [({'status':'pending'},3),({'method':'manual'},3),({'protocol':'wg'},2),
+             ({'q':'ALICE@'},2),({'q':str(alice)},2),({'q':'987654321'},2),({'q':'-pending'},3),
+             ({'q':'987654321','status':'pending','method':'stars','protocol':'wg'},1),
+             ({'status':'paid','method':'stars'},0)]
+    for params, expected in cases:
+        response = client.get('/api/admin/orders',params=params,headers=admin_headers())
+        assert response.status_code == 200, response.text
+        assert response.json()['total'] == expected
+    specific = client.get('/api/admin/orders',params={'q':'stars-pending'},headers=admin_headers()).json()
+    assert [o['id'] for o in specific['orders']] == ['stars-pending']
+
+
+def test_admin_order_search_treats_special_characters_literally(client):
+    uid = add_customer('literal_%@example.com')
+    normal = add_customer('normal@example.com')
+    add_admin_order(uid,'literal-order')
+    add_admin_order(normal,'normal-order')
+    for query in ('_%','%','_'):
+        assert client.get('/api/admin/orders',params={'q':query},headers=admin_headers()).json()['total'] == 1
+    for query in ("' OR 1=1 --",'\\','9'*80):
+        assert client.get('/api/admin/orders',params={'q':query},headers=admin_headers()).json()['total'] == 0
+
+
+def test_admin_orders_reach_beyond_legacy_200_limit(client):
+    from app.db import db
+    uid = add_customer('history@example.com')
+    with db() as conn:
+        conn.executemany('INSERT INTO orders(id,user_id,protocol,plan,days,amount,created) VALUES (?,?,?,?,?,?,?)',
+            [('bulk-'+str(i).zfill(3),uid,'wg','month',30,199,100+i) for i in range(205)])
+    pages = [client.get('/api/admin/orders',params={'page':p,'page_size':100},headers=admin_headers()).json() for p in (1,2,3)]
+    assert all(p['total']==205 for p in pages)
+    assert [len(p['orders']) for p in pages] == [100,100,5]
+    ids = [o['id'] for page in pages for o in page['orders']]
+    assert len(set(ids)) == 205 and ids[0] == 'bulk-204' and ids[-1] == 'bulk-000'
+    assert client.get('/api/admin/orders?page=999',headers=admin_headers()).json()['orders'] == []
+
+
+def test_admin_order_action_flags_follow_state_and_method(client, monkeypatch):
+    register(client)
+    created = order(client)
+    def listed():
+        return client.get('/api/admin/orders',params={'q':created['id']},headers=admin_headers()).json()['orders'][0]
+    before = listed()
+    assert before['can_confirm'] and before['can_reject'] and not before['can_retry']
+    assert confirm(client,created['id']).status_code == 200
+    pending = client.get('/api/admin/orders?status=pending',headers=admin_headers()).json()
+    assert pending['orders'] == [] and pending['total'] == 0
+    paid = listed()
+    assert paid['can_retry'] and not paid['can_confirm'] and not paid['can_reject']
+    async def provision(sub): return 'vless://confirmed'
+    monkeypatch.setattr(providers,'provision',provision)
+    asyncio.run(service.fulfill(created['id']))
+    active = listed()
+    assert not any(active[k] for k in ('can_confirm','can_reject','can_retry'))
+    uid = one('SELECT id FROM users')['id']
+    add_admin_order(uid,'stars-without-id',method='stars')
+    add_admin_order(uid,'manual-with-provider-id',payment_id='provider-id')
+    for oid in ('stars-without-id','manual-with-provider-id'):
+        item = client.get('/api/admin/orders',params={'q':oid},headers=admin_headers()).json()['orders'][0]
+        assert not item['can_confirm'] and not item['can_reject']
+        assert confirm(client,oid).status_code == 409
+
+
+@pytest.mark.parametrize('params', [
+    {'status':'refunded'},{'method':'card'},{'protocol':'other'},{'page':0},
+    {'page_size':101},{'page_size':0},{'q':'a'*101},{'page':'bad'},
+])
+def test_admin_order_filters_validate_inputs(client, params):
+    assert client.get('/api/admin/orders',params=params,headers=admin_headers()).status_code == 422
