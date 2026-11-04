@@ -56,6 +56,11 @@ def init_db():
           id TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), protocol TEXT NOT NULL,
           expires INTEGER NOT NULL, state TEXT NOT NULL, secret TEXT,
           reminder INTEGER NOT NULL DEFAULT 0, server_id TEXT REFERENCES servers(id), UNIQUE(user_id, protocol));
+        CREATE TABLE IF NOT EXISTS subscription_links (
+          subscription_id TEXT PRIMARY KEY REFERENCES subscriptions(id), token_hash TEXT UNIQUE,
+          token_secret TEXT, enabled INTEGER NOT NULL DEFAULT 0,
+          follow_rotation INTEGER NOT NULL DEFAULT 0, version INTEGER NOT NULL DEFAULT 1,
+          created INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS primary_rotations (
           id TEXT PRIMARY KEY, subscription_id TEXT NOT NULL REFERENCES subscriptions(id),
           request_id TEXT NOT NULL, old_credential_id TEXT NOT NULL, new_credential_id TEXT NOT NULL,

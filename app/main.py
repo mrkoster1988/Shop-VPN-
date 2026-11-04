@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import secrets
 import io
 import json
 import logging
@@ -79,15 +81,15 @@ async def safety(request, call_next):
             return JSONResponse({'detail': 'Недопустимый источник запроса'}, status_code=403)
         if int(request.headers.get('content-length', '0') or 0) > 16384:
             return JSONResponse({'detail': 'Слишком большой запрос'}, status_code=413)
-    if path.startswith('/api/'):
+    if path.startswith(('/api/','/sub/')):
         ip = request.client.host if request.client else 'unknown'
-        bucket = hits[(ip, 'auth' if path.startswith('/api/auth/') else 'api')]
+        bucket = hits[(ip, 'sub' if path.startswith('/sub/') else 'auth' if path.startswith('/api/auth/') else 'api')]
         now = time.monotonic()
         while bucket and bucket[0] < now - 60:
             bucket.popleft()
-        limit = 20 if path.startswith('/api/auth/') else 180
+        limit = 60 if path.startswith('/sub/') else 20 if path.startswith('/api/auth/') else 180
         if len(bucket) >= limit:
-            return JSONResponse({'detail': 'Слишком много запросов. Подождите минуту.'}, status_code=429)
+            return JSONResponse({'detail': 'Слишком много запросов. Подождите минуту.'}, status_code=429,headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer'})
         bucket.append(now)
         if len(hits) > 10000:
             for key in list(hits):
@@ -96,7 +98,7 @@ async def safety(request, call_next):
     response = await call_next(request)
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'no-referrer'
-    if path.startswith(('/api/', '/login')):
+    if path.startswith(('/api/', '/login','/sub/')):
         response.headers['Cache-Control'] = 'no-store'
     return response
 
@@ -255,7 +257,7 @@ async def logout(request: Request):
 
 @app.get('/api/me')
 async def me(user=Depends(current_user)):
-    subs = all_rows('SELECT id,protocol,expires,state,device_limit,primary_key_state,(rotation_error IS NOT NULL) AS primary_retrying FROM subscriptions WHERE user_id=?', (user['id'],))
+    subs = all_rows('SELECT s.id,s.protocol,s.expires,s.state,s.device_limit,s.primary_key_state,(s.rotation_error IS NOT NULL) AS primary_retrying,coalesce(l.enabled,0) AS link_enabled,coalesce(l.follow_rotation,0) AS link_follows_rotation FROM subscriptions s LEFT JOIN subscription_links l ON l.subscription_id=s.id WHERE s.user_id=?', (user['id'],))
     orders = all_rows('SELECT id,protocol,plan,plan_name,days,amount,currency,method,status,created,payment_url,attempts,device_limit FROM orders WHERE user_id=? ORDER BY created DESC LIMIT 50', (user['id'],))
     return {'id': user['id'], 'email': user['email'], 'telegram_id': user['telegram_id'], 'subscriptions': subs, 'orders': orders}
 
@@ -384,6 +386,7 @@ async def rotate_primary(sid: str,data: RotationCreate,user=Depends(current_user
             conn.execute('INSERT INTO primary_rotations(id,subscription_id,request_id,old_credential_id,new_credential_id,created) VALUES (?,?,?,?,?,?)',
                 (job,sid,str(data.request_id),sub['credential_id'] or c.encrypt(sid),c.encrypt(str(uuid.uuid4())),int(time.time())))
             conn.execute("UPDATE subscriptions SET primary_key_state='rotating',secret=NULL,rotation_error=NULL WHERE id=?",(sid,))
+            conn.execute('UPDATE subscription_links SET enabled=0,token_hash=NULL,token_secret=NULL,version=version+1 WHERE subscription_id=? AND enabled=1 AND follow_rotation=0',(sid,))
         return JSONResponse({'rotation':{'id':job,'state':'revoking'},'subscription_id':sid},status_code=201)
 
 @app.post('/api/devices/{did}/rotate')
@@ -436,6 +439,63 @@ async def device_qr(did: str,user=Depends(current_user)):
     result=await device_config(did,user)
     buffer=io.BytesIO();qrcode.make(result['config']).save(buffer,format='PNG')
     return Response(buffer.getvalue(),media_type='image/png')
+
+class LinkUpdate(BaseModel):
+    model_config = {'extra':'forbid'}
+    action: Literal['enable','rotate','disable']
+    version: int = Field(ge=0,strict=True)
+    follow_rotation: bool = Field(default=False,strict=True)
+
+
+def link_metadata(row):
+    if not row:return {'enabled':False,'follow_rotation':False,'version':0,'url':None}
+    return {'enabled':bool(row['enabled']),'follow_rotation':bool(row['follow_rotation']),'version':row['version'],
+            'url':c.PUBLIC_URL+'/sub/'+c.decrypt(row['token_secret']) if row['enabled'] else None}
+
+@app.get('/api/subscriptions/{sid}/link')
+async def subscription_link(sid: str,user=Depends(current_user)):
+    sub=owned_subscription(sid,user)
+    if sub['protocol']!='xui':raise HTTPException(409,'Ссылки подписки доступны для VLESS')
+    return link_metadata(one('SELECT * FROM subscription_links WHERE subscription_id=?',(sid,)))
+
+@app.put('/api/subscriptions/{sid}/link')
+async def update_subscription_link(sid: str,data: LinkUpdate,user=Depends(current_user)):
+    async with service.lock:
+        sub=owned_subscription(sid,user)
+        if sub['protocol']!='xui':raise HTTPException(409,'Ссылки подписки доступны для VLESS')
+        with db() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            raw=conn.execute('SELECT * FROM subscription_links WHERE subscription_id=?',(sid,)).fetchone()
+            before=dict(raw) if raw else None
+            if (before['version'] if before else 0)!=data.version:raise HTTPException(409,'Настройки ссылки изменились. Обновите окно.')
+            if data.action=='enable' and (sub['state']!='active' or sub['expires']<=time.time() or sub['primary_key_state']!='active'):
+                raise HTTPException(409,'Включение ссылки доступно для действующего основного профиля')
+            if data.action=='rotate' and (not before or not before['enabled']):raise HTTPException(409,'Сначала включите ссылку')
+            if data.action=='disable' and not before:return link_metadata(None)
+            new_token=data.action=='rotate' or (data.action=='enable' and (not before or not before['enabled']))
+            token=secrets.token_urlsafe(32) if new_token else None
+            encrypted=c.encrypt(token) if new_token else (before['token_secret'] if before else None)
+            hashed=digest(token) if new_token else (before['token_hash'] if before else None)
+            enabled=data.action!='disable'
+            if not enabled:encrypted=hashed=None
+            conn.execute('INSERT INTO subscription_links(subscription_id,token_hash,token_secret,enabled,follow_rotation,version,created) VALUES (?,?,?,?,?,?,?) ON CONFLICT(subscription_id) DO UPDATE SET token_hash=excluded.token_hash,token_secret=excluded.token_secret,enabled=excluded.enabled,follow_rotation=excluded.follow_rotation,version=excluded.version',
+                (sid,hashed,encrypted,int(enabled),int(data.follow_rotation),data.version+1,int(time.time())))
+            result=dict(conn.execute('SELECT * FROM subscription_links WHERE subscription_id=?',(sid,)).fetchone())
+        return link_metadata(result)
+
+@app.get('/sub/{token}')
+async def export_subscription(token: str):
+    if not re.fullmatch(r'[A-Za-z0-9_-]{43}',token):raise HTTPException(404,'Подписка недоступна')
+    row=one('SELECT s.* FROM subscription_links l JOIN subscriptions s ON s.id=l.subscription_id WHERE l.token_hash=? AND l.enabled=1',(digest(token),))
+    if not row or row['protocol']!='xui' or row['state']!='active' or row['primary_key_state']!='active' or row['expires']<=time.time() or not row['secret']:
+        raise HTTPException(404,'Подписка недоступна')
+    try:config=c.decrypt(row['secret'])
+    except Exception:raise HTTPException(503,'Профиль временно недоступен') from None
+    if not config.startswith('vless://') or len(config)>16384 or any(ord(ch)<33 for ch in config):
+        raise HTTPException(503,'Профиль временно недоступен')
+    body=base64.b64encode((config+'\n').encode()).decode()
+    return Response(body,media_type='text/plain',headers={'Subscription-Userinfo':'expire='+str(row['expires']),'Profile-Update-Interval':'12',
+        'Content-Disposition':'attachment; filename="pushok-subscription.txt"','X-Robots-Tag':'noindex, nofollow, noarchive'})
 
 @app.get('/api/subscriptions/{sid}/config')
 async def config_file(sid: str, user=Depends(current_user)):

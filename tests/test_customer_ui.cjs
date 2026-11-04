@@ -270,3 +270,33 @@ test('main connection cannot reopen from stale markup during rotation',async()=>
   await assert.rejects(p.run("openConnection('sub-a')"));
   assert.equal(p.calls.filter(c=>c.url.endsWith('/config')).length,0);
 });
+
+test('link management copies the private URL and clears it when closed',async()=>{
+  const p=await customerPage();const state={enabled:true,follow_rotation:false,version:1,url:'https://example.com/shop/sub/private-token'};
+  p.respond('/shop/api/subscriptions/sub-a/link',state);await p.run("openLink('sub-a')");
+  await p.element('copy-link').onclick();assert.equal(p.state.copied[0],state.url);
+  p.element('link-dialog').close();assert.equal(p.element('link-value').value,'');assert.equal(p.element('copy-link').disabled,true);
+});
+
+test('closing or logging out cannot restore an in-flight private link',async()=>{
+  const p=await customerPage();const reply=p.defer('/shop/api/subscriptions/sub-a/link');
+  const opening=p.run("openLink('sub-a')");p.element('link-dialog').close();reply({enabled:true,version:1,url:'private-url'});await opening;
+  assert.equal(p.element('link-value').value,'');
+  p.respond('/shop/api/subscriptions/sub-a/link',{enabled:true,follow_rotation:false,version:1,url:'private-url'});
+  await p.run("openLink('sub-a')");await p.element('logout').onclick();assert.equal(p.element('link-value').value,'');
+});
+
+test('link setting writes explicit rotation consent and current version',async()=>{
+  const p=await customerPage();p.respond('/shop/api/subscriptions/sub-a/link',{enabled:false,follow_rotation:false,version:3,url:null});
+  await p.run("openLink('sub-a')");p.element('link-follow').checked=true;
+  p.respond('/shop/api/subscriptions/sub-a/link',{enabled:true,follow_rotation:true,version:4,url:'private-new-url'});
+  await p.run("changeLink('enable')");
+  const put=p.calls.find(c=>c.opts.method==='PUT');assert.deepEqual(JSON.parse(put.opts.body),{action:'enable',version:3,follow_rotation:true});
+  assert.equal(p.element('link-value').value,'private-new-url');
+});
+
+test('failed link refresh removes the previously displayed URL',async()=>{
+  const p=await customerPage();p.respond('/shop/api/subscriptions/sub-a/link',{enabled:true,follow_rotation:false,version:1,url:'private-url'});
+  await p.run("openLink('sub-a')");p.respond('/shop/api/subscriptions/sub-a/link',{detail:'Login'},401);
+  await assert.rejects(p.run('refreshLink()'));assert.equal(p.element('link-value').value,'');assert.equal(p.element('copy-link').disabled,true);
+});

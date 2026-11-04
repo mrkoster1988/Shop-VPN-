@@ -19,7 +19,7 @@ import time
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 
-VERSION = 'v0.016'
+VERSION = 'v0.017'
 
 
 def run(args, **kwargs):
@@ -103,6 +103,12 @@ location = {path}/login {{
         proxy_pass http://127.0.0.1:{port};
 {headers}
 }}
+location ^~ {path}/sub/ {{
+        access_log off;
+        error_log /dev/null crit;
+        proxy_pass http://127.0.0.1:{port};
+{headers}
+}}
 location ^~ {path}/ {{
         client_max_body_size 16k;
         proxy_pass http://127.0.0.1:{port};
@@ -161,6 +167,14 @@ def attach_nginx(config,settings,root):
         with contextlib.suppress(Exception):run(['nginx','-t']);run(['systemctl','reload','nginx'])
         raise RuntimeError('Nginx не принял изменения; исходный файл восстановлен') from None
 
+
+
+def caddy_config(domain,path,port):
+    return '\n'.join(['{','    log default {','        format filter {','            wrap json',
+        '            fields {','                request>uri replace REDACTED','            }',
+        '        }','    }','}',f'{domain} {{',f'    @private_shop path {path}/login {path}/sub/*',
+        '    log_skip @private_shop',f'    @bare path {path}',f'    redir @bare {path}/ 308',
+        f'    handle {path}/* {{',f'        reverse_proxy 127.0.0.1:{port}','    }','    respond 404','}',''])
 
 def compose(settings,root):
     port=settings['port']
@@ -292,7 +306,7 @@ def main(argv=None):
         atomic_text(root/'compose.install.json',compose(settings,root))
         atomic_text(root/'nginx.shop.conf',nginx_routes(settings['url'],settings['port']))
         domain=urlsplit(settings['url']).hostname;path=urlsplit(settings['url']).path
-        atomic_text(root/'Caddyfile',f'{domain} {{\n    @bare path {path}\n    redir @bare {path}/ 308\n    handle {path}/* {{\n        reverse_proxy 127.0.0.1:{settings["port"]}\n    }}\n    respond 404\n}}\n')
+        atomic_text(root/'Caddyfile',caddy_config(domain,path,settings['port']))
         docker_ready(codename)
         command=['docker','compose','--project-name',settings['project'],'--env-file',str(root/'.env'),'-f',str(root/'compose.install.json')]
         run(command+['up','-d','--build','--wait','--wait-timeout','120'])

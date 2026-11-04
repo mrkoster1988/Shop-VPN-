@@ -1,7 +1,20 @@
+# Merge into existing global options if already present.
+{
+    log default {
+        format filter {
+            wrap json
+            fields {
+                request>uri replace REDACTED
+            }
+        }
+    }
+}
 # Merge these routes into the existing pushok.shop site block.
 # Keep all existing routes for the main website.
 # PUBLIC_URL=https://pushok.shop/shop
 pushok.shop {
+    @private_shop path /shop/login /shop/sub/*
+    log_skip @private_shop
     encode gzip
     @shop_root path /shop
     redir @shop_root /shop/ 308

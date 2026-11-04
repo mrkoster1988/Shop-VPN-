@@ -5,6 +5,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const statusLabel = {pending:'Ожидает оплаты',checkout:'Оплата не завершена',paid:'Оплачено · готовим VPN',active:'Доступ выдан',canceled:'Отменён'};
 const money=(amount,currency)=>amount.toLocaleString('ru-RU')+' '+(currency==='XTR'?'★':'₽');
 let catalog, me, protocol = 'xui', selectedPlan, register = false, toastTimer;
+let linkSubscription=null, linkRequest=0, linkState=null;
 let sessionEpoch = 0, meRequest = 0, connectionRequest = 0, connection = null, connectionTimer;
 let deviceSubscription=null, deviceRequest=0, deviceIntent=null, deviceCache=[], rotationIntents=new Map(), primaryRotationIntents=new Map();
 async function api(path, data, method) {
@@ -39,6 +40,7 @@ function clearConnection() {
 }
 function clearPrivate() {
   me = null; selectedPlan = null; primaryRotationIntents.clear();
+  $('link-dialog').close(); clearLink();
   $('devices-dialog').close(); clearDevices();
   $('config-dialog').close(); clearConnection();
   $('account-dialog').close(); $('checkout-dialog').close();
@@ -76,7 +78,7 @@ function renderAccount() {
   $('subscriptions').innerHTML = me.subscriptions.length ? me.subscriptions.map(s => {
     const active = s.state === 'active' && s.expires*1000 > Date.now();
     const primaryReady=active && (s.primary_key_state || 'active')==='active';
-    return `<article class="subscription"><h3>${esc(protocolName(s.protocol))}</h3><p>${active?'Доступ до '+date(s.expires):s.state==='pending'?'Подключение готовится':'Подписка закончилась'}</p><p>${esc(profileAllowance(s.device_limit ?? 4))}</p>${primaryReady?`<button class="small" data-config="${esc(s.id)}">Основной профиль ↗</button><button class="text-link" data-primary-rotate="${esc(s.id)}">Сменить основной ключ</button>`:s.primary_key_state==='rotating'?`<p>Меняем основной ключ${s.primary_retrying?' · повторим после ошибки':''}. Дополнительные профили не меняются.</p>`:''}${s.state!=='pending'?` <button class="small secondary" data-devices="${esc(s.id)}">Устройства</button><button class="text-link" data-renew="${esc(s.protocol)}">${active?'Продлить подписку':'Возобновить подписку'}</button>`:''}</article>`;
+    return `<article class="subscription"><h3>${esc(protocolName(s.protocol))}</h3><p>${active?'Доступ до '+date(s.expires):s.state==='pending'?'Подключение готовится':'Подписка закончилась'}</p><p>${esc(profileAllowance(s.device_limit ?? 4))}</p>${primaryReady?`<button class="small" data-config="${esc(s.id)}">Основной профиль ↗</button><button class="text-link" data-primary-rotate="${esc(s.id)}">Сменить основной ключ</button>`:s.primary_key_state==='rotating'?`<p>Меняем основной ключ${s.primary_retrying?' · повторим после ошибки':''}. Дополнительные профили не меняются.</p>`:''}${s.protocol==='xui'&&s.state!=='pending'?`<button class="text-link" data-link="${esc(s.id)}">Ссылка подписки</button>`:''}${s.state!=='pending'?` <button class="small secondary" data-devices="${esc(s.id)}">Устройства</button><button class="text-link" data-renew="${esc(s.protocol)}">${active?'Продлить подписку':'Возобновить подписку'}</button>`:''}</article>`;
   }).join('') : '<p>Подписок пока нет. Выберите тариф на главной странице.</p>';
   $('orders').innerHTML = me.orders.length ? me.orders.map(o => `<div class="order"><div><b>${esc(protocolName(o.protocol))} · ${money(o.amount,o.currency)}</b><br><code>${esc(o.id)}</code><br>${date(o.created)}</div><div><span class="status ${esc(o.status)}">${esc(statusLabel[o.status] || o.status)}</span>${o.status==='pending'?`<br><button class="text-link" data-order="${esc(o.id)}">Оплатить / реквизиты</button>`:''}</div></div>`).join('') : '<p>Заказов пока нет.</p>';
 }
@@ -213,9 +215,13 @@ $('config-qr').onerror = () => {
   $('config-status').textContent='QR-код не загрузился. Используйте копирование или скачивание настроек.';
 };
 $('subscriptions').onclick = async event => {
+  const link=event.target.closest('[data-link]');
+  if(link){await openLink(link.dataset.link).catch(e=>toast(e.message));return;}
   const rotate=event.target.closest('[data-primary-rotate]');
   if(rotate){
-    if(!window.confirm('Основной ключ будет отключён, новые настройки нужно импортировать заново. Дополнительные профили не меняются. Продление дождётся завершения операции. Продолжить?'))return;
+    const sub=me?.subscriptions.find(s=>s.id===rotate.dataset.primaryRotate);
+    const linkNote=sub?.link_enabled ? (sub.link_follows_rotation ? ' По сохранённой ссылке подписки будет доступен новый ключ.' : ' Ссылка подписки будет отключена.') : '';
+    if(!window.confirm('Основной ключ будет отключён, новые настройки нужно импортировать заново. Дополнительные профили не меняются. Продление дождётся завершения операции.'+linkNote+' Продолжить?'))return;
     const sid=rotate.dataset.primaryRotate;rotate.disabled=true;
     try {
       if(!primaryRotationIntents.has(sid))primaryRotationIntents.set(sid,crypto.randomUUID());
@@ -236,6 +242,52 @@ $('subscriptions').onclick = async event => {
   }
   const button=event.target.closest('[data-config]');
   if (button) openConnection(button.dataset.config).catch(e=>toast(e.message));
+};
+function clearLink() {
+  linkRequest++;linkSubscription=null;linkState=null;
+  $('link-value').value='';$('link-status').textContent='';$('link-follow').checked=false;
+  for(const id of ['copy-link','link-enable','link-rotate','link-disable'])$(id).disabled=true;
+}
+function renderLink(state) {
+  linkState=state;$('link-value').value=state.url || '';$('link-follow').checked=state.follow_rotation;
+  $('copy-link').disabled=!state.enabled;$('link-rotate').disabled=!state.enabled;$('link-disable').disabled=!state.enabled;
+  const parent=me?.subscriptions.find(s=>s.id===linkSubscription);
+  $('link-enable').disabled=!parent || parent.state!=='active' || parent.expires*1000<=Date.now() || (parent.primary_key_state || 'active')!=='active';
+  $('link-enable').textContent=state.enabled?'Сохранить настройки':'Создать ссылку';
+  $('link-status').textContent=state.enabled?'Ссылка включена. Импортируйте её как URL подписки.':'Ссылка отключена.';
+}
+async function openLink(sid) {
+  clearLink();linkSubscription=sid;$('link-status').textContent='Загружаем…';show('link-dialog');await refreshLink();
+}
+async function refreshLink() {
+  if(!linkSubscription)return;
+  const sid=linkSubscription,request=++linkRequest;
+  linkState=null;$('link-value').value='';
+  for(const id of ['copy-link','link-enable','link-rotate','link-disable'])$(id).disabled=true;
+  const state=await api('/api/subscriptions/'+encodeURIComponent(sid)+'/link');
+  if(request===linkRequest && $('link-dialog').open)renderLink(state);
+}
+async function changeLink(action) {
+  if(!linkSubscription || !linkState)return;
+  const sid=linkSubscription,version=linkState.version,request=++linkRequest;
+  for(const id of ['copy-link','link-enable','link-rotate','link-disable'])$(id).disabled=true;
+  $('link-value').value='';
+  try {
+    const state=await api('/api/subscriptions/'+encodeURIComponent(sid)+'/link',{action,version,follow_rotation:$('link-follow').checked},'PUT');
+    if(request!==linkRequest || !$('link-dialog').open)return;
+    renderLink(state);await refreshMe();
+  } catch(e) { if(request===linkRequest) $('link-status').textContent=e.message+' Нажмите «Обновить» перед повтором.'; }
+}
+$('link-dialog').addEventListener('close',clearLink);
+$('link-form').onsubmit=event=>{event.preventDefault();changeLink('enable');};
+$('link-refresh').onclick=()=>refreshLink().catch(e=>toast(e.message));
+$('link-rotate').onclick=()=>{if(window.confirm('Заменить ссылку? Прежний URL перестанет работать. Его нужно заменить в VPN-клиенте.'))changeLink('rotate');};
+$('link-disable').onclick=()=>{if(window.confirm('Отключить обновление по этой ссылке? Уже скачанный VPN-ключ останется действующим.'))changeLink('disable');};
+$('copy-link').onclick=async()=>{
+  if(!linkState?.enabled || !$('link-value').value)return;
+  const request=linkRequest;
+  try {await navigator.clipboard.writeText($('link-value').value);if(request===linkRequest)toast('Ссылка скопирована. Добавьте её как подписку в VPN-клиент.');}
+  catch {if(request===linkRequest){$('link-value').select();toast('Ссылка выделена для ручного копирования.');}}
 };
 function clearDevices() {
   deviceRequest++; deviceSubscription=null; deviceIntent=null; deviceCache=[]; rotationIntents.clear();

@@ -165,3 +165,14 @@ def test_bootstrap_release_matches_installer_and_changelog():
 def test_install_path_cannot_hide_a_system_directory(tmp_path):
     link=tmp_path/'system';link.symlink_to('/etc',target_is_directory=True)
     with pytest.raises(ValueError):i.install_path(str(link))
+
+
+def test_subscription_urls_are_redacted_in_proxy_templates():
+    root=Path(__file__).parents[1]
+    routes=i.nginx_routes('https://example.com/shop',8010)
+    block=routes.split('location ^~ /shop/sub/')[1].split('location ^~ /shop/')[0]
+    assert 'access_log off;' in block and 'error_log /dev/null crit;' in block
+    caddy=i.caddy_config('example.com','/shop',8010)
+    assert '@private_shop path /shop/login /shop/sub/*' in caddy and 'log_skip @private_shop' in caddy
+    assert 'request>uri replace REDACTED' in caddy
+    assert 'location ^~ /shop/sub/' in (root/'nginx.example.conf').read_text()
