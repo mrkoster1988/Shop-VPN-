@@ -35,3 +35,4 @@ jobs:
         run: |
           .venv/bin/python -m compileall -q app agent scripts
           bash -n scripts/wireguard-init.sh
+          bash -n install.sh
