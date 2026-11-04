@@ -2,14 +2,17 @@
 const basePath = document.querySelector('meta[name="shop-base"]').content;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let token = '';
+let token = '', authEpoch = 0, usersPage = 1, usersQuery = '', usersRequest = 0;
+let selectedUser = null, profilePage = 1, profileRequest = 0;
 async function api(path, {method = 'GET', data} = {}) {
+  const epoch = authEpoch;
   const response = await fetch(basePath + '/api/admin/' + path, {
     method, headers: {Authorization: 'Bearer ' + token, ...(data ? {'Content-Type':'application/json'} : {})},
     body: data ? JSON.stringify(data) : undefined,
   });
   const result = await response.json();
-  if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : 'Проверьте название, цены и срок тарифа');
+  if (epoch !== authEpoch) throw new Error('Сессия администратора завершена');
+  if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : 'Проверьте введённые данные');
   return result;
 }
 function planForm(plan) {
@@ -31,15 +34,23 @@ async function refresh({plans = true} = {}) {
   $('stats').innerHTML = `<div>Пользователи<strong>${data.users}</strong></div><div>Подписки<strong>${data.active}</strong></div><div>Подтверждено<strong>${data.revenue} ₽ / ${data.stars} ★</strong></div>`;
   if (catalog) $('plan-editors').innerHTML = catalog.plans.map(planForm).join('');
   $('list').innerHTML = data.orders.map(o => `<article class="admin-order"><b>${esc(o.email || 'Telegram ' + o.telegram_id)} · ${esc(o.protocol)} · ${o.amount} ${o.currency === 'XTR' ? '★' : '₽'}</b><p>Заказ: ${esc(o.id)}</p><p>Статус: ${esc(o.status)} / ${new Date(o.created * 1000).toLocaleString('ru-RU')}</p>${o.error ? `<p>Ошибка выдачи: ${esc(o.error)} / попыток: ${o.attempts}</p>` : ''}<div class="actions">${o.status === 'pending' && o.method === 'manual' && !o.payment_id ? `<button data-action="confirm" data-id="${o.id}">Подтвердить поступление оплаты</button><button class="secondary" data-action="reject" data-id="${o.id}">Отменить заказ</button>` : ''}${o.status === 'paid' ? `<button data-action="retry" data-id="${o.id}">Повторить выдачу</button>` : ''}</div></article>`).join('');
+  await refreshUsers();
 }
 $('admin-login').onsubmit = async event => {
-  event.preventDefault(); token = $('key').value;
+  event.preventDefault();
+  const button = event.target.querySelector('button'); button.disabled = true;
+  authEpoch++; token = $('key').value;
   try { await refresh(); $('key').value = ''; $('admin-login').hidden = true; $('dashboard').hidden = false; $('error').textContent = ''; }
-  catch (error) { token = ''; $('error').textContent = error.message; }
+  catch (error) { authEpoch++; token = ''; $('error').textContent = error.message; }
+  finally { button.disabled = false; }
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => {
-  token = ''; $('list').replaceChildren(); $('stats').replaceChildren(); $('plan-editors').replaceChildren();
+  authEpoch++; token = ''; usersRequest++; usersPage = 1; usersQuery = '';
+  $('users-query').value = ''; $('users-list').replaceChildren(); $('users-page').textContent = ''; $('users-state').textContent = '';
+  if ($('user-dialog').open) $('user-dialog').close();
+  clearUser();
+  $('list').replaceChildren(); $('stats').replaceChildren(); $('plan-editors').replaceChildren();
   $('admin-notice').textContent = ''; $('error').textContent = ''; $('dashboard').hidden = true; $('admin-login').hidden = false;
 };
 $('plan-editors').onsubmit = async event => {
@@ -89,3 +100,74 @@ $('create-plan-form').onsubmit = async event => {
   } catch (error) { $('create-plan-error').textContent = error.message; }
   finally { button.disabled = false; }
 };
+
+const orderStatus = {pending:'Ожидает оплаты', checkout:'Оплата не завершена', paid:'Готовим доступ', active:'Доступ выдан', canceled:'Отменён'};
+const protocolLabel = value => value === 'wg' ? 'WireGuard' : value === 'xui' ? 'VLESS · 3x-ui' : value;
+const dateTime = value => value ? new Date(value * 1000).toLocaleString('ru-RU') : '—';
+async function refreshUsers() {
+  const request = ++usersRequest;
+  $('users-prev').disabled = true; $('users-next').disabled = true;
+  $('users-state').textContent = 'Загрузка пользователей…';
+  try {
+    const params = new URLSearchParams({q:usersQuery, page:String(usersPage), page_size:'25'});
+    const data = await api('users?' + params);
+    if (request !== usersRequest) return;
+    const pages = Math.max(1, Math.ceil(data.total / data.page_size));
+    $('users-state').textContent = data.total ? 'Найдено пользователей: ' + data.total : 'Пользователей не найдено.';
+    $('users-page').textContent = 'Страница ' + data.page + ' из ' + pages;
+    $('users-prev').disabled = data.page <= 1;
+    $('users-next').disabled = data.page * data.page_size >= data.total;
+    $('users-list').innerHTML = data.users.map(user => `<article class="admin-user"><div><b>${esc(user.email || 'Telegram ' + user.telegram_id)}</b><p>№ ${user.id} · Telegram: ${esc(user.telegram_id ?? '—')}</p><p>Активных подписок: ${user.active_subscriptions} · Заказов: ${user.orders_count}</p><p>Регистрация: ${esc(dateTime(user.created))}</p></div><button class="small secondary" data-user="${user.id}">Открыть карточку</button></article>`).join('');
+  } catch (error) {
+    if (request === usersRequest) { $('users-list').replaceChildren(); $('users-state').textContent = error.message; }
+    throw error;
+  }
+}
+function showUsers(page) {
+  usersPage = page;
+  refreshUsers().catch(() => {});
+}
+$('users-search').onsubmit = event => { event.preventDefault(); usersQuery = $('users-query').value.trim(); showUsers(1); };
+$('users-reset').onclick = () => { usersQuery = ''; $('users-query').value = ''; showUsers(1); };
+$('users-prev').onclick = () => showUsers(Math.max(1, usersPage - 1));
+$('users-next').onclick = () => showUsers(usersPage + 1);
+function clearUser() {
+  selectedUser = null; profileRequest++; profilePage = 1;
+  for (const id of ['user-details', 'user-subscriptions', 'user-orders']) $(id).replaceChildren();
+  $('user-error').textContent = ''; $('user-title').textContent = 'Пользователь'; $('user-orders-page').textContent = '';
+  $('user-orders-prev').disabled = true; $('user-orders-next').disabled = true;
+}
+async function loadUser(page) {
+  if (selectedUser === null) return;
+  const userId = selectedUser, request = ++profileRequest;
+  $('user-error').textContent = 'Загрузка карточки…';
+  $('user-orders-prev').disabled = true; $('user-orders-next').disabled = true;
+  try {
+    const data = await api('users/' + userId + '?' + new URLSearchParams({orders_page:String(page), orders_page_size:'20'}));
+    if (request !== profileRequest || selectedUser !== userId || !$('user-dialog').open) return;
+    profilePage = data.orders_page;
+    const user = data.user;
+    $('user-title').textContent = 'Пользователь № ' + user.id;
+    $('user-details').innerHTML = `<p>Email: ${esc(user.email || '—')}</p><p>Telegram ID: ${esc(user.telegram_id ?? '—')}</p><p>Регистрация: ${esc(dateTime(user.created))}</p>`;
+    $('user-subscriptions').innerHTML = data.subscriptions.length ? data.subscriptions.map(sub => {
+      const status = sub.access_active ? 'Активна' : sub.state === 'pending' ? 'Готовится' : 'Неактивна';
+      return `<article class="subscription"><b>${esc(protocolLabel(sub.protocol))}</b><p>${status} · Срок: ${esc(dateTime(sub.expires))}</p></article>`;
+    }).join('') : '<p>Подписок пока нет.</p>';
+    $('user-orders').innerHTML = data.orders.length ? data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${order.days} дней · ${order.amount} ${order.currency === 'XTR' ? '★' : '₽'}</b><p>${esc(protocolLabel(order.protocol))} · ${esc(orderStatus[order.status] || order.status)}</p><p>Заказ: ${esc(order.id)}</p><p>${esc(dateTime(order.created))} · ${esc(order.method)}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}</article>`).join('') : '<p>Заказов пока нет.</p>';
+    const pages = Math.max(1, Math.ceil(data.orders_total / data.orders_page_size));
+    $('user-orders-page').textContent = 'Заказов: ' + data.orders_total + ' · Страница ' + profilePage + ' из ' + pages;
+    $('user-orders-prev').disabled = profilePage <= 1;
+    $('user-orders-next').disabled = profilePage * data.orders_page_size >= data.orders_total;
+    $('user-error').textContent = '';
+  } catch (error) { if (request === profileRequest && selectedUser === userId) $('user-error').textContent = error.message; }
+}
+$('users-list').onclick = event => {
+  const button = event.target.closest('[data-user]'); if (!button) return;
+  clearUser(); selectedUser = Number(button.dataset.user);
+  $('user-dialog').showModal(); loadUser(1);
+};
+$('user-close').onclick = () => $('user-dialog').close();
+$('user-dialog').addEventListener('close', clearUser);
+$('user-orders-prev').onclick = () => loadUser(Math.max(1, profilePage - 1));
+$('user-orders-next').onclick = () => loadUser(profilePage + 1);
+$('user-refresh').onclick = () => loadUser(profilePage);

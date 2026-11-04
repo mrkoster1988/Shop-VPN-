@@ -246,6 +246,10 @@ def test_shop_prefix_routes_sessions_and_login(client, monkeypatch):
         assert response.status_code == 200
         assert 'Path=/shop/' in response.headers['set-cookie']
         assert shop.get('/shop/api/me').json()['email'] == 'prefix@example.com'
+        users = shop.get('/shop/api/admin/users', headers=headers).json()
+        uid = users['users'][0]['id']
+        assert users['total'] == 1
+        assert shop.get('/shop/api/admin/users/' + str(uid), headers=headers).json()['user']['email'] == 'prefix@example.com'
         assert shop.post('/shop/api/auth/logout', json={},
             headers={'Origin': 'https://evil.example'}).status_code == 403
         response = shop.post('/shop/api/auth/logout', json={},
@@ -512,3 +516,105 @@ def test_custom_tariff_stars_uses_its_own_price(client, monkeypatch):
     result = client.post('/api/orders', json={'plan':'week','protocol':'xui','accept_terms':True,'plan_version':1})
     assert result.status_code == 200, result.text
     assert (seen[0]['plan'], seen[0]['days'], seen[0]['amount'], seen[0]['currency']) == ('week', 7, 75, 'XTR')
+
+
+def admin_headers():
+    return {'Authorization': 'Bearer ' + c.ADMIN_TOKEN}
+
+
+def add_customer(email=None, telegram_id=None, created=100):
+    return execute('INSERT INTO users(email,password,telegram_id,created) VALUES (?,?,?,?)',
+                   (email, 'private-password-hash', telegram_id, created))
+
+
+def test_admin_users_require_admin_access(client):
+    uid = add_customer('customer@example.com')
+    for path in ('/api/admin/users', '/api/admin/users/' + str(uid)):
+        assert client.get(path).status_code == 403
+        assert client.get(path, headers={'Authorization':'Bearer wrong'}).status_code == 403
+    register(client)
+    assert client.get('/api/admin/users/' + str(uid)).status_code == 403
+
+
+def test_admin_user_search_email_ids_and_literal_characters(client):
+    first = add_customer('alice@example.com')
+    second = add_customer('literal_%@example.com')
+    third = add_customer(telegram_id=987654321)
+    cases = [('ALICE@', [first]), ('  alice@  ', [first]), ('987654321', [third]),
+             (str(second), [second]), ('_%', [second]), ('%', [second]),
+             ("' OR 1=1 --", []), ('missing@example.com', []), ('9'*80, [])]
+    for query, expected in cases:
+        result = client.get('/api/admin/users', params={'q':query}, headers=admin_headers())
+        assert result.status_code == 200, result.text
+        assert [u['id'] for u in result.json()['users']] == expected
+    assert client.get('/api/admin/users', params={'q':'\\'}, headers=admin_headers()).json()['total'] == 0
+
+
+def test_admin_users_pagination_is_stable_and_bounded(client):
+    ids = [add_customer('user'+str(i)+'@example.com') for i in range(6)]
+    first = client.get('/api/admin/users?page_size=2', headers=admin_headers()).json()
+    second = client.get('/api/admin/users?page_size=2&page=2', headers=admin_headers()).json()
+    third = client.get('/api/admin/users?page_size=2&page=3', headers=admin_headers()).json()
+    assert first['total'] == 6
+    assert [u['id'] for page in (first, second, third) for u in page['users']] == ids[::-1]
+    assert client.get('/api/admin/users?page=10', headers=admin_headers()).json()['users'] == []
+    assert set(first['users'][0]) == {'id','email','telegram_id','created','active_subscriptions','orders_count'}
+
+
+def test_admin_user_detail_contains_only_owned_records_and_no_secrets(client):
+    uid = add_customer('alice@example.com')
+    other = add_customer('other@example.com')
+    now = int(time.time())
+    for sid, user, state, expires in [('active',uid,'active',now+86400),
+            ('expired',uid,'active',now-10), ('other-private',other,'active',now+86400)]:
+        protocol = 'wg' if sid == 'expired' else 'xui'
+        execute('INSERT INTO subscriptions(id,user_id,protocol,state,expires,secret) VALUES (?,?,?,?,?,?)',
+                (sid,user,protocol,state,expires,'private-vpn-config'))
+    for oid, user in [('own-order',uid),('other-order',other)]:
+        execute('INSERT INTO orders(id,user_id,protocol,plan,plan_name,days,amount,currency,method,status,created,payment_id,payment_url,checkout_id) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            (oid,user,'xui','month','На месяц',30,199,'RUB','manual','pending',100,'payment-'+oid,'https://secret-payment.example','private-checkout'))
+    result = client.get('/api/admin/users/' + str(uid), headers=admin_headers())
+    assert result.status_code == 200, result.text
+    data = result.json()
+    assert result.headers['cache-control'] == 'no-store'
+    assert data['user'] == {'id':uid,'email':'alice@example.com','telegram_id':None,'created':100}
+    assert {s['id']:s['access_active'] for s in data['subscriptions']} == {'active':True,'expired':False}
+    assert [o['id'] for o in data['orders']] == ['own-order'] and data['orders_total'] == 1
+    assert 'private-' not in result.text and 'secret-payment' not in result.text
+    assert 'payment_id' not in result.text and 'payment_url' not in result.text and 'checkout_id' not in result.text
+    assert all(set(s) == {'id','protocol','expires','state','access_active'} for s in data['subscriptions'])
+    summary = client.get('/api/admin/users', params={'q':'alice@'}, headers=admin_headers()).json()['users'][0]
+    assert summary['active_subscriptions'] == 1 and summary['orders_count'] == 1
+    execute("UPDATE subscriptions SET state='pending',expires=? WHERE id='expired'", (now+86400,))
+    data = client.get('/api/admin/users/' + str(uid), headers=admin_headers()).json()
+    assert next(s for s in data['subscriptions'] if s['protocol']=='wg')['access_active'] is False
+
+
+def test_admin_user_empty_and_missing_profiles(client):
+    uid = add_customer(telegram_id=123456789)
+    data = client.get('/api/admin/users/' + str(uid), headers=admin_headers()).json()
+    assert data['orders'] == [] and data['subscriptions'] == [] and data['orders_total'] == 0
+    assert client.get('/api/admin/users/999999', headers=admin_headers()).status_code == 404
+
+
+def test_admin_user_orders_are_paginated_without_truncation(client):
+    uid = add_customer('history@example.com')
+    for index in range(5):
+        execute('INSERT INTO orders(id,user_id,protocol,plan,days,amount,created) VALUES (?,?,?,?,?,?,?)',
+                ('order-'+str(index),uid,'wg','month',30,199,100+index))
+    def page(number):
+        return client.get('/api/admin/users/' + str(uid),
+            params={'orders_page_size':2,'orders_page':number}, headers=admin_headers()).json()
+    pages = [page(number) for number in (1,2,3)]
+    assert all(p['orders_total'] == 5 for p in pages)
+    assert [o['id'] for p in pages for o in p['orders']] == ['order-'+str(i) for i in range(4,-1,-1)]
+    assert page(4)['orders'] == []
+
+
+@pytest.mark.parametrize('path', [
+    '/api/admin/users?page=0', '/api/admin/users?page_size=101', '/api/admin/users?q='+'a'*101,
+    '/api/admin/users/0', '/api/admin/users/-1', '/api/admin/users/999999999999999999999999',
+    '/api/admin/users/1?orders_page=0', '/api/admin/users/1?orders_page_size=101',
+])
+def test_admin_user_query_validation(client, path):
+    assert client.get(path, headers=admin_headers()).status_code == 422

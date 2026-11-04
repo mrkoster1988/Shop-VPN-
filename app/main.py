@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 import qrcode
-from fastapi import FastAPI, Depends, HTTPException, Request
+from fastapi import FastAPI, Depends, HTTPException, Request, Query, Path as APIPath
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -342,6 +342,48 @@ async def overview():
             'active': one("SELECT count(*) AS count FROM subscriptions WHERE state='active' AND expires>?", (int(time.time()),))['count'],
             'revenue': one("SELECT coalesce(sum(amount),0) AS amount FROM orders WHERE status IN ('paid','active') AND currency='RUB'")['amount'],
             'stars': one("SELECT coalesce(sum(amount),0) AS amount FROM orders WHERE status IN ('paid','active') AND currency='XTR'")['amount']}
+
+
+@app.get('/api/admin/users', dependencies=[Depends(admin)])
+async def admin_users(q: str = Query(default='', max_length=100),
+                      page: int = Query(default=1, ge=1, le=1000000),
+                      page_size: int = Query(default=25, ge=1, le=100)):
+    query = q.strip()
+    where, args = '', []
+    if query:
+        escaped = query.replace('\\', '\\\\').replace('%', '\\%').replace('_', '\\_')
+        where = "WHERE (u.email LIKE ? ESCAPE '\\' OR CAST(u.id AS TEXT)=? OR CAST(u.telegram_id AS TEXT)=?)"
+        args = ['%' + escaped + '%', query, query]
+    with db() as conn:
+        conn.execute('BEGIN')
+        total = conn.execute('SELECT count(*) FROM users u ' + where, args).fetchone()[0]
+        rows = conn.execute("""SELECT u.id,u.email,u.telegram_id,u.created,
+            (SELECT count(*) FROM subscriptions s WHERE s.user_id=u.id AND s.state='active' AND s.expires>?) AS active_subscriptions,
+            (SELECT count(*) FROM orders o WHERE o.user_id=u.id) AS orders_count
+            FROM users u """ + where + ' ORDER BY u.created DESC,u.id DESC LIMIT ? OFFSET ?',
+            [int(time.time()), *args, page_size, (page-1)*page_size]).fetchall()
+    return {'users': [dict(row) for row in rows], 'total': total, 'page': page, 'page_size': page_size}
+
+@app.get('/api/admin/users/{user_id}', dependencies=[Depends(admin)])
+async def admin_user(user_id: int = APIPath(ge=1, le=9223372036854775807),
+                     orders_page: int = Query(default=1, ge=1, le=1000000),
+                     orders_page_size: int = Query(default=20, ge=1, le=100)):
+    with db() as conn:
+        conn.execute('BEGIN')
+        row = conn.execute('SELECT id,email,telegram_id,created FROM users WHERE id=?', (user_id,)).fetchone()
+        if row is None:
+            raise HTTPException(404, 'Пользователь не найден')
+        subscriptions = [dict(sub) for sub in conn.execute(
+            'SELECT id,protocol,expires,state FROM subscriptions WHERE user_id=? ORDER BY protocol,id', (user_id,))]
+        total = conn.execute('SELECT count(*) FROM orders WHERE user_id=?', (user_id,)).fetchone()[0]
+        orders = [dict(order) for order in conn.execute("""SELECT id,protocol,plan,plan_name,days,amount,
+            currency,method,status,created,attempts,error FROM orders WHERE user_id=?
+            ORDER BY created DESC,id DESC LIMIT ? OFFSET ?""", (user_id, orders_page_size, (orders_page-1)*orders_page_size))]
+    now = int(time.time())
+    for sub in subscriptions:
+        sub['access_active'] = sub['state'] == 'active' and sub['expires'] > now
+    return {'user': dict(row), 'subscriptions': subscriptions, 'orders': orders,
+            'orders_total': total, 'orders_page': orders_page, 'orders_page_size': orders_page_size}
 
 @app.post('/api/admin/orders/{oid}/confirm', dependencies=[Depends(admin)])
 async def confirm(oid: str):
