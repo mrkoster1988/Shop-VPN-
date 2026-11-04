@@ -205,3 +205,19 @@ test('device revocation requires confirmation and uses DELETE',async()=>{
   p.run('window.confirm=()=>true');p.respond('/shop/api/devices/device-a',{ok:true});await p.element('devices-list').onclick(event);
   assert.ok(p.calls.some(c=>c.url==='/shop/api/devices/device-a'&&c.opts.method==='DELETE'));
 });
+
+test('catalog shows the paid profile allowance including primary-only plans',async()=>{
+  const p=await customerPage();p.state.catalog.plans[0].device_limit=0;p.run('renderPlans()');
+  assert.ok(p.element('plan-list').innerHTML.includes('Только основной профиль'));
+  p.state.catalog.plans[0].device_limit=8;p.run('renderPlans()');
+  assert.ok(p.element('plan-list').innerHTML.includes('до 8 дополнительных профилей'));
+});
+
+test('device manager hides creation at quota and keeps grandfathered profiles visible',async()=>{
+  const p=await customerPage();p.state.devices=[{id:'old-device',name:'Phone',protocol:'xui',state:'active',ready:true,expires:p.state.customer.subscriptions[0].expires}];
+  p.respond('/shop/api/subscriptions/sub-a/devices',{devices:p.state.devices,max_extra:0});
+  await p.run("openDevices('sub-a')");
+  assert.equal(p.element('device-form').hidden,true);
+  assert.ok(p.element('devices-list').innerHTML.includes('data-device-config="old-device"'));
+  assert.ok(p.element('devices-status').textContent.includes('Уже выданные профили работают'));
+});

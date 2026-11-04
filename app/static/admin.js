@@ -26,6 +26,7 @@ function planForm(plan) {
       <label>Срок, дней<input name="days" type="number" value="${plan.days}" min="1" max="3650" step="1" required></label>
       <label>Цена на сайте, ₽<input name="price" type="number" value="${plan.price}" min="1" max="1000000" step="1" required></label>
       <label>Цена в Telegram, Stars<input name="stars" type="number" value="${plan.stars}" min="1" max="100000" step="1" required></label>
+      <label>Дополнительных профилей (0 — только основной)<input name="device_limit" type="number" value="${plan.device_limit ?? 4}" min="0" max="20" step="1" required></label>
     </div>
     <label class="plan-enabled"><input name="enabled" type="checkbox" ${plan.enabled ? 'checked' : ''}> Доступен для новых покупок</label>
     <button type="submit" class="small">Сохранить тариф</button>
@@ -70,7 +71,7 @@ $('plan-editors').onsubmit = async event => {
   try {
     const saved = await api('plans/' + encodeURIComponent(form.dataset.planId), {method: 'PUT', data: {
       name: values.get('name'), days: Number(values.get('days')), price: Number(values.get('price')),
-      stars: Number(values.get('stars')), enabled: values.has('enabled'), version: Number(form.dataset.version),
+      stars: Number(values.get('stars')), device_limit:Number(values.get('device_limit') ?? 4), enabled: values.has('enabled'), version: Number(form.dataset.version),
     }});
     form.outerHTML = planForm(saved);
     $('admin-notice').textContent = 'Тариф сохранён. Новые условия действуют для новых заказов.';
@@ -100,7 +101,7 @@ $('create-plan-form').onsubmit = async event => {
   try {
     const saved = await api('plans', {method: 'POST', data: {
       id: values.get('id'), name: values.get('name'), days: Number(values.get('days')),
-      price: Number(values.get('price')), stars: Number(values.get('stars')), enabled: values.has('enabled'),
+      price: Number(values.get('price')), stars: Number(values.get('stars')), device_limit:Number(values.get('device_limit') ?? 4), enabled: values.has('enabled'),
     }});
     $('plan-editors').insertAdjacentHTML('beforeend', planForm(saved));
     $('create-plan-dialog').close();
@@ -160,7 +161,7 @@ async function loadUser(page) {
     $('user-details').innerHTML = `<p>Email: ${esc(user.email || '—')}</p><p>Telegram ID: ${esc(user.telegram_id ?? '—')}</p><p>Регистрация: ${esc(dateTime(user.created))}</p>`;
     $('user-subscriptions').innerHTML = data.subscriptions.length ? data.subscriptions.map(sub => {
       const status = sub.access_active ? 'Активна' : sub.state === 'pending' ? 'Готовится' : 'Неактивна';
-      return `<article class="subscription"><b>${esc(protocolLabel(sub.protocol))}</b><p>${status} · Срок: ${esc(dateTime(sub.expires))}</p></article>`;
+      return `<article class="subscription"><b>${esc(protocolLabel(sub.protocol))}</b><p>${status} · Срок: ${esc(dateTime(sub.expires))}</p><p>Дополнительных профилей: ${sub.device_limit ?? 4}</p></article>`;
     }).join('') : '<p>Подписок пока нет.</p>';
     $('user-orders').innerHTML = data.orders.length ? data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${order.days} дней · ${order.amount} ${order.currency === 'XTR' ? '★' : '₽'}</b><p>${esc(protocolLabel(order.protocol))} · ${esc(orderStatus[order.status] || order.status)}</p><p>Заказ: ${esc(order.id)}</p><p>${esc(dateTime(order.created))} · ${esc(order.method)}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}</article>`).join('') : '<p>Заказов пока нет.</p>';
     const pages = Math.max(1, Math.ceil(data.orders_total / data.orders_page_size));

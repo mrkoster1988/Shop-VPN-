@@ -89,8 +89,8 @@ async def fulfill(order_id):
                 device_secrets.append((c.encrypt(value),target,device['id']))
             with db() as conn:
                 conn.executemany("UPDATE devices SET secret=?,expires=?,error=NULL WHERE id=?",device_secrets)
-                conn.execute("UPDATE subscriptions SET expires=?,state='active',secret=?,reminder=0 WHERE id=?",
-                             (target, encrypted, sub['id']))
+                conn.execute("UPDATE subscriptions SET expires=?,state='active',secret=?,reminder=0,device_limit=? WHERE id=?",
+                             (target, encrypted,order['device_limit'],sub['id']))
                 conn.execute("UPDATE orders SET status='active',error=NULL WHERE id=?", (order_id,))
         except Exception as exc:
             # Do not persist remote responses, URLs, private keys or credentials in logs.

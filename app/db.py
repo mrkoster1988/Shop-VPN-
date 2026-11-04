@@ -79,6 +79,11 @@ def init_db():
         if 'server_id' not in sub_columns:
             conn.execute('ALTER TABLE subscriptions ADD COLUMN server_id TEXT REFERENCES servers(id)')
         conn.execute('CREATE INDEX IF NOT EXISTS subscriptions_server ON subscriptions(server_id,state,expires)')
+        # Defaults preserve the four extra profiles promised by previous versions.
+        for table in ('plans','orders','subscriptions'):
+            existing = {row['name'] for row in conn.execute('PRAGMA table_info('+table+')')}
+            if 'device_limit' not in existing:
+                conn.execute('ALTER TABLE '+table+' ADD COLUMN device_limit INTEGER NOT NULL DEFAULT 4 CHECK(device_limit BETWEEN 0 AND 20)')
         for position, plan in enumerate(c.PLANS):
             conn.execute('INSERT OR IGNORE INTO plans(id,name,days,price,stars,position) VALUES (?,?,?,?,?,?)',
                          (plan['id'], plan['name'], plan['days'], plan['price'], plan['stars'], position))

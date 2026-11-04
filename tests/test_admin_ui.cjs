@@ -140,3 +140,10 @@ test('changing API mode requires a complete replacement profile', async () => {
   assert.equal(page.requests.length,0);
   assert.ok(page.element('server-form-error').textContent.includes('полный профиль'));
 });
+
+test('tariff editor displays a zero profile limit without substituting the default',()=>{
+  const page=adminPage();
+  const markup=page.run("planForm({id:'single',name:'Один',days:30,price:100,stars:10,version:1,enabled:true,device_limit:0})");
+  assert.ok(markup.includes('name="device_limit" type="number" value="0"'));
+  assert.ok(markup.includes('min="0" max="20"'));
+});

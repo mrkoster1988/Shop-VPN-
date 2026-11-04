@@ -122,6 +122,7 @@ class PlanFields(BaseModel):
     price: int = Field(ge=1, le=1000000, strict=True)
     stars: int = Field(ge=1, le=100000, strict=True)
     enabled: bool = Field(strict=True)
+    device_limit: int = Field(default=4,ge=0,le=20,strict=True)
     @field_validator('name')
     @classmethod
     def clean_name(cls, value):
@@ -132,6 +133,7 @@ class PlanFields(BaseModel):
 
 
 class PlanUpdate(PlanFields):
+    device_limit: int | None = Field(default=None,ge=0,le=20,strict=True)
     version: int = Field(ge=1, strict=True)
 
 class PlanCreate(PlanFields):
@@ -194,7 +196,7 @@ async def catalog(request: Request):
     except HTTPException:
         customer = None
         tg = False
-    plans = [{**p, 'price': p['stars'] if tg else p['price']} for p in all_rows('SELECT id,name,days,price,stars,version FROM plans WHERE enabled=1 ORDER BY position,id')]
+    plans = [{**p, 'price': p['stars'] if tg else p['price']} for p in all_rows('SELECT id,name,days,price,stars,version,device_limit FROM plans WHERE enabled=1 ORDER BY position,id')]
     return {'plans': plans, 'currency': 'XTR' if tg else 'RUB',  'protocols': [{'id': 'xui', 'name': 'VLESS · 3x-ui', 'available': providers.available('xui', customer['id'] if customer else None)},
                                            {'id': 'wg', 'name': 'WireGuard', 'available': providers.available('wg', customer['id'] if customer else None)}],
             'payment_mode': 'stars' if tg else c.PAYMENT_MODE, 'bot_username': c.BOT_USERNAME,
@@ -253,8 +255,8 @@ async def logout(request: Request):
 
 @app.get('/api/me')
 async def me(user=Depends(current_user)):
-    subs = all_rows('SELECT id,protocol,expires,state FROM subscriptions WHERE user_id=?', (user['id'],))
-    orders = all_rows('SELECT id,protocol,plan,plan_name,days,amount,currency,method,status,created,payment_url,attempts FROM orders WHERE user_id=? ORDER BY created DESC LIMIT 50', (user['id'],))
+    subs = all_rows('SELECT id,protocol,expires,state,device_limit FROM subscriptions WHERE user_id=?', (user['id'],))
+    orders = all_rows('SELECT id,protocol,plan,plan_name,days,amount,currency,method,status,created,payment_url,attempts,device_limit FROM orders WHERE user_id=? ORDER BY created DESC LIMIT 50', (user['id'],))
     return {'id': user['id'], 'email': user['email'], 'telegram_id': user['telegram_id'], 'subscriptions': subs, 'orders': orders}
 
 @app.post('/api/orders')
@@ -279,8 +281,8 @@ async def purchase(data: Purchase, user=Depends(current_user)):
                     (user['id'], data.protocol, data.plan, method, plan['version'], int(time.time()) - 1800))
         if not order:
             oid = str(uuid.uuid4())
-            execute('INSERT INTO orders(id,user_id,protocol,plan,days,amount,created,receipt_email,currency,method,plan_version,plan_name) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-                    (oid, user['id'], data.protocol, plan['id'], plan['days'], plan['stars'] if method == 'stars' else plan['price'], int(time.time()), email, 'XTR' if method == 'stars' else 'RUB', method, plan['version'], plan['name']))
+            execute('INSERT INTO orders(id,user_id,protocol,plan,days,amount,created,receipt_email,currency,method,plan_version,plan_name,device_limit) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                    (oid, user['id'], data.protocol, plan['id'], plan['days'], plan['stars'] if method == 'stars' else plan['price'], int(time.time()), email, 'XTR' if method == 'stars' else 'RUB', method, plan['version'], plan['name'],plan['device_limit']))
             order = one('SELECT * FROM orders WHERE id=?', (oid,))
         if method == 'stars' and not order['payment_url']:
             try:
@@ -304,11 +306,9 @@ async def order_status(order_id: str, user=Depends(current_user)):
     order = one('SELECT * FROM orders WHERE id=? AND user_id=?', (order_id, user['id']))
     if not order:
         raise HTTPException(404, 'Заказ не найден')
-    return {k: order[k] for k in ('id', 'protocol', 'plan_name', 'days', 'amount', 'currency', 'method', 'status', 'payment_url')} | {
+    return {k: order[k] for k in ('id', 'protocol', 'plan_name', 'days', 'amount', 'currency', 'method', 'status', 'payment_url','device_limit')} | {
         'instructions': os.getenv('MANUAL_PAYMENT_TEXT', 'Свяжитесь с поддержкой и сообщите номер заказа.')
         if order['method'] == 'manual' else ''}
-
-MAX_EXTRA_DEVICES = 4
 
 class DeviceCreate(BaseModel):
     model_config = {'extra':'forbid'}
@@ -340,7 +340,7 @@ def public_device(row,sub):
 async def device_list(sid: str,user=Depends(current_user)):
     sub=owned_subscription(sid,user)
     rows=all_rows("SELECT * FROM devices WHERE subscription_id=? AND state!='revoked' ORDER BY created,id",(sid,))
-    return {'devices':[public_device(row,sub) for row in rows],'max_extra':MAX_EXTRA_DEVICES}
+    return {'devices':[public_device(row,sub) for row in rows],'max_extra':sub['device_limit']}
 
 @app.post('/api/subscriptions/{sid}/devices')
 async def device_create(sid: str,data: DeviceCreate,user=Depends(current_user)):
@@ -355,7 +355,7 @@ async def device_create(sid: str,data: DeviceCreate,user=Depends(current_user)):
                 return public_device(dict(row),sub)
             if sub['state']!='active' or sub['expires']<=time.time() or not sub['server_id']:
                 raise HTTPException(409,'Нужна действующая подписка с сервером')
-            if conn.execute("SELECT count(*) FROM devices WHERE subscription_id=? AND state!='revoked'",(sid,)).fetchone()[0]>=MAX_EXTRA_DEVICES:
+            if conn.execute("SELECT count(*) FROM devices WHERE subscription_id=? AND state!='revoked'",(sid,)).fetchone()[0]>=sub['device_limit']:
                 raise HTTPException(409,'Достигнут лимит дополнительных профилей')
             did=str(uuid.uuid4())
             conn.execute('INSERT INTO devices(id,subscription_id,request_id,name,created) VALUES (?,?,?,?,?)',(did,sid,str(data.request_id),data.name,int(time.time())))
@@ -467,8 +467,8 @@ async def create_plan(data: PlanCreate):
             if conn.execute('SELECT 1 FROM plans WHERE id=?', (data.id,)).fetchone():
                 raise HTTPException(409, 'Тариф с таким кодом уже существует. Обновите список тарифов.')
             position = conn.execute('SELECT coalesce(max(position),-1)+1 FROM plans').fetchone()[0]
-            conn.execute('INSERT INTO plans(id,name,days,price,stars,enabled,position,updated) VALUES (?,?,?,?,?,?,?,?)',
-                         (data.id, data.name, data.days, data.price, data.stars, int(data.enabled), position, int(time.time())))
+            conn.execute('INSERT INTO plans(id,name,days,price,stars,enabled,position,updated,device_limit) VALUES (?,?,?,?,?,?,?,?,?)',
+                         (data.id, data.name, data.days, data.price, data.stars, int(data.enabled), position, int(time.time()),data.device_limit))
             saved = dict(conn.execute('SELECT * FROM plans WHERE id=?', (data.id,)).fetchone())
             conn.execute('INSERT INTO plan_changes(plan_id,created,before_data,after_data) VALUES (?,?,?,?)',
                          (data.id, saved['updated'], 'null', json.dumps(saved, ensure_ascii=False)))
@@ -485,10 +485,10 @@ async def update_plan(plan_id: str, data: PlanUpdate):
             before = dict(row)
             if before['version'] != data.version:
                 raise HTTPException(409, 'Тариф уже изменён. Обновите страницу перед сохранением.')
-            if all(before[key] == value for key, value in data.model_dump(exclude={'version'}).items()):
+            if all(before[key] == value for key, value in data.model_dump(exclude={'version'},exclude_none=True).items()):
                 return admin_plan(before)
-            conn.execute('UPDATE plans SET name=?,days=?,price=?,stars=?,enabled=?,version=version+1,updated=? WHERE id=?',
-                         (data.name, data.days, data.price, data.stars, int(data.enabled), int(time.time()), plan_id))
+            conn.execute('UPDATE plans SET name=?,days=?,price=?,stars=?,enabled=?,device_limit=?,version=version+1,updated=? WHERE id=?',
+                         (data.name, data.days, data.price, data.stars, int(data.enabled),before['device_limit'] if data.device_limit is None else data.device_limit,int(time.time()),plan_id))
             after = dict(conn.execute('SELECT * FROM plans WHERE id=?', (plan_id,)).fetchone())
             conn.execute('INSERT INTO plan_changes(plan_id,created,before_data,after_data) VALUES (?,?,?,?)',
                          (plan_id, after['updated'], json.dumps(before, ensure_ascii=False), json.dumps(after, ensure_ascii=False)))
@@ -533,7 +533,7 @@ async def admin_user(user_id: int = APIPath(ge=1, le=9223372036854775807),
         if row is None:
             raise HTTPException(404, 'Пользователь не найден')
         subscriptions = [dict(sub) for sub in conn.execute(
-            'SELECT id,protocol,expires,state FROM subscriptions WHERE user_id=? ORDER BY protocol,id', (user_id,))]
+            'SELECT id,protocol,expires,state,device_limit FROM subscriptions WHERE user_id=? ORDER BY protocol,id', (user_id,))]
         total = conn.execute('SELECT count(*) FROM orders WHERE user_id=?', (user_id,)).fetchone()[0]
         orders = [dict(order) for order in conn.execute("""SELECT id,protocol,plan,plan_name,days,amount,
             currency,method,status,created,attempts,error FROM orders WHERE user_id=?

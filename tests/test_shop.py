@@ -592,7 +592,7 @@ def test_admin_user_detail_contains_only_owned_records_and_no_secrets(client):
     assert [o['id'] for o in data['orders']] == ['own-order'] and data['orders_total'] == 1
     assert 'private-' not in result.text and 'secret-payment' not in result.text
     assert 'payment_id' not in result.text and 'payment_url' not in result.text and 'checkout_id' not in result.text
-    assert all(set(s) == {'id','protocol','expires','state','access_active'} for s in data['subscriptions'])
+    assert all(set(s) == {'id','protocol','expires','state','device_limit','access_active'} for s in data['subscriptions'])
     summary = client.get('/api/admin/users', params={'q':'alice@'}, headers=admin_headers()).json()['users'][0]
     assert summary['active_subscriptions'] == 1 and summary['orders_count'] == 1
     execute("UPDATE subscriptions SET state='pending',expires=? WHERE id='expired'", (now+86400,))

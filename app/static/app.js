@@ -20,11 +20,12 @@ function toast(message) { $('toast').textContent = message; $('toast').hidden = 
 function show(id) { if (!$(id).open) $(id).showModal(); }
 function date(ts) { return new Date(ts*1000).toLocaleDateString('ru-RU'); }
 function protocolName(id) { return id === 'wg' ? 'WireGuard' : 'VLESS'; }
+function profileAllowance(limit) { return limit===0 ? 'Только основной профиль' : 'Основной + до '+limit+' дополнительных профилей'; }
 function renderPlans() {
   $('protocols').innerHTML = catalog.protocols.map(p => `<button class="${p.id===protocol?'chosen':''}" data-protocol="${p.id}" aria-pressed="${p.id===protocol}">${esc(protocolName(p.id))}${p.available?'':' · скоро'}</button>`).join('');
   const available = catalog.protocols.find(p => p.id===protocol).available;
   $('provider-note').textContent = available ? '' : 'Подключение этого протокола ещё не настроено. Покупки временно недоступны.';
-  $('plan-list').innerHTML = catalog.plans.length ? catalog.plans.map((p,i) => `<article class="plan ${i===1?'featured':''}">${i===1?'<span class="badge">УДОБНЫЙ ВЫБОР</span>':''}<h3>${esc(p.name)}</h3><div class="price">${p.price.toLocaleString('ru-RU')} <small>${catalog.currency==='XTR'?'★':'₽'}</small></div><p>${p.days} дней доступа · ${esc(protocolName(protocol))}</p><ul><li>Личное подключение</li><li>Настройки и QR-код в кабинете</li><li>Продление с сохранением дней</li></ul><button data-plan="${p.id}" ${available?'':'disabled'}>${available?'Выбрать тариф ↗':'Скоро'}</button></article>`).join('') : '<p class="plans-empty">Тарифы временно недоступны. Пожалуйста, обратитесь в поддержку.</p>';
+  $('plan-list').innerHTML = catalog.plans.length ? catalog.plans.map((p,i) => `<article class="plan ${i===1?'featured':''}">${i===1?'<span class="badge">УДОБНЫЙ ВЫБОР</span>':''}<h3>${esc(p.name)}</h3><div class="price">${p.price.toLocaleString('ru-RU')} <small>${catalog.currency==='XTR'?'★':'₽'}</small></div><p>${p.days} дней доступа · ${esc(protocolName(protocol))}</p><ul><li>${esc(profileAllowance(p.device_limit ?? 4))}</li><li>Настройки и QR-код в кабинете</li><li>Продление с сохранением дней</li></ul><button data-plan="${p.id}" ${available?'':'disabled'}>${available?'Выбрать тариф ↗':'Скоро'}</button></article>`).join('') : '<p class="plans-empty">Тарифы временно недоступны. Пожалуйста, обратитесь в поддержку.</p>';
 }
 function clearConnection() {
   connectionRequest++; connection = null; clearTimeout(connectionTimer);
@@ -74,7 +75,7 @@ function renderAccount() {
   $('identity').textContent = me.email || 'Telegram · ' + me.telegram_id;
   $('subscriptions').innerHTML = me.subscriptions.length ? me.subscriptions.map(s => {
     const active = s.state === 'active' && s.expires*1000 > Date.now();
-    return `<article class="subscription"><h3>${esc(protocolName(s.protocol))}</h3><p>${active?'Доступ до '+date(s.expires):s.state==='pending'?'Подключение готовится':'Подписка закончилась'}</p>${active?`<button class="small" data-config="${esc(s.id)}">Основной профиль ↗</button>`:''}${s.state!=='pending'?` <button class="small secondary" data-devices="${esc(s.id)}">Устройства</button><button class="text-link" data-renew="${esc(s.protocol)}">${active?'Продлить подписку':'Возобновить подписку'}</button>`:''}</article>`;
+    return `<article class="subscription"><h3>${esc(protocolName(s.protocol))}</h3><p>${active?'Доступ до '+date(s.expires):s.state==='pending'?'Подключение готовится':'Подписка закончилась'}</p><p>${esc(profileAllowance(s.device_limit ?? 4))}</p>${active?`<button class="small" data-config="${esc(s.id)}">Основной профиль ↗</button>`:''}${s.state!=='pending'?` <button class="small secondary" data-devices="${esc(s.id)}">Устройства</button><button class="text-link" data-renew="${esc(s.protocol)}">${active?'Продлить подписку':'Возобновить подписку'}</button>`:''}</article>`;
   }).join('') : '<p>Подписок пока нет. Выберите тариф на главной странице.</p>';
   $('orders').innerHTML = me.orders.length ? me.orders.map(o => `<div class="order"><div><b>${esc(protocolName(o.protocol))} · ${money(o.amount,o.currency)}</b><br><code>${esc(o.id)}</code><br>${date(o.created)}</div><div><span class="status ${esc(o.status)}">${esc(statusLabel[o.status] || o.status)}</span>${o.status==='pending'?`<br><button class="text-link" data-order="${esc(o.id)}">Оплатить / реквизиты</button>`:''}</div></div>`).join('') : '<p>Заказов пока нет.</p>';
 }
@@ -84,7 +85,7 @@ async function beginCheckout(id) {
   selectedPlan = catalog.plans.find(p => p.id===id);
   if (!selectedPlan) throw new Error('Тариф больше недоступен. Выберите другой тариф.');
   if (!me) { show('auth-dialog'); return; }
-  $('checkout-info').textContent = `${selectedPlan.name} / ${selectedPlan.days} дней / ${protocolName(protocol)} / ${money(selectedPlan.price,catalog.currency)}`;
+  $('checkout-info').textContent = `${selectedPlan.name} / ${selectedPlan.days} дней / ${protocolName(protocol)} / ${money(selectedPlan.price,catalog.currency)} / ${profileAllowance(selectedPlan.device_limit ?? 4)}`;
   $('payment-result').replaceChildren(); $('checkout-form').hidden = false;
   $('terms-text').textContent=catalog.terms; $('accept-terms').checked=false; $('accept-terms').required=catalog.payment_mode==='stars';
   $('receipt-label').hidden = !catalog.receipts; $('receipt-label').querySelector('input').required = catalog.receipts;
@@ -95,7 +96,7 @@ function paymentResult(order) {
   $('checkout-form').hidden = true;
   $('payment-result').replaceChildren();
   const paragraph = document.createElement('p');
-  paragraph.textContent = `Заказ: ${order.id}\nТариф: ${order.plan_name || protocolName(order.protocol)} · ${order.days} дней\nСумма: ${money(order.amount,order.currency)}\n${statusLabel[order.status] || order.status}\n\n${order.instructions || ''}`;
+  paragraph.textContent = `Заказ: ${order.id}\nТариф: ${order.plan_name || protocolName(order.protocol)} · ${order.days} дней\n${profileAllowance(order.device_limit ?? 4)}\nСумма: ${money(order.amount,order.currency)}\n${statusLabel[order.status] || order.status}\n\n${order.instructions || ''}`;
   $('payment-result').append(paragraph);
   if (order.payment_url && order.status === 'pending') {
     const link = document.createElement('a');
@@ -238,10 +239,10 @@ async function refreshDevices() {
   if (request!==deviceRequest || sid!==deviceSubscription) return;
   deviceCache=result.devices;
   const parent=me?.subscriptions.find(s=>s.id===sid);
-  $('device-form').hidden=!parent || parent.state!=='active' || parent.expires*1000<=Date.now();
+  $('device-form').hidden=!parent || parent.state!=='active' || parent.expires*1000<=Date.now() || result.devices.length>=result.max_extra;
   const labels={pending:'Готовим профиль',active:'Профиль выдан',revoking:'Отключаем доступ',revoked:'Доступ отозван'};
   $('devices-list').innerHTML=result.devices.map(d=>`<article class="subscription"><h3>${esc(d.name)}</h3><p>${esc(labels[d.state] || d.state)}${d.retrying?' · повторим после ошибки':''}${d.state==='active'&&!d.ready?' · срок доступа истёк':''}</p><div class="actions">${d.ready?`<button class="small" data-device-config="${esc(d.id)}">Подключить ↗</button>`:''}${['pending','active'].includes(d.state)?`<button class="small secondary" data-device-revoke="${esc(d.id)}">Отозвать доступ</button>`:''}</div></article>`).join('') || '<p>Дополнительных профилей пока нет.</p>';
-  $('devices-status').textContent='Дополнительные профили: '+result.devices.length+' из '+result.max_extra+'. Основной профиль — отдельно.';
+  $('devices-status').textContent='Дополнительные профили: '+result.devices.length+' из '+result.max_extra+'. Основной профиль — отдельно.'+(result.devices.length>result.max_extra?' Уже выданные профили работают; новые недоступны до освобождения лимита.':'');
   if (connection?.deviceId) {
     const current=result.devices.find(d=>d.id===connection.deviceId);
     if (!current?.ready || !parent) { $('config-dialog').close();clearConnection(); }
