@@ -56,6 +56,13 @@ def init_db():
           id TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), protocol TEXT NOT NULL,
           expires INTEGER NOT NULL, state TEXT NOT NULL, secret TEXT,
           reminder INTEGER NOT NULL DEFAULT 0, server_id TEXT REFERENCES servers(id), UNIQUE(user_id, protocol));
+        CREATE TABLE IF NOT EXISTS devices (
+          id TEXT PRIMARY KEY, subscription_id TEXT NOT NULL REFERENCES subscriptions(id),
+          request_id TEXT NOT NULL, name TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending',
+          expires INTEGER NOT NULL DEFAULT 0, secret TEXT, created INTEGER NOT NULL,
+          attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL DEFAULT 0, error TEXT,
+          UNIQUE(subscription_id,request_id));
+        CREATE INDEX IF NOT EXISTS devices_subscription ON devices(subscription_id,state);
         CREATE TABLE IF NOT EXISTS audit (
           id INTEGER PRIMARY KEY, created INTEGER NOT NULL, action TEXT NOT NULL, order_id TEXT);
         CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);

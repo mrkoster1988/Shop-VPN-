@@ -11,6 +11,7 @@ from collections import defaultdict, deque
 from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Literal
+from uuid import UUID
 from urllib.parse import urlsplit
 import qrcode
 from fastapi import FastAPI, Depends, HTTPException, Request, Query, Path as APIPath
@@ -306,6 +307,87 @@ async def order_status(order_id: str, user=Depends(current_user)):
     return {k: order[k] for k in ('id', 'protocol', 'plan_name', 'days', 'amount', 'currency', 'method', 'status', 'payment_url')} | {
         'instructions': os.getenv('MANUAL_PAYMENT_TEXT', 'Свяжитесь с поддержкой и сообщите номер заказа.')
         if order['method'] == 'manual' else ''}
+
+MAX_EXTRA_DEVICES = 4
+
+class DeviceCreate(BaseModel):
+    model_config = {'extra':'forbid'}
+    name: str = Field(min_length=1,max_length=60)
+    request_id: UUID
+
+    @field_validator('name')
+    @classmethod
+    def clean_name(cls,value):
+        value=value.strip()
+        if not value or any(ord(ch)<32 for ch in value):
+            raise ValueError('Укажите название устройства')
+        return value
+
+
+def owned_subscription(sid,user):
+    sub=one('SELECT * FROM subscriptions WHERE id=? AND user_id=?',(sid,user['id']))
+    if not sub:
+        raise HTTPException(404,'Подписка не найдена')
+    return sub
+
+
+def public_device(row,sub):
+    return {k:row[k] for k in ('id','name','state','created','expires')} | {
+        'protocol':sub['protocol'],'ready':row['state']=='active' and sub['state']=='active' and min(row['expires'],sub['expires'])>time.time(),
+        'retrying':bool(row['error'])}
+
+@app.get('/api/subscriptions/{sid}/devices')
+async def device_list(sid: str,user=Depends(current_user)):
+    sub=owned_subscription(sid,user)
+    rows=all_rows("SELECT * FROM devices WHERE subscription_id=? AND state!='revoked' ORDER BY created,id",(sid,))
+    return {'devices':[public_device(row,sub) for row in rows],'max_extra':MAX_EXTRA_DEVICES}
+
+@app.post('/api/subscriptions/{sid}/devices')
+async def device_create(sid: str,data: DeviceCreate,user=Depends(current_user)):
+    async with service.lock:
+        sub=owned_subscription(sid,user)
+        with db() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row=conn.execute('SELECT * FROM devices WHERE subscription_id=? AND request_id=?',(sid,str(data.request_id))).fetchone()
+            if row:
+                if row['name']!=data.name:
+                    raise HTTPException(409,'Этот запрос уже использован для другого устройства')
+                return public_device(dict(row),sub)
+            if sub['state']!='active' or sub['expires']<=time.time() or not sub['server_id']:
+                raise HTTPException(409,'Нужна действующая подписка с сервером')
+            if conn.execute("SELECT count(*) FROM devices WHERE subscription_id=? AND state!='revoked'",(sid,)).fetchone()[0]>=MAX_EXTRA_DEVICES:
+                raise HTTPException(409,'Достигнут лимит дополнительных профилей')
+            did=str(uuid.uuid4())
+            conn.execute('INSERT INTO devices(id,subscription_id,request_id,name,created) VALUES (?,?,?,?,?)',(did,sid,str(data.request_id),data.name,int(time.time())))
+            row=dict(conn.execute('SELECT * FROM devices WHERE id=?',(did,)).fetchone())
+        return JSONResponse(public_device(row,sub),status_code=201)
+
+@app.delete('/api/devices/{did}')
+async def device_revoke(did: str,user=Depends(current_user)):
+    async with service.lock:
+        row=one('SELECT d.* FROM devices d JOIN subscriptions s ON s.id=d.subscription_id WHERE d.id=? AND s.user_id=?',(did,user['id']))
+        if not row: raise HTTPException(404,'Устройство не найдено')
+        execute("UPDATE devices SET state='revoking',secret=NULL,next_attempt=0,error=NULL WHERE id=? AND state NOT IN ('revoking','revoked')",(did,))
+    return {'ok':True}
+
+@app.get('/api/devices/{did}/config')
+async def device_config(did: str,user=Depends(current_user)):
+    row=one('SELECT d.*,s.protocol,s.state AS parent_state,s.expires AS parent_expires FROM devices d JOIN subscriptions s ON s.id=d.subscription_id WHERE d.id=? AND s.user_id=?',(did,user['id']))
+    if not row or row['state']!='active' or row['parent_state']!='active' or min(row['expires'],row['parent_expires'])<=time.time():
+        raise HTTPException(404,'Действующий профиль не найден')
+    return {'config':c.decrypt(row['secret']),'protocol':row['protocol']}
+
+@app.get('/api/devices/{did}/download')
+async def device_download(did: str,user=Depends(current_user)):
+    result=await device_config(did,user)
+    extension='conf' if result['protocol']=='wg' else 'txt'
+    return Response(result['config'],media_type='text/plain',headers={'Content-Disposition':f'attachment; filename="pushok-device.{extension}"'})
+
+@app.get('/api/devices/{did}/qr')
+async def device_qr(did: str,user=Depends(current_user)):
+    result=await device_config(did,user)
+    buffer=io.BytesIO();qrcode.make(result['config']).save(buffer,format='PNG')
+    return Response(buffer.getvalue(),media_type='image/png')
 
 @app.get('/api/subscriptions/{sid}/config')
 async def config_file(sid: str, user=Depends(current_user)):

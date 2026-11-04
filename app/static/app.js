@@ -6,6 +6,7 @@ const statusLabel = {pending:'Ожидает оплаты',checkout:'Оплат�
 const money=(amount,currency)=>amount.toLocaleString('ru-RU')+' '+(currency==='XTR'?'★':'₽');
 let catalog, me, protocol = 'xui', selectedPlan, register = false, toastTimer;
 let sessionEpoch = 0, meRequest = 0, connectionRequest = 0, connection = null, connectionTimer;
+let deviceSubscription=null, deviceRequest=0, deviceIntent=null, deviceCache=[];
 async function api(path, data, method) {
   const epoch = sessionEpoch;
   const response = await fetch(basePath + path, {method:method || (data ? 'POST':'GET'), credentials:'same-origin',
@@ -37,6 +38,7 @@ function clearConnection() {
 }
 function clearPrivate() {
   me = null; selectedPlan = null;
+  $('devices-dialog').close(); clearDevices();
   $('config-dialog').close(); clearConnection();
   $('account-dialog').close(); $('checkout-dialog').close();
   for (const id of ['identity','subscriptions','orders','payment-result','checkout-info']) $(id).replaceChildren();
@@ -58,20 +60,21 @@ async function refreshMe() {
     const current = me?.subscriptions.find(s=>s.id===connection.id);
     if (!current || current.state!=='active' || current.expires*1000<=Date.now()) {
       $('config-dialog').close(); clearConnection();
-    } else if (current.expires!==connection.expires) {
-      connection.expires=current.expires;
-      $('config-summary').textContent=protocolName(current.protocol)+' · доступ до '+date(current.expires);
+    } else if (Math.min(current.expires,connection.deviceExpires || Infinity)!==connection.expires) {
+      connection.expires=Math.min(current.expires,connection.deviceExpires || Infinity);
+      $('config-summary').textContent=protocolName(current.protocol)+' · доступ до '+date(connection.expires);
       scheduleConnectionExpiry();
     }
   }
   if (me) renderAccount();
+  if (deviceSubscription) await refreshDevices();
 }
 function renderAccount() {
   if (!me) return;
   $('identity').textContent = me.email || 'Telegram · ' + me.telegram_id;
   $('subscriptions').innerHTML = me.subscriptions.length ? me.subscriptions.map(s => {
     const active = s.state === 'active' && s.expires*1000 > Date.now();
-    return `<article class="subscription"><h3>${esc(protocolName(s.protocol))}</h3><p>${active?'Доступ до '+date(s.expires):s.state==='pending'?'Подключение готовится':'Подписка закончилась'}</p>${active?`<button class="small" data-config="${esc(s.id)}">Подключить устройство ↗</button>`:''}${s.state!=='pending'?` <button class="text-link" data-renew="${esc(s.protocol)}">${active?'Продлить подписку':'Возобновить подписку'}</button>`:''}</article>`;
+    return `<article class="subscription"><h3>${esc(protocolName(s.protocol))}</h3><p>${active?'Доступ до '+date(s.expires):s.state==='pending'?'Подключение готовится':'Подписка закончилась'}</p>${active?`<button class="small" data-config="${esc(s.id)}">Основной профиль ↗</button>`:''}${s.state!=='pending'?` <button class="small secondary" data-devices="${esc(s.id)}">Устройства</button><button class="text-link" data-renew="${esc(s.protocol)}">${active?'Продлить подписку':'Возобновить подписку'}</button>`:''}</article>`;
   }).join('') : '<p>Подписок пока нет. Выберите тариф на главной странице.</p>';
   $('orders').innerHTML = me.orders.length ? me.orders.map(o => `<div class="order"><div><b>${esc(protocolName(o.protocol))} · ${money(o.amount,o.currency)}</b><br><code>${esc(o.id)}</code><br>${date(o.created)}</div><div><span class="status ${esc(o.status)}">${esc(statusLabel[o.status] || o.status)}</span>${o.status==='pending'?`<br><button class="text-link" data-order="${esc(o.id)}">Оплатить / реквизиты</button>`:''}</div></div>`).join('') : '<p>Заказов пока нет.</p>';
 }
@@ -163,7 +166,7 @@ function scheduleConnectionExpiry() {
     clearConnection(); $('config-status').textContent='Срок подписки истёк. Обновите кабинет или продлите доступ.';
   },Math.min(2147483647,Math.max(0,connection.expires*1000-Date.now())));
 }
-async function openConnection(sid) {
+async function openConnection(sid, device=null) {
   clearConnection();
   const sub = me?.subscriptions.find(s=>s.id===sid);
   if (!sub || sub.state!=='active' || sub.expires*1000<=Date.now()) throw new Error('Обновите кабинет и проверьте срок подписки.');
@@ -171,16 +174,17 @@ async function openConnection(sid) {
   $('config-platform').value = detectedPlatform();
   $('config-status').textContent = 'Загружаем настройки…'; show('config-dialog');
   try {
-    const result = await api('/api/subscriptions/'+encodeURIComponent(sid)+'/config');
+    const path=device ? '/api/devices/'+encodeURIComponent(device.id) : '/api/subscriptions/'+encodeURIComponent(sid);
+    const result = await api(path+'/config');
     if (request!==connectionRequest || !$('config-dialog').open) return;
     if (result.protocol!==sub.protocol || typeof result.config!=='string' || !result.config) throw new Error('Не удалось получить настройки. Обновите кабинет.');
-    connection = {id:sid,protocol:sub.protocol,expires:sub.expires};
+    connection = {id:sid,deviceId:device?.id,deviceExpires:device?.expires,protocol:sub.protocol,expires:Math.min(sub.expires,device?.expires || Infinity),path};
     if (!connectionReady()) return;
     $('config-value').value = result.config;
-    $('config-summary').textContent = protocolName(sub.protocol)+' · доступ до '+date(sub.expires);
+    $('config-summary').textContent = (device ? device.name+' · ' : '')+protocolName(sub.protocol)+' · доступ до '+date(connection.expires);
     $('config-status').textContent = 'Настройки готовы. Следуйте трём шагам ниже.';
     $('config-support').textContent = catalog.support;
-    $('download-config').href = basePath+'/api/subscriptions/'+encodeURIComponent(sid)+'/download';
+    $('download-config').href = basePath+path+'/download';
     $('download-config').setAttribute('aria-disabled','false');
     $('copy-config').disabled = false; $('toggle-config-qr').disabled = false;
     connectionInstructions();
@@ -197,7 +201,7 @@ $('toggle-config-qr').onclick = () => {
   const visible = $('config-qr-panel').hidden;
   $('config-qr-panel').hidden = !visible;
   $('toggle-config-qr').textContent = visible ? 'Скрыть QR-код' : 'Показать QR-код';
-  if (visible) $('config-qr').src = basePath+'/api/subscriptions/'+encodeURIComponent(connection.id)+'/qr';
+  if (visible) $('config-qr').src = basePath+connection.path+'/qr';
   else $('config-qr').removeAttribute('src');
 };
 $('config-qr').onerror = () => {
@@ -207,6 +211,8 @@ $('config-qr').onerror = () => {
   $('config-status').textContent='QR-код не загрузился. Используйте копирование или скачивание настроек.';
 };
 $('subscriptions').onclick = event => {
+  const devices=event.target.closest('[data-devices]');
+  if (devices) { openDevices(devices.dataset.devices).catch(e=>toast(e.message)); return; }
   const renew=event.target.closest('[data-renew]');
   if (renew) {
     const item=catalog.protocols.find(p=>p.id===renew.dataset.renew);
@@ -216,6 +222,53 @@ $('subscriptions').onclick = event => {
   }
   const button=event.target.closest('[data-config]');
   if (button) openConnection(button.dataset.config).catch(e=>toast(e.message));
+};
+function clearDevices() {
+  deviceRequest++; deviceSubscription=null; deviceIntent=null; deviceCache=[];
+  $('device-form').reset(); $('devices-list').replaceChildren(); $('devices-status').textContent='';
+}
+$('devices-dialog').addEventListener('close',clearDevices);
+async function openDevices(sid) {
+  clearDevices();deviceSubscription=sid;show('devices-dialog');await refreshDevices();
+}
+async function refreshDevices() {
+  if (!deviceSubscription) return;
+  const request=++deviceRequest,sid=deviceSubscription;
+  const result=await api('/api/subscriptions/'+encodeURIComponent(sid)+'/devices');
+  if (request!==deviceRequest || sid!==deviceSubscription) return;
+  deviceCache=result.devices;
+  const parent=me?.subscriptions.find(s=>s.id===sid);
+  $('device-form').hidden=!parent || parent.state!=='active' || parent.expires*1000<=Date.now();
+  const labels={pending:'Готовим профиль',active:'Профиль выдан',revoking:'Отключаем доступ',revoked:'Доступ отозван'};
+  $('devices-list').innerHTML=result.devices.map(d=>`<article class="subscription"><h3>${esc(d.name)}</h3><p>${esc(labels[d.state] || d.state)}${d.retrying?' · повторим после ошибки':''}${d.state==='active'&&!d.ready?' · срок доступа истёк':''}</p><div class="actions">${d.ready?`<button class="small" data-device-config="${esc(d.id)}">Подключить ↗</button>`:''}${['pending','active'].includes(d.state)?`<button class="small secondary" data-device-revoke="${esc(d.id)}">Отозвать доступ</button>`:''}</div></article>`).join('') || '<p>Дополнительных профилей пока нет.</p>';
+  $('devices-status').textContent='Дополнительные профили: '+result.devices.length+' из '+result.max_extra+'. Основной профиль — отдельно.';
+  if (connection?.deviceId) {
+    const current=result.devices.find(d=>d.id===connection.deviceId);
+    if (!current?.ready || !parent) { $('config-dialog').close();clearConnection(); }
+    else { connection.deviceExpires=current.expires;connection.expires=Math.min(current.expires,parent.expires);$('config-summary').textContent=current.name+' · '+protocolName(current.protocol)+' · доступ до '+date(connection.expires);scheduleConnectionExpiry(); }
+  }
+}
+$('devices-refresh').onclick=()=>refreshDevices().catch(e=>toast(e.message));
+$('device-form').onsubmit=async event=>{
+  event.preventDefault();const button=event.target.querySelector('button');button.disabled=true;
+  const name=String(new FormData(event.target).get('name') || '').trim(),sid=deviceSubscription;
+  if (!deviceIntent || deviceIntent.name!==name) deviceIntent={name,request_id:crypto.randomUUID()};
+  const intent=deviceIntent;
+  try {
+    await api('/api/subscriptions/'+encodeURIComponent(sid)+'/devices',intent);
+    if (sid!==deviceSubscription || intent!==deviceIntent) return;
+    deviceIntent=null;$('device-form').reset();await refreshDevices();
+  } catch(e) { if(sid===deviceSubscription) $('devices-status').textContent=e.message; }
+  finally { button.disabled=false; }
+};
+$('devices-list').onclick=async event=>{
+  const connect=event.target.closest('[data-device-config]');
+  if(connect){const device=deviceCache.find(d=>d.id===connect.dataset.deviceConfig);if(device?.ready)await openConnection(deviceSubscription,device).catch(e=>toast(e.message));return;}
+  const revoke=event.target.closest('[data-device-revoke]');if(!revoke)return;
+  if(!window.confirm('Отозвать доступ этого устройства? Его текущий ключ будет отключён.'))return;
+  revoke.disabled=true;
+  try {await api('/api/devices/'+encodeURIComponent(revoke.dataset.deviceRevoke),null,'DELETE');await refreshDevices();}
+  catch(e){toast(e.message);revoke.disabled=false;}
 };
 $('orders').onclick = async event => { const b=event.target.closest('[data-order]'); if(!b)return; try { const order=await api('/api/orders/'+b.dataset.order); $('checkout-info').textContent=protocolName(order.protocol); paymentResult(order); show('checkout-dialog'); } catch(e){toast(e.message);} };
 $('copy-config').onclick = async () => {
@@ -238,6 +291,6 @@ $('logout').onclick = async () => {
     if(tg?.initData) { tg.ready(); tg.expand(); await api('/api/auth/telegram',{init_data:tg.initData}); }
     await refreshMe();
     if(new URLSearchParams(location.search).has('payment')) { history.replaceState(null,'',basePath+'/'); show(me?'account-dialog':'auth-dialog'); }
-    setInterval(async()=>{ if(me && ( $('account-dialog').open || $('checkout-dialog').open || $('config-dialog').open )) { try { await refreshMe(); } catch {} } },15000);
+    setInterval(async()=>{ if(me && ( $('account-dialog').open || $('checkout-dialog').open || $('config-dialog').open || $('devices-dialog').open )) { try { await refreshMe(); } catch {} } },15000);
   } catch(e) { toast(e.message); }
 })();

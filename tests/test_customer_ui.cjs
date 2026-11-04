@@ -9,7 +9,7 @@ async function customerPage() {
   let timerId=0;
   const catalog={protocols:[{id:'xui',name:'VLESS',available:true},{id:'wg',name:'WireGuard',available:true}],plans:[{id:'month',name:'Месяц',days:30,price:199,version:1}],currency:'RUB',support:'Поддержка: @support',bot_username:'',terms:'Условия',payment_mode:'manual'};
   const subscription={id:'sub-a',protocol:'xui',state:'active',expires:Math.floor(clock.now/1000)+3600};
-  const state={customer:{id:1,email:'buyer@example.com',subscriptions:[subscription],orders:[]},catalog,config:{protocol:'xui',config:'vless://private-secret@vpn.example'},copied:[]};
+  const state={customer:{id:1,email:'buyer@example.com',subscriptions:[subscription],orders:[]},devices:[],catalog,config:{protocol:'xui',config:'vless://private-secret@vpn.example'},copied:[]};
   function element(id) {
     if (!elements.has(id)) elements.set(id,{value:'',textContent:'',innerHTML:'',hidden:false,open:false,disabled:false,attrs:{},listeners:{},children:[],
       reset(){},select(){this.selected=true;},showModal(){this.open=true;},close(){if(this.open){this.open=false;this.listeners.close?.();}},
@@ -25,14 +25,15 @@ async function customerPage() {
     if(url==='/shop/api/catalog')body=state.catalog;
     else if(url==='/shop/api/me'){body=state.customer||{detail:'Войдите'};ok=!!state.customer;status=ok?200:401;}
     else if(url==='/shop/api/auth/logout'){state.customer=null;body={ok:true};}
+    else if(url.endsWith('/devices'))body={devices:state.devices,max_extra:4};
     else if(url.endsWith('/config'))body=state.config;
     else throw Error('Unexpected '+url);
     return {ok,status,json:async()=>body};
   };
   const context=vm.createContext({document:{getElementById:element,querySelector:()=>({content:'/shop'}),querySelectorAll:()=>[],createElement:tag=>element('created-'+tag)},
-    fetch,URL,URLSearchParams,FormData,Date:class extends Date { static now(){return clock.now;} },
+    fetch,URL,URLSearchParams,FormData:class {constructor(form){this.fields=form.fields;}get(name){return this.fields[name];}},crypto:require('node:crypto').webcrypto,Date:class extends Date { static now(){return clock.now;} },
     navigator:{platform:'Linux x86_64',userAgent:'Android',clipboard:{writeText:async value=>state.copied.push(value)}},
-    window:{},location:{search:''},history:{replaceState(){}},
+    window:{confirm:()=>true},location:{search:''},history:{replaceState(){}},
     setTimeout:(fn,delay)=>{const id=++timerId;timers.set(id,{fn,delay});return id;},clearTimeout:id=>timers.delete(id),setInterval:()=>0});
   vm.runInContext(fs.readFileSync('app/static/app.js','utf8'),context);
   await tick();
@@ -126,7 +127,7 @@ test('renewal selects the original protocol and unavailable renewal stays closed
   assert.equal(p.run('protocol'),'wg');assert.equal(p.element('plans').scrolled,true);
   assert.ok(p.element('toast').textContent.includes('Оставшиеся дни'));
   p.state.catalog.protocols[0].available=false;
-  p.element('subscriptions').onclick({target:{closest(){return {dataset:{renew:'xui'}};}}});
+  p.element('subscriptions').onclick({target:{closest(selector){return selector==='[data-renew]'?{dataset:{renew:'xui'}}:null;}}});
   assert.equal(p.run('protocol'),'wg');assert.ok(p.element('toast').textContent.includes('поддержку'));
 });
 
@@ -170,4 +171,37 @@ test('renewal refresh extends an open connection and a long timer never expires 
   p.clock.now+=2147483647;timeout.fn();
   assert.equal(p.element('config-value').value,p.state.config.config);
   assert.equal(p.element('copy-config').disabled,false);
+});
+
+test('device manager escapes names and connects to the separate device endpoint',async()=>{
+  const p=await customerPage();p.state.devices=[{id:'device-a',name:'<img src=x>',protocol:'xui',state:'active',ready:true,expires:p.state.customer.subscriptions[0].expires}];
+  await p.run("openDevices('sub-a')");assert.ok(p.element('devices-list').innerHTML.includes('&lt;img src=x&gt;'));
+  const device=JSON.stringify(p.state.devices[0]);await p.run("openConnection('sub-a',"+device+")");
+  assert.equal(p.element('download-config').href,'/shop/api/devices/device-a/download');
+  p.element('toggle-config-qr').onclick();assert.equal(p.element('config-qr').src,'/shop/api/devices/device-a/qr');
+  p.state.devices[0].ready=false;p.state.devices[0].state='revoking';await p.run('refreshDevices()');
+  assert.equal(p.element('config-dialog').open,false);assert.equal(p.element('config-value').value,'');
+});
+
+test('closing device management rejects an older list response',async()=>{
+  const p=await customerPage();const reply=p.defer('/shop/api/subscriptions/sub-a/devices');
+  const opening=p.run("openDevices('sub-a')");p.element('devices-dialog').close();reply({devices:[{name:'private-name',id:'a'}],max_extra:4});await opening;
+  assert.equal(p.element('devices-list').innerHTML,'');
+});
+
+test('failed device creation retries the same request identifier',async()=>{
+  const p=await customerPage();await p.run("openDevices('sub-a')");
+  p.respond('/shop/api/subscriptions/sub-a/devices',{detail:'Try again'},503);
+  const event={preventDefault(){},target:{fields:{name:'Phone'},querySelector(){return {disabled:false};}}};
+  await p.element('device-form').onsubmit(event);await p.element('device-form').onsubmit(event);
+  const posts=p.calls.filter(c=>c.url.endsWith('/devices')&&c.opts.method==='POST');
+  assert.equal(posts.length,2);assert.deepEqual(JSON.parse(posts[0].opts.body),JSON.parse(posts[1].opts.body));
+});
+
+test('device revocation requires confirmation and uses DELETE',async()=>{
+  const p=await customerPage();await p.run("openDevices('sub-a')");
+  const event={target:{closest(selector){return selector==='[data-device-revoke]'?{dataset:{deviceRevoke:'device-a'}}:null;}}};
+  p.run('window.confirm=()=>false');await p.element('devices-list').onclick(event);assert.ok(!p.calls.some(c=>c.opts.method==='DELETE'));
+  p.run('window.confirm=()=>true');p.respond('/shop/api/devices/device-a',{ok:true});await p.element('devices-list').onclick(event);
+  assert.ok(p.calls.some(c=>c.url==='/shop/api/devices/device-a'&&c.opts.method==='DELETE'));
 });

@@ -83,7 +83,12 @@ async def fulfill(order_id):
                     conn.execute('UPDATE orders SET target_expires=? WHERE id=?',(target,order_id))
             secret = await providers.provision({**sub, 'expires': target})
             encrypted = c.encrypt(secret)
+            device_secrets = []
+            for device in all_rows("SELECT * FROM devices WHERE subscription_id=? AND state='active'",(sub['id'],)):
+                value = await providers.provision({**sub,'id':device['id'],'expires':target})
+                device_secrets.append((c.encrypt(value),target,device['id']))
             with db() as conn:
+                conn.executemany("UPDATE devices SET secret=?,expires=?,error=NULL WHERE id=?",device_secrets)
                 conn.execute("UPDATE subscriptions SET expires=?,state='active',secret=?,reminder=0 WHERE id=?",
                              (target, encrypted, sub['id']))
                 conn.execute("UPDATE orders SET status='active',error=NULL WHERE id=?", (order_id,))
@@ -94,6 +99,29 @@ async def fulfill(order_id):
                     (attempts, int(time.time()) + min(1800, 10 * 2 ** min(attempts, 8)),
                      type(exc).__name__, order_id))
             log.warning('Provisioning retry order=%s error=%s', order_id, type(exc).__name__)
+
+
+async def process_devices():
+    # Durable queue; never create another identity after an ambiguous remote response.
+    async with lock:
+        for device in all_rows("SELECT * FROM devices WHERE state IN ('pending','revoking') AND next_attempt<=? ORDER BY created,id LIMIT 50",(int(time.time()),)):
+            sub = one('SELECT * FROM subscriptions WHERE id=?',(device['subscription_id'],))
+            if device['state']=='pending' and (sub['state']!='active' or sub['expires']<=time.time()):
+                execute("UPDATE devices SET state='revoking',next_attempt=0 WHERE id=?",(device['id'],))
+                device['state']='revoking'
+            remote = {**sub,'id':device['id']}
+            try:
+                if device['state']=='revoking':
+                    await providers.disable(remote)
+                    execute("UPDATE devices SET state='revoked',secret=NULL,error=NULL WHERE id=?",(device['id'],))
+                else:
+                    value = await providers.provision(remote)
+                    execute("UPDATE devices SET state='active',secret=?,expires=?,error=NULL WHERE id=?",(c.encrypt(value),sub['expires'],device['id']))
+            except Exception as exc:
+                attempts=device['attempts']+1
+                execute('UPDATE devices SET attempts=?,next_attempt=?,error=? WHERE id=?',
+                    (attempts,int(time.time())+min(1800,10*2**min(attempts,8)),type(exc).__name__,device['id']))
+                log.warning('Device retry id=%s error=%s',device['id'],type(exc).__name__)
 
 
 async def tick():
@@ -114,10 +142,13 @@ async def tick():
     async with lock:
         for sub in all_rows("SELECT * FROM subscriptions WHERE state='active' AND expires<=?", (now,)):
             try:
+                for device in all_rows("SELECT * FROM devices WHERE subscription_id=? AND state='active'",(sub['id'],)):
+                    await providers.disable({**sub,'id':device['id'],'expires':device['expires']})
                 await providers.disable(sub)
                 execute("UPDATE subscriptions SET state='expired' WHERE id=?", (sub['id'],))
             except Exception as exc:
                 log.warning('Expiry retry subscription=%s error=%s', sub['id'], type(exc).__name__)
+    await process_devices()
     for order in all_rows("SELECT o.*,u.telegram_id FROM orders o JOIN users u ON u.id=o.user_id WHERE o.status='active' AND o.notified=0"):
         try:
             await send(order['telegram_id'], 'Оплата подтверждена. VPN готов! Подключение находится в личном кабинете.')
