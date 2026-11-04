@@ -29,8 +29,8 @@ jobs:
         run: |
           node --check app/static/app.js
           node --check app/static/admin.js
-      - name: Test admin UI data handling
-        run: node --test tests/test_admin_ui.cjs
+      - name: Test admin and customer UI data handling
+        run: node --test tests/test_*_ui.cjs
       - name: Check Python and shell syntax
         run: |
           .venv/bin/python -m compileall -q app agent scripts
