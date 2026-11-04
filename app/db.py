@@ -56,6 +56,13 @@ def init_db():
           id TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), protocol TEXT NOT NULL,
           expires INTEGER NOT NULL, state TEXT NOT NULL, secret TEXT,
           reminder INTEGER NOT NULL DEFAULT 0, server_id TEXT REFERENCES servers(id), UNIQUE(user_id, protocol));
+        CREATE TABLE IF NOT EXISTS primary_rotations (
+          id TEXT PRIMARY KEY, subscription_id TEXT NOT NULL REFERENCES subscriptions(id),
+          request_id TEXT NOT NULL, old_credential_id TEXT NOT NULL, new_credential_id TEXT NOT NULL,
+          state TEXT NOT NULL DEFAULT 'revoking', created INTEGER NOT NULL,
+          attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL DEFAULT 0, error TEXT,
+          UNIQUE(subscription_id,request_id));
+        CREATE INDEX IF NOT EXISTS primary_rotations_queue ON primary_rotations(state,next_attempt);
         CREATE TABLE IF NOT EXISTS devices (
           id TEXT PRIMARY KEY, subscription_id TEXT NOT NULL REFERENCES subscriptions(id),
           request_id TEXT NOT NULL, name TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'pending',
@@ -85,6 +92,9 @@ def init_db():
         sub_columns = {row['name'] for row in conn.execute('PRAGMA table_info(subscriptions)')}
         if 'server_id' not in sub_columns:
             conn.execute('ALTER TABLE subscriptions ADD COLUMN server_id TEXT REFERENCES servers(id)')
+        for column,definition in (('credential_id','TEXT'),('primary_key_state',"TEXT NOT NULL DEFAULT 'active'"),('rotation_error','TEXT')):
+            if column not in sub_columns:
+                conn.execute('ALTER TABLE subscriptions ADD COLUMN '+column+' '+definition)
         conn.execute('CREATE INDEX IF NOT EXISTS subscriptions_server ON subscriptions(server_id,state,expires)')
         device_columns = {row['name'] for row in conn.execute('PRAGMA table_info(devices)')}
         if 'credential_id' not in device_columns:

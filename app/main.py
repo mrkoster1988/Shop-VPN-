@@ -255,7 +255,7 @@ async def logout(request: Request):
 
 @app.get('/api/me')
 async def me(user=Depends(current_user)):
-    subs = all_rows('SELECT id,protocol,expires,state,device_limit FROM subscriptions WHERE user_id=?', (user['id'],))
+    subs = all_rows('SELECT id,protocol,expires,state,device_limit,primary_key_state,(rotation_error IS NOT NULL) AS primary_retrying FROM subscriptions WHERE user_id=?', (user['id'],))
     orders = all_rows('SELECT id,protocol,plan,plan_name,days,amount,currency,method,status,created,payment_url,attempts,device_limit FROM orders WHERE user_id=? ORDER BY created DESC LIMIT 50', (user['id'],))
     return {'id': user['id'], 'email': user['email'], 'telegram_id': user['telegram_id'], 'subscriptions': subs, 'orders': orders}
 
@@ -366,6 +366,26 @@ class RotationCreate(BaseModel):
     model_config = {'extra':'forbid'}
     request_id: UUID
 
+@app.post('/api/subscriptions/{sid}/rotate')
+async def rotate_primary(sid: str,data: RotationCreate,user=Depends(current_user)):
+    async with service.lock:
+        with db() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            raw=conn.execute('SELECT * FROM subscriptions WHERE id=? AND user_id=?',(sid,user['id'])).fetchone()
+            if not raw:raise HTTPException(404,'Подписка не найдена')
+            sub=dict(raw)
+            previous=conn.execute('SELECT id,state FROM primary_rotations WHERE subscription_id=? AND request_id=?',(sid,str(data.request_id))).fetchone()
+            if previous:return {'rotation':dict(previous),'subscription_id':sid}
+            if sub['state']!='active' or sub['expires']<=time.time() or sub['primary_key_state']!='active':
+                raise HTTPException(409,'Нужен действующий основной профиль')
+            if conn.execute("SELECT 1 FROM primary_rotations WHERE subscription_id=? AND state NOT IN ('completed','canceled')",(sid,)).fetchone():
+                raise HTTPException(409,'Основной ключ уже перевыпускается')
+            job=str(uuid.uuid4())
+            conn.execute('INSERT INTO primary_rotations(id,subscription_id,request_id,old_credential_id,new_credential_id,created) VALUES (?,?,?,?,?,?)',
+                (job,sid,str(data.request_id),sub['credential_id'] or c.encrypt(sid),c.encrypt(str(uuid.uuid4())),int(time.time())))
+            conn.execute("UPDATE subscriptions SET primary_key_state='rotating',secret=NULL,rotation_error=NULL WHERE id=?",(sid,))
+        return JSONResponse({'rotation':{'id':job,'state':'revoking'},'subscription_id':sid},status_code=201)
+
 @app.post('/api/devices/{did}/rotate')
 async def rotate_device(did: str,data: RotationCreate,user=Depends(current_user)):
     async with service.lock:
@@ -420,7 +440,7 @@ async def device_qr(did: str,user=Depends(current_user)):
 @app.get('/api/subscriptions/{sid}/config')
 async def config_file(sid: str, user=Depends(current_user)):
     sub = one('SELECT * FROM subscriptions WHERE id=? AND user_id=?', (sid, user['id']))
-    if not sub or sub['state'] != 'active' or sub['expires'] <= time.time():
+    if not sub or sub['state'] != 'active' or sub['expires'] <= time.time() or sub['primary_key_state']!='active':
         raise HTTPException(404, 'Активная подписка не найдена')
     return {'config': c.decrypt(sub['secret']), 'protocol': sub['protocol']}
 

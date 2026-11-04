@@ -56,6 +56,10 @@ async def reconcile_payment(order):
         execute("UPDATE orders SET status='canceled' WHERE id=? AND status='pending'", (order['id'],))
 
 
+def primary_identity(sub):
+    return c.decrypt(sub['credential_id']) if sub.get('credential_id') else sub['id']
+
+
 def device_identity(device):
     return c.decrypt(device['credential_id']) if device.get('credential_id') else device['id']
 
@@ -81,11 +85,13 @@ async def fulfill(order_id):
                 sub = dict(raw)
                 if not sub['server_id']:
                     raise RuntimeError('ServerBindingMissing')
+                if sub['primary_key_state']=='rotating' or conn.execute("SELECT 1 FROM primary_rotations WHERE subscription_id=? AND state NOT IN ('completed','canceled')",(sub['id'],)).fetchone():
+                    raise RuntimeError('PrimaryRotationPending')
                 target = order['target_expires']
                 if target is None:
                     target = max(int(time.time()),sub['expires']) + order['days']*86400
                     conn.execute('UPDATE orders SET target_expires=? WHERE id=?',(target,order_id))
-            secret = await providers.provision({**sub, 'expires': target})
+            secret = await providers.provision({**sub, 'id':primary_identity(sub),'expires': target})
             encrypted = c.encrypt(secret)
             device_secrets = []
             for device in all_rows("SELECT * FROM devices WHERE subscription_id=? AND state='active'",(sub['id'],)):
@@ -93,8 +99,8 @@ async def fulfill(order_id):
                 device_secrets.append((c.encrypt(value),target,device['id']))
             with db() as conn:
                 conn.executemany("UPDATE devices SET secret=?,expires=?,error=NULL WHERE id=?",device_secrets)
-                conn.execute("UPDATE subscriptions SET expires=?,state='active',secret=?,reminder=0,device_limit=? WHERE id=?",
-                             (target, encrypted,order['device_limit'],sub['id']))
+                conn.execute("UPDATE subscriptions SET expires=?,state='active',secret=?,reminder=0,device_limit=?,credential_id=?,primary_key_state='active',rotation_error=NULL WHERE id=?",
+                             (target, encrypted,order['device_limit'],sub.get('credential_id') or c.encrypt(sub['id']),sub['id']))
                 conn.execute("UPDATE orders SET status='active',error=NULL WHERE id=?", (order_id,))
         except Exception as exc:
             # Do not persist remote responses, URLs, private keys or credentials in logs.
@@ -103,6 +109,37 @@ async def fulfill(order_id):
                     (attempts, int(time.time()) + min(1800, 10 * 2 ** min(attempts, 8)),
                      type(exc).__name__, order_id))
             log.warning('Provisioning retry order=%s error=%s', order_id, type(exc).__name__)
+
+
+async def process_primary_rotations_locked():
+    for job in all_rows("SELECT * FROM primary_rotations WHERE state NOT IN ('completed','canceled') AND next_attempt<=? ORDER BY created,id LIMIT 50",(int(time.time()),)):
+        sub=one('SELECT * FROM subscriptions WHERE id=?',(job['subscription_id'],))
+        if sub['state']!='active' or sub['expires']<=time.time():
+            execute("UPDATE primary_rotations SET state='canceling' WHERE id=?",(job['id'],));job['state']='canceling'
+        try:
+            old=c.decrypt(job['old_credential_id']);new=c.decrypt(job['new_credential_id'])
+            if job['state']=='canceling':
+                for identity in (old,new):await providers.disable({**sub,'id':identity})
+                with db() as conn:
+                    conn.execute("UPDATE subscriptions SET primary_key_state='revoked',secret=NULL,credential_id=?,rotation_error=NULL WHERE id=?",(job['new_credential_id'],sub['id']))
+                    conn.execute("UPDATE primary_rotations SET state='canceled',error=NULL WHERE id=?",(job['id'],))
+                    conn.execute("UPDATE orders SET next_attempt=0 WHERE user_id=? AND protocol=? AND status='paid'",(sub['user_id'],sub['protocol']))
+                continue
+            if job['state']=='revoking':
+                await providers.disable({**sub,'id':old})
+                execute("UPDATE primary_rotations SET state='issuing',error=NULL WHERE id=?",(job['id'],))
+            value=await providers.provision({**sub,'id':new})
+            secret=c.encrypt(value)
+            with db() as conn:
+                conn.execute("UPDATE subscriptions SET primary_key_state='active',credential_id=?,secret=?,rotation_error=NULL WHERE id=?",(job['new_credential_id'],secret,sub['id']))
+                conn.execute("UPDATE primary_rotations SET state='completed',error=NULL WHERE id=?",(job['id'],))
+                conn.execute("UPDATE orders SET next_attempt=0 WHERE user_id=? AND protocol=? AND status='paid'",(sub['user_id'],sub['protocol']))
+        except Exception as exc:
+            attempts=job['attempts']+1
+            with db() as conn:
+                conn.execute('UPDATE primary_rotations SET attempts=?,next_attempt=?,error=? WHERE id=?',(attempts,int(time.time())+min(1800,10*2**min(attempts,8)),type(exc).__name__,job['id']))
+                conn.execute('UPDATE subscriptions SET rotation_error=? WHERE id=?',(type(exc).__name__,sub['id']))
+            log.warning('Primary rotation retry id=%s error=%s',job['id'],type(exc).__name__)
 
 
 async def process_rotations_locked():
@@ -144,6 +181,7 @@ async def process_rotations_locked():
 async def process_devices():
     # Durable queue; never create another identity after an ambiguous remote response.
     async with lock:
+        await process_primary_rotations_locked()
         await process_rotations_locked()
         for device in all_rows("SELECT * FROM devices WHERE state IN ('pending','revoking') AND NOT EXISTS (SELECT 1 FROM device_rotations r WHERE r.device_id=devices.id AND r.state NOT IN ('completed','canceled')) AND next_attempt<=? ORDER BY created,id LIMIT 50",(int(time.time()),)):
             sub = one('SELECT * FROM subscriptions WHERE id=?',(device['subscription_id'],))
@@ -185,7 +223,7 @@ async def tick():
             try:
                 for device in all_rows("SELECT * FROM devices WHERE subscription_id=? AND state='active'",(sub['id'],)):
                     await providers.disable({**sub,'id':device_identity(device),'expires':device['expires']})
-                await providers.disable(sub)
+                await providers.disable({**sub,'id':primary_identity(sub)})
                 execute("UPDATE subscriptions SET state='expired' WHERE id=?", (sub['id'],))
             except Exception as exc:
                 log.warning('Expiry retry subscription=%s error=%s', sub['id'], type(exc).__name__)

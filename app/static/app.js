@@ -6,7 +6,7 @@ const statusLabel = {pending:'Ожидает оплаты',checkout:'Оплат�
 const money=(amount,currency)=>amount.toLocaleString('ru-RU')+' '+(currency==='XTR'?'★':'₽');
 let catalog, me, protocol = 'xui', selectedPlan, register = false, toastTimer;
 let sessionEpoch = 0, meRequest = 0, connectionRequest = 0, connection = null, connectionTimer;
-let deviceSubscription=null, deviceRequest=0, deviceIntent=null, deviceCache=[], rotationIntents=new Map();
+let deviceSubscription=null, deviceRequest=0, deviceIntent=null, deviceCache=[], rotationIntents=new Map(), primaryRotationIntents=new Map();
 async function api(path, data, method) {
   const epoch = sessionEpoch;
   const response = await fetch(basePath + path, {method:method || (data ? 'POST':'GET'), credentials:'same-origin',
@@ -38,7 +38,7 @@ function clearConnection() {
   $('connection-steps').replaceChildren();
 }
 function clearPrivate() {
-  me = null; selectedPlan = null;
+  me = null; selectedPlan = null; primaryRotationIntents.clear();
   $('devices-dialog').close(); clearDevices();
   $('config-dialog').close(); clearConnection();
   $('account-dialog').close(); $('checkout-dialog').close();
@@ -59,7 +59,7 @@ async function refreshMe() {
   $('account-btn').textContent = me ? 'Мой кабинет ↗' : 'Личный кабинет ↗';
   if (connection) {
     const current = me?.subscriptions.find(s=>s.id===connection.id);
-    if (!current || current.state!=='active' || current.expires*1000<=Date.now()) {
+    if (!current || current.state!=='active' || current.expires*1000<=Date.now() || (!connection.deviceId && (current.primary_key_state || 'active')!=='active')) {
       $('config-dialog').close(); clearConnection();
     } else if (Math.min(current.expires,connection.deviceExpires || Infinity)!==connection.expires) {
       connection.expires=Math.min(current.expires,connection.deviceExpires || Infinity);
@@ -75,7 +75,8 @@ function renderAccount() {
   $('identity').textContent = me.email || 'Telegram · ' + me.telegram_id;
   $('subscriptions').innerHTML = me.subscriptions.length ? me.subscriptions.map(s => {
     const active = s.state === 'active' && s.expires*1000 > Date.now();
-    return `<article class="subscription"><h3>${esc(protocolName(s.protocol))}</h3><p>${active?'Доступ до '+date(s.expires):s.state==='pending'?'Подключение готовится':'Подписка закончилась'}</p><p>${esc(profileAllowance(s.device_limit ?? 4))}</p>${active?`<button class="small" data-config="${esc(s.id)}">Основной профиль ↗</button>`:''}${s.state!=='pending'?` <button class="small secondary" data-devices="${esc(s.id)}">Устройства</button><button class="text-link" data-renew="${esc(s.protocol)}">${active?'Продлить подписку':'Возобновить подписку'}</button>`:''}</article>`;
+    const primaryReady=active && (s.primary_key_state || 'active')==='active';
+    return `<article class="subscription"><h3>${esc(protocolName(s.protocol))}</h3><p>${active?'Доступ до '+date(s.expires):s.state==='pending'?'Подключение готовится':'Подписка закончилась'}</p><p>${esc(profileAllowance(s.device_limit ?? 4))}</p>${primaryReady?`<button class="small" data-config="${esc(s.id)}">Основной профиль ↗</button><button class="text-link" data-primary-rotate="${esc(s.id)}">Сменить основной ключ</button>`:s.primary_key_state==='rotating'?`<p>Меняем основной ключ${s.primary_retrying?' · повторим после ошибки':''}. Дополнительные профили не меняются.</p>`:''}${s.state!=='pending'?` <button class="small secondary" data-devices="${esc(s.id)}">Устройства</button><button class="text-link" data-renew="${esc(s.protocol)}">${active?'Продлить подписку':'Возобновить подписку'}</button>`:''}</article>`;
   }).join('') : '<p>Подписок пока нет. Выберите тариф на главной странице.</p>';
   $('orders').innerHTML = me.orders.length ? me.orders.map(o => `<div class="order"><div><b>${esc(protocolName(o.protocol))} · ${money(o.amount,o.currency)}</b><br><code>${esc(o.id)}</code><br>${date(o.created)}</div><div><span class="status ${esc(o.status)}">${esc(statusLabel[o.status] || o.status)}</span>${o.status==='pending'?`<br><button class="text-link" data-order="${esc(o.id)}">Оплатить / реквизиты</button>`:''}</div></div>`).join('') : '<p>Заказов пока нет.</p>';
 }
@@ -170,7 +171,7 @@ function scheduleConnectionExpiry() {
 async function openConnection(sid, device=null) {
   clearConnection();
   const sub = me?.subscriptions.find(s=>s.id===sid);
-  if (!sub || sub.state!=='active' || sub.expires*1000<=Date.now()) throw new Error('Обновите кабинет и проверьте срок подписки.');
+  if (!sub || sub.state!=='active' || sub.expires*1000<=Date.now() || (!device && (sub.primary_key_state || 'active')!=='active')) throw new Error('Обновите кабинет и проверьте срок подписки.');
   const request = connectionRequest;
   $('config-platform').value = detectedPlatform();
   $('config-status').textContent = 'Загружаем настройки…'; show('config-dialog');
@@ -211,7 +212,19 @@ $('config-qr').onerror = () => {
   $('toggle-config-qr').textContent='Показать QR-код';
   $('config-status').textContent='QR-код не загрузился. Используйте копирование или скачивание настроек.';
 };
-$('subscriptions').onclick = event => {
+$('subscriptions').onclick = async event => {
+  const rotate=event.target.closest('[data-primary-rotate]');
+  if(rotate){
+    if(!window.confirm('Основной ключ будет отключён, новые настройки нужно импортировать заново. Дополнительные профили не меняются. Продление дождётся завершения операции. Продолжить?'))return;
+    const sid=rotate.dataset.primaryRotate;rotate.disabled=true;
+    try {
+      if(!primaryRotationIntents.has(sid))primaryRotationIntents.set(sid,crypto.randomUUID());
+      await api('/api/subscriptions/'+encodeURIComponent(sid)+'/rotate',{request_id:primaryRotationIntents.get(sid)});
+      primaryRotationIntents.delete(sid);await refreshMe();
+    } catch(e){toast(e.message);rotate.disabled=false;}
+    return;
+  }
+
   const devices=event.target.closest('[data-devices]');
   if (devices) { openDevices(devices.dataset.devices).catch(e=>toast(e.message)); return; }
   const renew=event.target.closest('[data-renew]');

@@ -243,3 +243,30 @@ test('rotating profile hides connection and rotation controls but can be revoked
   assert.ok(markup.includes('Меняем ключ')&&markup.includes('data-device-revoke'));
   assert.ok(!markup.includes('data-device-config')&&!markup.includes('data-device-rotate'));
 });
+
+test('primary rotation hides main connection while extra device remains accessible',async()=>{
+  const p=await customerPage();await p.run("openConnection('sub-a')");p.state.customer.subscriptions[0].primary_key_state='rotating';
+  await p.run('refreshMe()');assert.equal(p.element('config-dialog').open,false);
+  const markup=p.element('subscriptions').innerHTML;
+  assert.ok(markup.includes('Меняем основной ключ')&&markup.includes('data-devices'));
+  assert.ok(!markup.includes('data-config=')&&!markup.includes('data-primary-rotate='));
+  const device={id:'device-a',name:'Phone',expires:p.state.customer.subscriptions[0].expires};
+  await p.run("openConnection('sub-a',"+JSON.stringify(device)+")");
+  assert.equal(p.element('download-config').href,'/shop/api/devices/device-a/download');
+});
+
+test('primary rotation requires confirmation and reuses request after failure',async()=>{
+  const p=await customerPage();p.respond('/shop/api/subscriptions/sub-a/rotate',{detail:'Retry'},503);
+  const event={target:{closest(selector){return selector==='[data-primary-rotate]'?{dataset:{primaryRotate:'sub-a'}}:null;}}};
+  p.run('window.confirm=()=>false');await p.element('subscriptions').onclick(event);
+  assert.ok(!p.calls.some(c=>c.url.endsWith('/rotate')));
+  p.run('window.confirm=()=>true');await p.element('subscriptions').onclick(event);await p.element('subscriptions').onclick(event);
+  const posts=p.calls.filter(c=>c.url.endsWith('/rotate'));assert.equal(posts.length,2);
+  assert.deepEqual(JSON.parse(posts[0].opts.body),JSON.parse(posts[1].opts.body));
+});
+
+test('main connection cannot reopen from stale markup during rotation',async()=>{
+  const p=await customerPage();p.state.customer.subscriptions[0].primary_key_state='rotating';
+  await assert.rejects(p.run("openConnection('sub-a')"));
+  assert.equal(p.calls.filter(c=>c.url.endsWith('/config')).length,0);
+});
