@@ -215,10 +215,11 @@ $('orders-reset').onclick = () => { $('orders-search').reset(); ordersFilters = 
 $('orders-prev').onclick = () => showOrders(Math.max(1, ordersPage-1));
 $('orders-next').onclick = () => showOrders(ordersPage+1);
 
+const serverProfileLabel = {legacy_vless:'Legacy API', clients_vless:'Clients JSON API', wireguard_agent:'WG-агент'};
 const serverState = {active:'Принимать новых', draining:'Только продления', maintenance:'Обслуживание', disabled:'Выдача выключена'};
 function serverCard(server) {
   const health = server.health === 'ok' ? 'API доступен' : server.health === 'error' ? 'Ошибка API' : 'Ещё не проверен';
-  return `<form class="plan-editor" data-server="${esc(server.id)}" data-version="${server.version}"><h3>${esc(server.name)}</h3><p>${esc(protocolLabel(server.protocol))} · ${health}</p><p>Проверка: ${esc(dateTime(server.checked_at))}</p><p>Занято: ${server.occupied} · Всего привязано: ${server.bound_subscriptions}</p><label>Название<input name="name" value="${esc(server.name)}" maxlength="80" required></label><label>Локация<input name="location" value="${esc(server.location)}" maxlength="80"></label><label>Лимит занятых подписок (0 — без лимита)<input name="capacity" type="number" min="0" max="1000000" value="${server.capacity}" required></label><label>Режим<select name="state">${Object.entries(serverState).map(([id,label])=>`<option value="${id}" ${server.state===id?'selected':''}>${label}</option>`).join('')}</select></label><button type="submit" class="small">Сохранить режим</button><button type="button" class="small secondary" data-server-check="${esc(server.id)}">Проверить API</button><button type="button" class="text-link" data-server-edit="${esc(server.id)}">Профиль подключения</button></form>`;
+  return `<form class="plan-editor" data-server="${esc(server.id)}" data-version="${server.version}"><h3>${esc(server.name)}</h3><p>${esc(protocolLabel(server.protocol))} · ${esc(serverProfileLabel[server.profile] || server.profile)} · ${health}</p><p>Проверка: ${esc(dateTime(server.checked_at))}</p><p>Занято: ${server.occupied} · Всего привязано: ${server.bound_subscriptions}</p><label>Название<input name="name" value="${esc(server.name)}" maxlength="80" required></label><label>Локация<input name="location" value="${esc(server.location)}" maxlength="80"></label><label>Лимит занятых подписок (0 — без лимита)<input name="capacity" type="number" min="0" max="1000000" value="${server.capacity}" required></label><label>Режим<select name="state">${Object.entries(serverState).map(([id,label])=>`<option value="${id}" ${server.state===id?'selected':''}>${label}</option>`).join('')}</select></label><button type="submit" class="small">Сохранить режим</button><button type="button" class="small secondary" data-server-check="${esc(server.id)}">Проверить API</button><button type="button" class="text-link" data-server-edit="${esc(server.id)}">Профиль подключения</button></form>`;
 }
 async function refreshServers() {
   const data = await api('servers');
@@ -229,13 +230,17 @@ async function refreshServers() {
 function showServerFields() {
   const xui = $('server-protocol').value === 'xui';
   $('server-xui-fields').hidden = !xui; $('server-wg-fields').hidden = xui;
+  const modern = $('server-api').value === 'clients';
+  $('server-legacy-auth').hidden = modern; $('server-clients-auth').hidden = !modern;
 }
 $('server-protocol').onchange = showServerFields;
+$('server-api').onchange = showServerFields;
 function openServer(server = null) {
   editingServer = server;
   const form = $('server-form'); form.reset();
   form.elements.name.value = server?.name || ''; form.elements.location.value = server?.location || '';
   form.elements.capacity.value = server?.capacity || 0; form.elements.protocol.value = server?.protocol || 'xui';
+  form.elements.api.value = server?.profile === 'clients_vless' ? 'clients' : 'legacy';
   form.elements.protocol.disabled = !!server; form.elements.url.required = !server;
   $('server-title').textContent = server ? 'Профиль сервера' : 'Новый сервер';
   $('server-form-error').textContent = ''; showServerFields(); $('server-dialog').showModal();
@@ -250,9 +255,11 @@ $('server-form').onsubmit = async event => {
   const original = editingServer, protocol = original?.protocol || String(values.get('protocol'));
   try {
     const url = String(values.get('url') || '').trim();
-    const fields = protocol === 'xui' ? ['username','password','inbound_id','link_template','flow'] : ['token'];
+    const mode = String(values.get('api') || 'legacy');
+    const fields = protocol === 'xui' ? ['username','password','api_token','inbound_id','link_template','flow'] : ['token'];
+    if (original?.protocol === 'xui' && !url && mode !== (original.profile === 'clients_vless' ? 'clients' : 'legacy')) throw new Error('Для смены режима API введите полный профиль.');
     if (!url && fields.some(key=>values.get(key))) throw new Error('Для замены профиля укажите адрес и все данные подключения.');
-    const profile = url ? protocol === 'xui' ? {url,username:String(values.get('username')),password:String(values.get('password')),inbound_id:Number(values.get('inbound_id')),link_template:String(values.get('link_template')),flow:String(values.get('flow') || '')} : {url,token:String(values.get('token'))} : null;
+    const profile = url ? protocol === 'xui' ? {url,api:mode,...(mode === 'clients' ? {token:String(values.get('api_token') || '')} : {username:String(values.get('username') || ''),password:String(values.get('password') || '')}),inbound_id:Number(values.get('inbound_id')),link_template:String(values.get('link_template') || ''),flow:String(values.get('flow') || '')} : {url,token:String(values.get('token') || '')} : null;
     const data = {name:String(values.get('name')),location:String(values.get('location') || ''),capacity:Number(values.get('capacity'))};
     if (original) { data.version=original.version; data.state=profile ? 'disabled' : original.state; if (profile) data.settings=profile; }
     else { data.protocol=protocol; data.settings=profile; }

@@ -2,30 +2,17 @@
 import json
 import os
 import httpx
-from . import config as c, servers
+from . import config as c, servers, panel
 
 
 def available(protocol, user_id=None):
     return servers.available(protocol, user_id)
 
-async def xui_inbound(client, profile):
-    base, inbound_id = profile['url'], profile['inbound_id']
-    r = await client.post(base + '/login', data={'username':profile['username'], 'password':profile['password']})
-    r.raise_for_status()
-    if not r.json().get('success'):
-        raise RuntimeError('3x-ui login failed')
-    r = await client.get(base + f'/panel/api/inbounds/get/{inbound_id}')
-    r.raise_for_status()
-    result = r.json()
-    if not result.get('success') or result.get('obj',{}).get('protocol') != 'vless':
-        raise RuntimeError('3x-ui VLESS inbound unavailable')
-    return result['obj']
-
 async def probe_server(row):
     profile = servers.decode(row)
     async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
         if row['protocol']=='xui':
-            await xui_inbound(client, profile)
+            await panel.adapter(profile).check(client)
         else:
             r = await client.get(profile['url']+'/health', headers={'Authorization':'Bearer '+profile['token']})
             r.raise_for_status()
@@ -35,26 +22,8 @@ async def probe_server(row):
 
 async def xui_client(sub, enabled=True):
     _, profile = servers.for_subscription(sub, revoking=not enabled)
-    base, inbound_id = profile['url'], profile['inbound_id']
     async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
-        inbound = await xui_inbound(client, profile)
-        settings = inbound['settings']
-        settings = json.loads(settings) if isinstance(settings, str) else settings
-        clients = settings.get('clients', [])
-        existing = next((x for x in clients if x.get('id') == sub['id']), None)
-        if not enabled and not existing:
-            return ''
-        payload = dict(existing) if existing else {
-            'id': sub['id'], 'email': 'pushok_' + sub['id'], 'flow': profile['flow'],
-            'limitIp': 0, 'totalGB': 0, 'subId': sub['id'].replace('-', '')}
-        payload.update(enable=enabled, expiryTime=sub['expires'] * 1000)
-        endpoint = f"updateClient/{sub['id']}" if existing else 'addClient'
-        r = await client.post(base + '/panel/api/inbounds/' + endpoint,
-                              data={'id': inbound_id, 'settings': json.dumps({'clients': [payload]})})
-        r.raise_for_status()
-        if not r.json().get('success'):
-            raise RuntimeError('3x-ui client operation failed')
-    return profile['link_template'].replace('{uuid}', sub['id'])
+        return await panel.adapter(profile).apply(client, sub, enabled)
 
 
 async def provision(sub):

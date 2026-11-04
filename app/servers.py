@@ -5,6 +5,7 @@ import os
 import time
 import uuid
 from urllib.parse import urlsplit
+from typing import Literal
 from pydantic import BaseModel, Field, field_validator
 from fastapi import HTTPException
 from . import config as c
@@ -36,9 +37,7 @@ class Profile(BaseModel):
                 raise ValueError('Для публичного сервера требуется HTTPS')
         return value.rstrip('/')
 
-class XUIProfile(Profile):
-    username: str = Field(min_length=1, max_length=256)
-    password: str = Field(min_length=1, max_length=2048)
+class VLESSProfile(Profile):
     inbound_id: int = Field(ge=1, le=2147483647, strict=True)
     link_template: str = Field(min_length=15, max_length=4096)
     flow: str = Field(default='', max_length=100)
@@ -49,6 +48,11 @@ class XUIProfile(Profile):
         if not value.startswith('vless://{uuid}@') or value.count('{uuid}') != 1 or any(ord(x) < 33 for x in value):
             raise ValueError('Ссылка должна начинаться с vless://{uuid}@')
         return value
+
+class XUIProfile(VLESSProfile):
+    api: Literal['legacy'] = 'legacy'
+    username: str = Field(min_length=1, max_length=256)
+    password: str = Field(min_length=1, max_length=2048)
 
 class WGProfile(Profile):
     token: str = Field(min_length=32, max_length=2048)
@@ -61,19 +65,28 @@ class WGProfile(Profile):
         return value
 
 
+class ClientsProfile(VLESSProfile):
+    api: Literal['clients']
+    token: str = Field(min_length=32, max_length=2048)
+    valid_header = field_validator('token')(WGProfile.valid_header.__func__)
+
+
 def validated(protocol, settings):
-    model = XUIProfile if protocol == 'xui' else WGProfile
+    model = (ClientsProfile if settings.get('api') == 'clients' else XUIProfile) if protocol == 'xui' else WGProfile
     return model.model_validate(settings).model_dump()
 
 
 def decode(row):
-    return json.loads(c.decrypt(row['settings']))
+    profile = json.loads(c.decrypt(row['settings']))
+    if row['protocol']=='xui':
+        profile.setdefault('api','legacy')
+    return profile
 
 
 def public(row):
     fields = ('id','name','location','protocol','state','capacity','version','created','health','checked_at','error_code')
     result = {key: row[key] for key in fields}
-    result['profile'] = 'legacy_vless' if row['protocol'] == 'xui' else 'wireguard_agent'
+    result['profile'] = ('clients_vless' if decode(row)['api']=='clients' else 'legacy_vless') if row['protocol']=='xui' else 'wireguard_agent'
     result['bound_subscriptions'] = row.get('bound_subscriptions', 0)
     result['occupied'] = row.get('occupied', 0)
     return result
@@ -144,7 +157,7 @@ def update(sid, data):
         profile = decode(before)
         replacement = validated(before['protocol'], data.settings) if data.settings is not None else profile
         bound = conn.execute('SELECT count(*) FROM subscriptions WHERE server_id=?',(sid,)).fetchone()[0]
-        identity = ('url','inbound_id','link_template','flow') if before['protocol']=='xui' else ('url',)
+        identity = ('url','api','inbound_id','link_template','flow') if before['protocol']=='xui' else ('url',)
         if bound and any(profile.get(k)!=replacement.get(k) for k in identity):
             raise HTTPException(409,'У сервера есть подписки. Для другого endpoint создайте отдельный сервер.')
         credentials_changed = replacement != profile

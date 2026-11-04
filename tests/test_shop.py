@@ -970,3 +970,31 @@ def test_legacy_import_missing_profile_rolls_back_and_can_be_retried(tmp_path,mo
         servers.import_environment()
     assert one("SELECT value FROM meta WHERE key='server_registry_initialized'") is None
     assert one('SELECT server_id FROM subscriptions')['server_id'] is None
+
+
+def test_clients_profile_api_redacts_credentials_and_preserves_mode(registry_client,monkeypatch):
+    client=registry_client
+    settings={'api':'clients','url':'https://panel.example/private-api-path','token':'private-api-token-'+'a'*32,
+              'inbound_id':7,'link_template':'vless://{uuid}@vpn.example:443'}
+    created=server_create(client,settings=settings)
+    assert created.status_code==201,created.text
+    row=created.json()
+    assert row['profile']=='clients_vless' and row['state']=='disabled'
+    assert all(secret not in created.text for secret in ('private-api-path','private-api-token','settings'))
+    assert 'private-api-token' not in one('SELECT settings FROM servers')['settings']
+    row=server_enable(client,row,monkeypatch)
+    result=server_patch(client,row,name='Updated modern panel')
+    assert result.status_code==200 and result.json()['profile']=='clients_vless'
+    uid=add_customer()
+    execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state,server_id) VALUES ('pinned-modern',?,'xui',0,'pending',?)",(uid,row['id']))
+    switched=server_patch(client,result.json(),state='disabled',settings=server_body()['settings'])
+    assert switched.status_code==409
+
+
+@pytest.mark.parametrize('change',[{'api':'unknown'},{'token':'short-secret'},{'token':'a'*32+'\n'}, {'username':'no-mixed-auth'}])
+def test_clients_invalid_profile_is_rejected_without_echo(registry_client,change):
+    settings={'api':'clients','url':'https://panel.example','token':'private-api-token-'+'a'*32,
+              'inbound_id':7,'link_template':'vless://{uuid}@vpn.example:443',**change}
+    response=server_create(registry_client,settings=settings)
+    assert response.status_code==422
+    assert 'private-api-token' not in response.text and 'short-secret' not in response.text

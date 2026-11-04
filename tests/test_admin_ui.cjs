@@ -120,3 +120,23 @@ test('editing server metadata preserves connection credentials without sending a
   await request;
   assert.ok(page.element('server-list').innerHTML.includes('New name'));
 });
+
+test('new clients profile submits a token without legacy credentials', async () => {
+  class Fields { constructor(form){this.fields=form.fields;} get(name){return this.fields[name];} }
+  const page=adminPage({FormData:Fields});
+  const request=page.run(`$('server-form').onsubmit({preventDefault(){},target:{fields:{name:'Modern',location:'FI',capacity:'2',protocol:'xui',api:'clients',url:'https://panel.example',api_token:'private-token',username:'stale-user',password:'stale-password',inbound_id:'7',link_template:'vless://{uuid}@vpn.example'},querySelector(){return {disabled:false};}}})`);
+  assert.deepEqual(page.bodies[0],{name:'Modern',location:'FI',capacity:2,protocol:'xui',settings:{url:'https://panel.example',api:'clients',token:'private-token',inbound_id:7,link_template:'vless://{uuid}@vpn.example',flow:''}});
+  page.replyAt(0,uiServer({profile:'clients_vless'}));
+  await new Promise(setImmediate);
+  page.replyAt(1,{servers:[uiServer({profile:'clients_vless'})],unassigned_subscriptions:0});
+  await request;
+  assert.ok(page.element('server-list').innerHTML.includes('Clients JSON API'));
+});
+
+test('changing API mode requires a complete replacement profile', async () => {
+  class Fields { constructor(form){this.fields=form.fields;} get(name){return this.fields[name];} }
+  const page=adminPage({FormData:Fields});
+  await page.run(`editingServer={id:'node-a',protocol:'xui',profile:'legacy_vless'}; $('server-form').onsubmit({preventDefault(){},target:{fields:{api:'clients',url:''},querySelector(){return {disabled:false};}}})`);
+  assert.equal(page.requests.length,0);
+  assert.ok(page.element('server-form-error').textContent.includes('полный профиль'));
+});
