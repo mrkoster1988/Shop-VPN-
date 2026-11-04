@@ -16,7 +16,7 @@ import qrcode
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from starlette.applications import Starlette
 from starlette.routing import Mount
 from . import config as c, providers, service
@@ -98,7 +98,26 @@ class Purchase(BaseModel):
     plan: Literal['month', 'quarter', 'year']
     protocol: Literal['xui', 'wg']
     accept_terms: bool = False
+    plan_version: int = Field(default=1, ge=1, strict=True)
     receipt_email: str | None = Field(default=None, max_length=254)
+
+
+class PlanUpdate(BaseModel):
+    model_config = {'extra': 'forbid'}
+    name: str = Field(min_length=1, max_length=80)
+    days: int = Field(ge=1, le=3650, strict=True)
+    price: int = Field(ge=1, le=1000000, strict=True)
+    stars: int = Field(ge=1, le=100000, strict=True)
+    enabled: bool = Field(strict=True)
+    version: int = Field(ge=1, strict=True)
+
+    @field_validator('name')
+    @classmethod
+    def clean_name(cls, value):
+        value = value.strip()
+        if not value or any(ord(char) < 32 for char in value):
+            raise ValueError('Укажите название тарифа без управляющих символов')
+        return value
 
 
 def email_address(raw):
@@ -130,7 +149,7 @@ async def catalog(request: Request):
         tg = bool(current_user(request)['telegram_id'])
     except HTTPException:
         tg = False
-    plans = [{**p, 'price': p['stars'] if tg else p['price']} for p in c.PLANS]
+    plans = [{**p, 'price': p['stars'] if tg else p['price']} for p in all_rows('SELECT id,name,days,price,stars,version FROM plans WHERE enabled=1 ORDER BY position,id')]
     return {'plans': plans, 'currency': 'XTR' if tg else 'RUB',  'protocols': [{'id': 'xui', 'name': 'VLESS · 3x-ui', 'available': providers.available('xui')},
                                            {'id': 'wg', 'name': 'WireGuard', 'available': providers.available('wg')}],
             'payment_mode': 'stars' if tg else c.PAYMENT_MODE, 'bot_username': c.BOT_USERNAME,
@@ -190,7 +209,7 @@ async def logout(request: Request):
 @app.get('/api/me')
 async def me(user=Depends(current_user)):
     subs = all_rows('SELECT id,protocol,expires,state FROM subscriptions WHERE user_id=?', (user['id'],))
-    orders = all_rows('SELECT id,protocol,plan,amount,currency,method,status,created,payment_url,attempts FROM orders WHERE user_id=? ORDER BY created DESC LIMIT 50', (user['id'],))
+    orders = all_rows('SELECT id,protocol,plan,plan_name,days,amount,currency,method,status,created,payment_url,attempts FROM orders WHERE user_id=? ORDER BY created DESC LIMIT 50', (user['id'],))
     return {'id': user['id'], 'email': user['email'], 'telegram_id': user['telegram_id'], 'subscriptions': subs, 'orders': orders}
 
 @app.post('/api/orders')
@@ -206,13 +225,17 @@ async def purchase(data: Purchase, user=Depends(current_user)):
     if method == 'yookassa' and os.getenv('YOOKASSA_RECEIPTS') == 'true' and not email:
         raise HTTPException(422, 'Укажите email для чека')
     async with service.lock:
-        plan = next(p for p in c.PLANS if p['id'] == data.plan)
-        order = one("SELECT * FROM orders WHERE user_id=? AND protocol=? AND plan=? AND method=? AND status='pending' AND created>? ORDER BY created DESC LIMIT 1",
-                    (user['id'], data.protocol, data.plan, method, int(time.time()) - 1800))
+        plan = one('SELECT * FROM plans WHERE id=? AND enabled=1', (data.plan,))
+        if not plan:
+            raise HTTPException(409, 'Тариф больше недоступен. Выберите другой тариф.')
+        if data.plan_version != plan['version']:
+            raise HTTPException(409, 'Условия тарифа изменились. Обновите тарифы и подтвердите покупку заново.')
+        order = one("SELECT * FROM orders WHERE user_id=? AND protocol=? AND plan=? AND method=? AND plan_version=? AND status='pending' AND created>? ORDER BY created DESC LIMIT 1",
+                    (user['id'], data.protocol, data.plan, method, plan['version'], int(time.time()) - 1800))
         if not order:
             oid = str(uuid.uuid4())
-            execute('INSERT INTO orders(id,user_id,protocol,plan,days,amount,created,receipt_email,currency,method) VALUES (?,?,?,?,?,?,?,?,?,?)',
-                    (oid, user['id'], data.protocol, plan['id'], plan['days'], plan['stars'] if method == 'stars' else plan['price'], int(time.time()), email, 'XTR' if method == 'stars' else 'RUB', method))
+            execute('INSERT INTO orders(id,user_id,protocol,plan,days,amount,created,receipt_email,currency,method,plan_version,plan_name) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                    (oid, user['id'], data.protocol, plan['id'], plan['days'], plan['stars'] if method == 'stars' else plan['price'], int(time.time()), email, 'XTR' if method == 'stars' else 'RUB', method, plan['version'], plan['name']))
             order = one('SELECT * FROM orders WHERE id=?', (oid,))
         if method == 'stars' and not order['payment_url']:
             try:
@@ -236,7 +259,7 @@ async def order_status(order_id: str, user=Depends(current_user)):
     order = one('SELECT * FROM orders WHERE id=? AND user_id=?', (order_id, user['id']))
     if not order:
         raise HTTPException(404, 'Заказ не найден')
-    return {k: order[k] for k in ('id', 'protocol', 'amount', 'currency', 'method', 'status', 'payment_url')} | {
+    return {k: order[k] for k in ('id', 'protocol', 'plan_name', 'days', 'amount', 'currency', 'method', 'status', 'payment_url')} | {
         'instructions': os.getenv('MANUAL_PAYMENT_TEXT', 'Свяжитесь с поддержкой и сообщите номер заказа.')
         if order['method'] == 'manual' else ''}
 
@@ -261,6 +284,34 @@ async def qr(sid: str, user=Depends(current_user)):
     buffer = io.BytesIO()
     img.save(buffer, format='PNG')
     return Response(buffer.getvalue(), media_type='image/png')
+
+
+def admin_plan(row):
+    return {**row, 'enabled': bool(row['enabled'])}
+
+@app.get('/api/admin/plans', dependencies=[Depends(admin)])
+async def admin_plans():
+    return {'plans': [admin_plan(row) for row in all_rows('SELECT * FROM plans ORDER BY position,id')]}
+
+@app.put('/api/admin/plans/{plan_id}', dependencies=[Depends(admin)])
+async def update_plan(plan_id: str, data: PlanUpdate):
+    async with service.lock:
+        with db() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute('SELECT * FROM plans WHERE id=?', (plan_id,)).fetchone()
+            if row is None:
+                raise HTTPException(404, 'Тариф не найден')
+            before = dict(row)
+            if before['version'] != data.version:
+                raise HTTPException(409, 'Тариф уже изменён. Обновите страницу перед сохранением.')
+            if all(before[key] == value for key, value in data.model_dump(exclude={'version'}).items()):
+                return admin_plan(before)
+            conn.execute('UPDATE plans SET name=?,days=?,price=?,stars=?,enabled=?,version=version+1,updated=? WHERE id=?',
+                         (data.name, data.days, data.price, data.stars, int(data.enabled), int(time.time()), plan_id))
+            after = dict(conn.execute('SELECT * FROM plans WHERE id=?', (plan_id,)).fetchone())
+            conn.execute('INSERT INTO plan_changes(plan_id,created,before_data,after_data) VALUES (?,?,?,?)',
+                         (plan_id, after['updated'], json.dumps(before, ensure_ascii=False), json.dumps(after, ensure_ascii=False)))
+    return admin_plan(after)
 
 @app.get('/api/admin/overview', dependencies=[Depends(admin)])
 async def overview():

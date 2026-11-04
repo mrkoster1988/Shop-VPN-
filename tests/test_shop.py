@@ -228,6 +228,12 @@ def test_shop_prefix_routes_sessions_and_login(client, monkeypatch):
         assert shop.get('/shop/static/app.js').status_code == 200
         assert shop.get('/shop/health').json() == {'status': 'ok'}
         assert shop.get('/shop/api/catalog').status_code == 200
+        headers = {'Authorization': 'Bearer ' + c.ADMIN_TOKEN, 'Origin': 'http://testserver'}
+        listed = shop.get('/shop/api/admin/plans', headers=headers)
+        assert listed.status_code == 200
+        plan = listed.json()['plans'][0]
+        payload = {k: plan[k] for k in ('name', 'days', 'price', 'stars', 'enabled', 'version')}
+        assert shop.put('/shop/api/admin/plans/month', headers=headers, json=payload).status_code == 200
         assert shop.get('/').status_code == 404
         assert shop.get('/api/catalog').status_code == 404
         response = shop.post('/shop/api/auth/register',
@@ -271,3 +277,145 @@ def test_shop_prefix_private_downloads(client, monkeypatch):
         shop.post('/shop/api/auth/logout')
         for suffix in ('config', 'qr', 'download'):
             assert shop.get('/shop/api/subscriptions/prefix-config/' + suffix).status_code == 401
+
+
+def plan_edit(client, **changes):
+    headers = {'Authorization': 'Bearer ' + c.ADMIN_TOKEN}
+    plan = client.get('/api/admin/plans', headers=headers).json()['plans'][0]
+    fields = ('name', 'days', 'price', 'stars', 'enabled', 'version')
+    return {**{key: plan[key] for key in fields}, **changes}
+
+
+def save_plan(client, data, plan_id='month'):
+    return client.put('/api/admin/plans/' + plan_id, json=data,
+                      headers={'Authorization': 'Bearer ' + c.ADMIN_TOKEN})
+
+
+def test_tariff_admin_access_and_origin(client):
+    payload = plan_edit(client, price=349)
+    assert client.get('/api/admin/plans').status_code == 403
+    register(client)
+    assert client.put('/api/admin/plans/month', json=payload).status_code == 403
+    result = client.put('/api/admin/plans/month', json=payload,
+        headers={'Authorization': 'Bearer ' + c.ADMIN_TOKEN, 'Origin': 'https://evil.example'})
+    assert result.status_code == 403
+    assert one("SELECT price FROM plans WHERE id='month'")['price'] == 199
+    assert save_plan(client, payload, 'unknown').status_code == 404
+
+
+def test_tariff_changes_survive_restart_and_are_audited(client):
+    from app.db import init_db
+    payload = plan_edit(client, name='  Персональный  ', price=349, stars=251, days=45)
+    result = save_plan(client, payload)
+    assert result.status_code == 200, result.text
+    saved = result.json()
+    assert saved['name'] == 'Персональный' and saved['version'] == 2
+    public = client.get('/api/catalog').json()['plans'][0]
+    assert (public['name'], public['price'], public['days'], public['version']) == ('Персональный', 349, 45, 2)
+    init_db()
+    assert client.get('/api/catalog').json()['plans'][0] == public
+    audit = one('SELECT * FROM plan_changes')
+    assert json.loads(audit['before_data'])['price'] == 199
+    assert json.loads(audit['after_data'])['stars'] == 251
+
+
+def test_tariff_edit_conflict_and_noop(client):
+    before = plan_edit(client)
+    assert save_plan(client, before).json()['version'] == 1
+    assert one('SELECT count(*) AS n FROM plan_changes')['n'] == 0
+    changed = save_plan(client, {**before, 'price': 299})
+    assert changed.status_code == 200
+    assert save_plan(client, {**before, 'price': 999}).status_code == 409
+    assert one("SELECT price FROM plans WHERE id='month'")['price'] == 299
+    assert one('SELECT count(*) AS n FROM plan_changes')['n'] == 1
+
+
+@pytest.mark.parametrize('changes', [
+    {'name': '   '}, {'name': 'a'*81}, {'name': 'bad\nname'}, {'days': 0}, {'days': 3651},
+    {'price': 0}, {'price': 1000001}, {'price': 2.5}, {'stars': 0}, {'stars': True},
+    {'enabled': 'false'}, {'version': 0}, {'id': 'other'},
+])
+def test_tariff_invalid_edits_cannot_change_catalog(client, changes):
+    result = save_plan(client, plan_edit(client, **changes))
+    assert result.status_code == 422
+    assert one("SELECT price,version FROM plans WHERE id='month'") == {'price': 199, 'version': 1}
+    assert one('SELECT count(*) AS n FROM plan_changes')['n'] == 0
+
+
+def test_tariff_price_quote_and_existing_order_snapshot(client, monkeypatch):
+    register(client)
+    original = client.post('/api/orders', json={'plan': 'month', 'protocol': 'xui', 'plan_version': 1}).json()
+    assert original['amount'] == 199 and original['days'] == 30
+    assert save_plan(client, plan_edit(client, price=499, days=60, name='Новый тариф')).status_code == 200
+    assert client.post('/api/orders', json={'plan': 'month', 'protocol': 'xui', 'plan_version': 1}).status_code == 409
+    assert client.post('/api/orders', json={'plan': 'month', 'protocol': 'xui'}).status_code == 409
+    assert one('SELECT count(*) AS n FROM orders')['n'] == 1
+    new = client.post('/api/orders', json={'plan': 'month', 'protocol': 'xui', 'plan_version': 2, 'amount': 1}).json()
+    assert (new['amount'], new['days'], new['plan_name']) == (499, 60, 'Новый тариф')
+    assert new['id'] != original['id']
+    assert client.post('/api/orders', json={'plan': 'month', 'protocol': 'xui', 'plan_version': 2}).json()['id'] == new['id']
+    assert client.get('/api/orders/' + original['id']).json()['amount'] == 199
+    async def provision(sub): return 'vless://old-order'
+    monkeypatch.setattr(providers, 'provision', provision)
+    assert confirm(client, original['id']).status_code == 200
+    asyncio.run(service.fulfill(original['id']))
+    expiry = one('SELECT expires FROM subscriptions')['expires']
+    assert time.time() + 29*86400 < expiry < time.time() + 31*86400
+    old = one('SELECT * FROM orders WHERE id=?', (original['id'],))
+    assert (old['amount'], old['days'], old['plan_name'], old['plan_version']) == (199, 30, 'На месяц', 1)
+
+
+def test_hidden_tariffs_keep_pending_orders_payable(client):
+    register(client)
+    original = order(client)
+    assert save_plan(client, plan_edit(client, enabled=False)).status_code == 200
+    assert 'month' not in [p['id'] for p in client.get('/api/catalog').json()['plans']]
+    assert client.post('/api/orders', json={'plan': 'month', 'protocol': 'xui'}).status_code == 409
+    assert client.get('/api/orders/' + original['id']).status_code == 200
+    assert confirm(client, original['id']).status_code == 200
+    for plan_id in ('quarter', 'year'):
+        row = one('SELECT * FROM plans WHERE id=?', (plan_id,))
+        payload = {k: row[k] for k in ('name', 'days', 'price', 'stars', 'version')}
+        assert save_plan(client, {**payload, 'enabled': False}, plan_id).status_code == 200
+    assert client.get('/api/catalog').json()['plans'] == []
+    assert save_plan(client, plan_edit(client, enabled=True)).status_code == 200
+    assert client.get('/api/catalog').json()['plans'][0]['id'] == 'month'
+
+
+def test_telegram_uses_edited_stars_price(client, monkeypatch):
+    monkeypatch.setattr(c, 'BOT_TOKEN', 'telegram-token')
+    monkeypatch.setenv('TERMS_TEXT', 'Merchant terms')
+    assert save_plan(client, plan_edit(client, stars=271, days=15)).status_code == 200
+    user = service.telegram_account(123456)
+    client.get(service.ticket(user['id']))
+    assert client.get('/api/catalog').json()['plans'][0]['price'] == 271
+    seen = []
+    async def invoice(order):
+        seen.append(order); return 'https://t.me/$edited-tariff'
+    monkeypatch.setattr(providers, 'stars_invoice', invoice)
+    result = client.post('/api/orders', json={'plan':'month', 'protocol':'wg', 'plan_version':2, 'accept_terms':True})
+    assert result.status_code == 200, result.text
+    assert (seen[0]['amount'], seen[0]['currency'], seen[0]['days']) == (271, 'XTR', 15)
+
+
+def test_editable_tariff_migrates_legacy_orders(tmp_path, monkeypatch):
+    import sqlite3
+    from app.db import init_db
+    path = tmp_path / 'legacy.db'
+    monkeypatch.setattr(c, 'DB', path)
+    with sqlite3.connect(path) as conn:
+        conn.executescript('''
+        CREATE TABLE orders (
+          id TEXT PRIMARY KEY, user_id INTEGER, protocol TEXT, plan TEXT, days INTEGER,
+          amount INTEGER, currency TEXT, method TEXT, status TEXT, created INTEGER,
+          payment_id TEXT, payment_url TEXT);
+        INSERT INTO orders VALUES ('old', 1, 'wg', 'month', 30, 199, 'RUB', 'yookassa',
+          'pending', 12345, 'provider-charge', 'https://payment.example');
+        ''')
+    init_db()
+    old = one("SELECT * FROM orders WHERE id='old'")
+    assert (old['amount'], old['days'], old['payment_id'], old['status']) == (199, 30, 'provider-charge', 'pending')
+    assert old['plan_version'] == 1 and old['plan_name'] == 'На месяц'
+    init_db()
+    assert one('SELECT count(*) AS n FROM plans')['n'] == 3
+    assert one('SELECT count(*) AS n FROM orders')['n'] == 1

@@ -27,6 +27,14 @@ def init_db():
           token TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), expires INTEGER);
         CREATE TABLE IF NOT EXISTS tickets (
           token TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), expires INTEGER);
+        CREATE TABLE IF NOT EXISTS plans (
+          id TEXT PRIMARY KEY, name TEXT NOT NULL, days INTEGER NOT NULL CHECK(days > 0),
+          price INTEGER NOT NULL CHECK(price > 0), stars INTEGER NOT NULL CHECK(stars > 0),
+          enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+          version INTEGER NOT NULL DEFAULT 1, position INTEGER NOT NULL, updated INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS plan_changes (
+          id INTEGER PRIMARY KEY, plan_id TEXT NOT NULL REFERENCES plans(id), created INTEGER NOT NULL,
+          before_data TEXT NOT NULL, after_data TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS orders (
           id TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), protocol TEXT NOT NULL,
           plan TEXT NOT NULL, days INTEGER NOT NULL, amount INTEGER NOT NULL,
@@ -34,7 +42,8 @@ def init_db():
           status TEXT NOT NULL DEFAULT 'pending', created INTEGER NOT NULL,
           payment_id TEXT UNIQUE, payment_url TEXT, receipt_email TEXT, target_expires INTEGER,
           attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL DEFAULT 0,
-          error TEXT, notified INTEGER NOT NULL DEFAULT 0);
+          error TEXT, notified INTEGER NOT NULL DEFAULT 0,
+          plan_version INTEGER NOT NULL DEFAULT 1, plan_name TEXT);
         CREATE TABLE IF NOT EXISTS subscriptions (
           id TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), protocol TEXT NOT NULL,
           expires INTEGER NOT NULL, state TEXT NOT NULL, secret TEXT,
@@ -45,6 +54,16 @@ def init_db():
         CREATE INDEX IF NOT EXISTS orders_user ON orders(user_id, created);
         CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires);
         ''')
+        # Additive migration for installations created before editable tariffs.
+        columns = {row['name'] for row in conn.execute('PRAGMA table_info(orders)')}
+        if 'plan_version' not in columns:
+            conn.execute('ALTER TABLE orders ADD COLUMN plan_version INTEGER NOT NULL DEFAULT 1')
+        if 'plan_name' not in columns:
+            conn.execute('ALTER TABLE orders ADD COLUMN plan_name TEXT')
+        for position, plan in enumerate(c.PLANS):
+            conn.execute('INSERT OR IGNORE INTO plans(id,name,days,price,stars,position) VALUES (?,?,?,?,?,?)',
+                         (plan['id'], plan['name'], plan['days'], plan['price'], plan['stars'], position))
+        conn.execute('UPDATE orders SET plan_name=(SELECT name FROM plans WHERE plans.id=orders.plan) WHERE plan_name IS NULL')
 
 def one(sql, args=()):
     with db() as conn:

@@ -9,7 +9,7 @@ async function api(path, data, method) {
   const response = await fetch(basePath + path, {method:method || (data ? 'POST':'GET'), credentials:'same-origin',
     headers:data ? {'Content-Type':'application/json'} : {}, body:data ? JSON.stringify(data) : undefined});
   const result = await response.json();
-  if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : 'Проверьте введённые данные');
+  if (!response.ok) throw Object.assign(new Error(typeof result.detail === 'string' ? result.detail : 'Проверьте введённые данные'), {status:response.status});
   return result;
 }
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 6000); }
@@ -20,11 +20,13 @@ function renderPlans() {
   $('protocols').innerHTML = catalog.protocols.map(p => `<button class="${p.id===protocol?'chosen':''}" data-protocol="${p.id}" aria-pressed="${p.id===protocol}">${esc(p.name)}${p.available?'':' · скоро'}</button>`).join('');
   const available = catalog.protocols.find(p => p.id===protocol).available;
   $('provider-note').textContent = available ? '' : 'Подключение этого протокола ещё не настроено. Покупки временно недоступны.';
-  $('plan-list').innerHTML = catalog.plans.map((p,i) => `<article class="plan ${i===1?'featured':''}">${i===1?'<span class="badge">УДОБНЫЙ ВЫБОР</span>':''}<h3>${esc(p.name)}</h3><div class="price">${p.price.toLocaleString('ru-RU')} <small>${catalog.currency==='XTR'?'★':'₽'}</small></div><p>${p.days} дней доступа · ${esc(protocolName(protocol))}</p><ul><li>Личное подключение</li><li>Настройки и QR-код в кабинете</li><li>Продление с сохранением дней</li></ul><button data-plan="${p.id}" ${available?'':'disabled'}>${available?'Выбрать тариф ↗':'Скоро'}</button></article>`).join('');
+  $('plan-list').innerHTML = catalog.plans.length ? catalog.plans.map((p,i) => `<article class="plan ${i===1?'featured':''}">${i===1?'<span class="badge">УДОБНЫЙ ВЫБОР</span>':''}<h3>${esc(p.name)}</h3><div class="price">${p.price.toLocaleString('ru-RU')} <small>${catalog.currency==='XTR'?'★':'₽'}</small></div><p>${p.days} дней доступа · ${esc(protocolName(protocol))}</p><ul><li>Личное подключение</li><li>Настройки и QR-код в кабинете</li><li>Продление с сохранением дней</li></ul><button data-plan="${p.id}" ${available?'':'disabled'}>${available?'Выбрать тариф ↗':'Скоро'}</button></article>`).join('') : '<p class="plans-empty">Тарифы временно недоступны. Пожалуйста, обратитесь в поддержку.</p>';
 }
 async function refreshMe() {
-  try { me = await api('/api/me'); const updated=await api('/api/catalog'); if(!catalog || updated.currency!==catalog.currency) { catalog=updated; renderPlans(); } $('account-btn').textContent = 'Мой кабинет ↗'; renderAccount(); }
-  catch { me = null; $('account-btn').textContent = 'Личный кабинет ↗'; }
+  try { me = await api('/api/me'); } catch { me = null; }
+  catalog = await api('/api/catalog'); renderPlans();
+  $('account-btn').textContent = me ? 'Мой кабинет ↗' : 'Личный кабинет ↗';
+  if (me) renderAccount();
 }
 function renderAccount() {
   if (!me) return;
@@ -39,8 +41,9 @@ async function beginCheckout(id) {
   selectedPlan = catalog.plans.find(p => p.id===id);
   await refreshMe();
   selectedPlan = catalog.plans.find(p => p.id===id);
+  if (!selectedPlan) throw new Error('Тариф больше недоступен. Выберите другой тариф.');
   if (!me) { show('auth-dialog'); return; }
-  $('checkout-info').textContent = `${selectedPlan.name} / ${protocolName(protocol)} / ${money(selectedPlan.price,catalog.currency)}`;
+  $('checkout-info').textContent = `${selectedPlan.name} / ${selectedPlan.days} дней / ${protocolName(protocol)} / ${money(selectedPlan.price,catalog.currency)}`;
   $('payment-result').replaceChildren(); $('checkout-form').hidden = false;
   $('terms-text').textContent=catalog.terms; $('accept-terms').checked=false; $('accept-terms').required=catalog.payment_mode==='stars';
   $('receipt-label').hidden = !catalog.receipts; $('receipt-label').querySelector('input').required = catalog.receipts;
@@ -51,7 +54,7 @@ function paymentResult(order) {
   $('checkout-form').hidden = true;
   $('payment-result').replaceChildren();
   const paragraph = document.createElement('p');
-  paragraph.textContent = `Заказ: ${order.id}\nСумма: ${money(order.amount,order.currency)}\n${statusLabel[order.status] || order.status}\n\n${order.instructions || ''}`;
+  paragraph.textContent = `Заказ: ${order.id}\nТариф: ${order.plan_name || protocolName(order.protocol)} · ${order.days} дней\nСумма: ${money(order.amount,order.currency)}\n${statusLabel[order.status] || order.status}\n\n${order.instructions || ''}`;
   $('payment-result').append(paragraph);
   if (order.payment_url && order.status === 'pending') {
     const link = document.createElement('a');
@@ -74,8 +77,14 @@ $('auth-form').onsubmit = async event => {
 };
 $('checkout-form').onsubmit = async event => {
   event.preventDefault(); const b=event.target.querySelector('button'); b.disabled=true;
-  try { const email=new FormData(event.target).get('receipt_email'); const order=await api('/api/orders',{plan:selectedPlan.id,protocol,receipt_email:email||null,accept_terms:$('accept-terms').checked}); paymentResult(order); await refreshMe(); }
-  catch(e) { toast(e.message); } finally { b.disabled=false; }
+  try { const email=new FormData(event.target).get('receipt_email'); const order=await api('/api/orders',{plan:selectedPlan.id,plan_version:selectedPlan.version,protocol,receipt_email:email||null,accept_terms:$('accept-terms').checked}); paymentResult(order); await refreshMe(); }
+  catch(e) {
+    if (e.status===409) {
+      selectedPlan=null; $('checkout-dialog').close();
+      try { catalog=await api('/api/catalog'); renderPlans(); } catch {}
+    }
+    toast(e.message);
+  } finally { b.disabled=false; }
 };
 $('subscriptions').onclick = async event => {
   const b=event.target.closest('[data-config]'); if(!b)return;
@@ -95,7 +104,7 @@ $('logout').onclick = async () => { try { await api('/api/auth/logout',{}); me=n
     const tg=window.Telegram?.WebApp;
     if(tg?.initData) { tg.ready(); tg.expand(); await api('/api/auth/telegram',{init_data:tg.initData}); }
     await refreshMe();
-    if(new URLSearchParams(location.search).has('payment')) { history.replaceState(null,'','/'); show(me?'account-dialog':'auth-dialog'); }
+    if(new URLSearchParams(location.search).has('payment')) { history.replaceState(null,'',basePath+'/'); show(me?'account-dialog':'auth-dialog'); }
     setInterval(async()=>{ if(me && ( $('account-dialog').open || $('checkout-dialog').open )) await refreshMe(); },15000);
   } catch(e) { toast(e.message); }
 })();
