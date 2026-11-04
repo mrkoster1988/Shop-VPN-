@@ -4,7 +4,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const statusLabel = {pending:'Ожидает оплаты',checkout:'Оплата не завершена',paid:'Оплачено · готовим VPN',active:'Доступ выдан',canceled:'Отменён'};
 const money=(amount,currency)=>amount.toLocaleString('ru-RU')+' '+(currency==='XTR'?'★':'₽');
-let catalog, me, protocol = 'xui', selectedPlan, register = false, toastTimer;
+let catalog, me, protocol = 'xui', selectedPlan, checkoutTrial=null, register = false, toastTimer;
 let linkSubscription=null, linkRequest=0, linkState=null;
 let sessionEpoch = 0, meRequest = 0, connectionRequest = 0, connection = null, connectionTimer;
 let deviceSubscription=null, deviceRequest=0, deviceIntent=null, deviceCache=[], rotationIntents=new Map(), primaryRotationIntents=new Map();
@@ -22,11 +22,13 @@ function show(id) { if (!$(id).open) $(id).showModal(); }
 function date(ts) { return new Date(ts*1000).toLocaleDateString('ru-RU'); }
 function protocolName(id) { return id === 'wg' ? 'WireGuard' : 'VLESS'; }
 function profileAllowance(limit) { return limit===0 ? 'Только основной профиль' : 'Основной + до '+limit+' дополнительных профилей'; }
+function displayOrderStatus(order) { return order.kind==='trial'&&order.status==='paid'?'Готовим пробный VPN':order.kind==='trial'&&order.status==='active'?'Пробный доступ выдан':statusLabel[order.status] || order.status; }
 function renderPlans() {
   $('protocols').innerHTML = catalog.protocols.map(p => `<button class="${p.id===protocol?'chosen':''}" data-protocol="${p.id}" aria-pressed="${p.id===protocol}">${esc(protocolName(p.id))}${p.available?'':' · скоро'}</button>`).join('');
   const available = catalog.protocols.find(p => p.id===protocol).available;
   $('provider-note').textContent = available ? '' : 'Подключение этого протокола ещё не настроено. Покупки временно недоступны.';
   $('plan-list').innerHTML = catalog.plans.length ? catalog.plans.map((p,i) => `<article class="plan ${i===1?'featured':''}">${i===1?'<span class="badge">УДОБНЫЙ ВЫБОР</span>':''}<h3>${esc(p.name)}</h3><div class="price">${p.price.toLocaleString('ru-RU')} <small>${catalog.currency==='XTR'?'★':'₽'}</small></div><p>${p.days} дней доступа · ${esc(protocolName(protocol))}</p><ul><li>${esc(profileAllowance(p.device_limit ?? 4))}</li><li>Настройки и QR-код в кабинете</li><li>Продление с сохранением дней</li></ul><button data-plan="${p.id}" ${available?'':'disabled'}>${available?'Выбрать тариф ↗':'Скоро'}</button></article>`).join('') : '<p class="plans-empty">Тарифы временно недоступны. Пожалуйста, обратитесь в поддержку.</p>';
+  renderTrial();
 }
 function clearConnection() {
   connectionRequest++; connection = null; clearTimeout(connectionTimer);
@@ -39,7 +41,7 @@ function clearConnection() {
   $('connection-steps').replaceChildren();
 }
 function clearPrivate() {
-  me = null; selectedPlan = null; primaryRotationIntents.clear();
+  me = null; selectedPlan = null; checkoutTrial=null; primaryRotationIntents.clear();
   $('link-dialog').close(); clearLink();
   $('devices-dialog').close(); clearDevices();
   $('config-dialog').close(); clearConnection();
@@ -78,11 +80,12 @@ function renderAccount() {
   $('subscriptions').innerHTML = me.subscriptions.length ? me.subscriptions.map(s => {
     const active = s.state === 'active' && s.expires*1000 > Date.now();
     const primaryReady=active && (s.primary_key_state || 'active')==='active';
-    return `<article class="subscription"><h3>${esc(protocolName(s.protocol))}</h3><p>${active?'Доступ до '+date(s.expires):s.state==='pending'?'Подключение готовится':'Подписка закончилась'}</p><p>${esc(profileAllowance(s.device_limit ?? 4))}</p>${primaryReady?`<button class="small" data-config="${esc(s.id)}">Основной профиль ↗</button><button class="text-link" data-primary-rotate="${esc(s.id)}">Сменить основной ключ</button>`:s.primary_key_state==='rotating'?`<p>Меняем основной ключ${s.primary_retrying?' · повторим после ошибки':''}. Дополнительные профили не меняются.</p>`:''}${s.protocol==='xui'&&s.state!=='pending'?`<button class="text-link" data-link="${esc(s.id)}">Ссылка подписки</button>`:''}${s.state!=='pending'?` <button class="small secondary" data-devices="${esc(s.id)}">Устройства</button><button class="text-link" data-renew="${esc(s.protocol)}">${active?'Продлить подписку':'Возобновить подписку'}</button>`:''}</article>`;
+    return `<article class="subscription"><h3>${esc(protocolName(s.protocol))}</h3>${s.access_source==='trial'?'<span class="status">Пробный доступ</span>':''}<p>${active?'Доступ до '+date(s.expires):s.state==='pending'?'Подключение готовится':'Подписка закончилась'}</p><p>${esc(profileAllowance(s.device_limit ?? 4))}</p>${primaryReady?`<button class="small" data-config="${esc(s.id)}">Основной профиль ↗</button>${s.access_source!=='trial'?`<button class="text-link" data-primary-rotate="${esc(s.id)}">Сменить основной ключ</button>`:''}`:s.primary_key_state==='rotating'?`<p>Меняем основной ключ${s.primary_retrying?' · повторим после ошибки':''}. Дополнительные профили не меняются.</p>`:''}${s.protocol==='xui'&&s.state!=='pending'&&s.access_source!=='trial'?`<button class="text-link" data-link="${esc(s.id)}">Ссылка подписки</button>`:''}${s.state!=='pending'?` ${s.access_source!=='trial'?`<button class="small secondary" data-devices="${esc(s.id)}">Устройства</button>`:''}<button class="text-link" data-renew="${esc(s.protocol)}">${active?'Продлить подписку':'Возобновить подписку'}</button>`:''}</article>`;
   }).join('') : '<p>Подписок пока нет. Выберите тариф на главной странице.</p>';
-  $('orders').innerHTML = me.orders.length ? me.orders.map(o => `<div class="order"><div><b>${esc(protocolName(o.protocol))} · ${money(o.amount,o.currency)}</b><br><code>${esc(o.id)}</code><br>${date(o.created)}</div><div><span class="status ${esc(o.status)}">${esc(statusLabel[o.status] || o.status)}</span>${o.status==='pending'?`<br><button class="text-link" data-order="${esc(o.id)}">Оплатить / реквизиты</button>`:''}</div></div>`).join('') : '<p>Заказов пока нет.</p>';
+  $('orders').innerHTML = me.orders.length ? me.orders.map(o => `<div class="order"><div><b>${esc(protocolName(o.protocol))} · ${o.kind==='trial'?'Без оплаты':money(o.amount,o.currency)}</b><br><code>${esc(o.id)}</code><br>${date(o.created)}</div><div><span class="status ${esc(o.status)}">${esc(displayOrderStatus(o))}</span>${o.status==='pending'?`<br><button class="text-link" data-order="${esc(o.id)}">Оплатить / реквизиты</button>`:''}</div></div>`).join('') : '<p>Заказов пока нет.</p>';
 }
 async function beginCheckout(id) {
+  checkoutTrial=null;
   selectedPlan = catalog.plans.find(p => p.id===id);
   await refreshMe();
   selectedPlan = catalog.plans.find(p => p.id===id);
@@ -99,7 +102,7 @@ function paymentResult(order) {
   $('checkout-form').hidden = true;
   $('payment-result').replaceChildren();
   const paragraph = document.createElement('p');
-  paragraph.textContent = `Заказ: ${order.id}\nТариф: ${order.plan_name || protocolName(order.protocol)} · ${order.days} дней\n${profileAllowance(order.device_limit ?? 4)}\nСумма: ${money(order.amount,order.currency)}\n${statusLabel[order.status] || order.status}\n\n${order.instructions || ''}`;
+  paragraph.textContent = `Заказ: ${order.id}\nТариф: ${order.plan_name || protocolName(order.protocol)} · ${order.days} дней\n${profileAllowance(order.device_limit ?? 4)}\nСумма: ${order.kind==='trial'?'Без оплаты':money(order.amount,order.currency)}\n${displayOrderStatus(order)}\n\n${order.instructions || ''}`;
   $('payment-result').append(paragraph);
   if (order.payment_url && order.status === 'pending') {
     const link = document.createElement('a');
@@ -122,10 +125,10 @@ $('auth-form').onsubmit = async event => {
 };
 $('checkout-form').onsubmit = async event => {
   event.preventDefault(); const b=event.target.querySelector('button'); b.disabled=true;
-  try { const email=new FormData(event.target).get('receipt_email'); const order=await api('/api/orders',{plan:selectedPlan.id,plan_version:selectedPlan.version,protocol,receipt_email:email||null,accept_terms:$('accept-terms').checked}); paymentResult(order); await refreshMe(); }
+  try { const email=new FormData(event.target).get('receipt_email'); const path=checkoutTrial?'/api/trial':'/api/orders';const payload=checkoutTrial?{protocol:checkoutTrial.protocol,policy_version:checkoutTrial.version,accept_terms:$('accept-terms').checked}:{plan:selectedPlan.id,plan_version:selectedPlan.version,protocol,receipt_email:email||null,accept_terms:$('accept-terms').checked};const order=await api(path,payload);checkoutTrial=null;paymentResult(order);await refreshMe(); }
   catch(e) {
     if (e.status===409) {
-      selectedPlan=null; $('checkout-dialog').close();
+      selectedPlan=null; checkoutTrial=null; $('checkout-dialog').close();
       try { catalog=await api('/api/catalog'); renderPlans(); } catch {}
     }
     toast(e.message);
@@ -243,6 +246,28 @@ $('subscriptions').onclick = async event => {
   const button=event.target.closest('[data-config]');
   if (button) openConnection(button.dataset.config).catch(e=>toast(e.message));
 };
+function renderTrial() {
+  const trial=catalog.trial;
+  $('trial-offer').hidden=!trial || (!trial.enabled&&!trial.claim);
+  if(!trial)return;
+  const available=!!catalog.protocols.find(p=>p.id===protocol)?.available;
+  const messages={telegram_required:'Войдите через Telegram, чтобы попробовать VPN.',existing_customer:'Пробный доступ доступен аккаунтам без прежних заказов и подписок.',limit_reached:'Пробные активации временно недоступны.',not_configured:'Пробный доступ готовится к запуску.',disabled:'Пробный доступ отключён.'};
+  $('trial-info').textContent=trial.claim?'Пробный доступ уже выбран: '+protocolName(trial.claim.protocol)+'. Статус и настройки — в кабинете.':trial.eligible?trial.days+' дн. · '+protocolName(protocol)+' · только основной профиль.':messages[trial.reason] || 'Пробный доступ уже использован.';
+  $('trial-start').textContent=trial.claim?'Открыть кабинет':trial.reason==='telegram_required'?'Войти через Telegram':'Попробовать бесплатно';
+  $('trial-start').disabled=!trial.claim && !(trial.eligible&&available) && trial.reason!=='telegram_required';
+}
+async function beginTrial() {
+  selectedPlan=null;checkoutTrial=null;
+  await refreshMe();const trial=catalog.trial;
+  if(trial?.claim){show('account-dialog');return;}
+  if(!me?.telegram_id){show('auth-dialog');toast('Пробный доступ доступен при входе через Telegram-бота.');return;}
+  if(!trial?.eligible || !catalog.protocols.find(p=>p.id===protocol)?.available)throw new Error('Пробный доступ сейчас недоступен.');
+  selectedPlan=null;checkoutTrial={protocol,version:trial.version};
+  $('checkout-info').textContent='Пробный доступ / '+trial.days+' дн. / '+protocolName(protocol)+' / без оплаты / только основной профиль';
+  $('payment-result').replaceChildren();$('checkout-form').hidden=false;$('receipt-label').hidden=true;$('receipt-label').querySelector('input').required=false;
+  $('terms-text').textContent=catalog.terms;$('accept-terms').checked=false;$('accept-terms').required=true;show('checkout-dialog');
+}
+$('trial-start').onclick=()=>beginTrial().catch(e=>toast(e.message));
 function clearLink() {
   linkRequest++;linkSubscription=null;linkState=null;
   $('link-value').value='';$('link-status').textContent='';$('link-follow').checked=false;

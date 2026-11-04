@@ -147,3 +147,9 @@ test('tariff editor displays a zero profile limit without substituting the defau
   assert.ok(markup.includes('name="device_limit" type="number" value="0"'));
   assert.ok(markup.includes('min="0" max="20"'));
 });
+
+test('trial policy editor displays the lifetime activation budget and version',async()=>{
+  const p=adminPage();const request=p.run('refreshTrialPolicy()');p.reply({enabled:false,days:1,max_claims:100,used:7,remaining:93,version:3});await request;
+  assert.ok(p.element('trial-policy-count').textContent.includes('7 из 100'));
+  assert.ok(p.element('trial-policy-editor').innerHTML.includes('data-trial-version="3"'));
+});

@@ -300,3 +300,29 @@ test('failed link refresh removes the previously displayed URL',async()=>{
   await p.run("openLink('sub-a')");p.respond('/shop/api/subscriptions/sub-a/link',{detail:'Login'},401);
   await assert.rejects(p.run('refreshLink()'));assert.equal(p.element('link-value').value,'');assert.equal(p.element('copy-link').disabled,true);
 });
+
+test('trial offer requires Telegram and accepted claim links to the account',async()=>{
+  const p=await customerPage();p.state.catalog.trial={enabled:true,days:1,eligible:false,reason:'telegram_required',claim:null};p.run('renderPlans()');
+  assert.equal(p.element('trial-offer').hidden,false);assert.equal(p.element('trial-start').disabled,false);
+  assert.ok(p.element('trial-info').textContent.includes('Telegram'));
+  await p.run("selectedPlan={id:'month'};beginTrial()");assert.equal(p.run('selectedPlan'),null);assert.equal(p.element('auth-dialog').open,true);
+  p.state.catalog.trial.claim={id:'trial',protocol:'wg'};p.run('renderPlans()');
+  assert.equal(p.element('trial-start').textContent,'Открыть кабинет');
+});
+
+test('trial checkout uses policy snapshot and requires terms without receipt',async()=>{
+  const p=await customerPage();p.state.customer.telegram_id=123;p.state.catalog.trial={enabled:true,days:2,version:7,eligible:true,reason:'eligible',claim:null};
+  await p.run('beginTrial()');
+  assert.ok(p.element('checkout-info').textContent.includes('без оплаты'));
+  assert.equal(p.element('accept-terms').required,true);assert.equal(p.element('receipt-label').hidden,true);
+  assert.equal(p.run('checkoutTrial.version'),7);
+});
+
+test('trial account shows no payment claim or paid profile features',async()=>{
+  const p=await customerPage();p.state.customer.subscriptions[0].access_source='trial';p.state.customer.subscriptions[0].device_limit=0;
+  p.state.customer.orders=[{id:'trial-order',protocol:'xui',amount:0,currency:'XTR',kind:'trial',status:'paid',created:100}];
+  await p.run('refreshMe()');
+  const subscriptions=p.element('subscriptions').innerHTML,orders=p.element('orders').innerHTML;
+  assert.ok(subscriptions.includes('Пробный доступ')&&!subscriptions.includes('data-primary-rotate')&&!subscriptions.includes('data-link='));
+  assert.ok(orders.includes('Без оплаты')&&orders.includes('Готовим пробный VPN')&&!orders.includes('Оплачено'));
+});

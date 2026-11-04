@@ -56,6 +56,16 @@ def init_db():
           id TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), protocol TEXT NOT NULL,
           expires INTEGER NOT NULL, state TEXT NOT NULL, secret TEXT,
           reminder INTEGER NOT NULL DEFAULT 0, server_id TEXT REFERENCES servers(id), UNIQUE(user_id, protocol));
+        CREATE TABLE IF NOT EXISTS trial_policy (
+          id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL DEFAULT 0,
+          days INTEGER NOT NULL DEFAULT 1, max_claims INTEGER NOT NULL DEFAULT 100,
+          version INTEGER NOT NULL DEFAULT 1, updated INTEGER NOT NULL DEFAULT 0);
+        INSERT OR IGNORE INTO trial_policy(id) VALUES (1);
+        CREATE TABLE IF NOT EXISTS trial_claims (
+          user_id INTEGER PRIMARY KEY REFERENCES users(id), order_id TEXT NOT NULL UNIQUE REFERENCES orders(id),
+          protocol TEXT NOT NULL, created INTEGER NOT NULL, policy_version INTEGER NOT NULL, terms_snapshot TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS trial_policy_changes (
+          id INTEGER PRIMARY KEY, created INTEGER NOT NULL, before_data TEXT NOT NULL, after_data TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS subscription_links (
           subscription_id TEXT PRIMARY KEY REFERENCES subscriptions(id), token_hash TEXT UNIQUE,
           token_secret TEXT, enabled INTEGER NOT NULL DEFAULT 0,
@@ -108,6 +118,11 @@ def init_db():
             if row['secret'] or row['parent_secret']:
                 c.decrypt(row['secret'] or row['parent_secret'])  # Validate the existing key before encrypting migration data.
             conn.execute('UPDATE devices SET credential_id=? WHERE id=?',(c.encrypt(row['id']),row['id']))
+        order_columns = {row['name'] for row in conn.execute('PRAGMA table_info(orders)')}
+        if 'kind' not in order_columns:
+            conn.execute("ALTER TABLE orders ADD COLUMN kind TEXT NOT NULL DEFAULT 'purchase'")
+        if 'access_source' not in sub_columns:
+            conn.execute("ALTER TABLE subscriptions ADD COLUMN access_source TEXT NOT NULL DEFAULT 'purchase'")
         # Defaults preserve the four extra profiles promised by previous versions.
         for table in ('plans','orders','subscriptions'):
             existing = {row['name'] for row in conn.execute('PRAGMA table_info('+table+')')}

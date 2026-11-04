@@ -70,6 +70,8 @@ async def fulfill(order_id):
         order = one('SELECT * FROM orders WHERE id=?', (order_id,))
         if not order or order['status'] != 'paid' or order['next_attempt'] > time.time():
             return
+        if order['kind']=='purchase' and one("SELECT id FROM orders WHERE user_id=? AND protocol=? AND kind='trial' AND status='paid'",(order['user_id'],order['protocol'])):
+            return
         try:
             with db() as conn:
                 conn.execute('BEGIN IMMEDIATE')
@@ -99,8 +101,8 @@ async def fulfill(order_id):
                 device_secrets.append((c.encrypt(value),target,device['id']))
             with db() as conn:
                 conn.executemany("UPDATE devices SET secret=?,expires=?,error=NULL WHERE id=?",device_secrets)
-                conn.execute("UPDATE subscriptions SET expires=?,state='active',secret=?,reminder=0,device_limit=?,credential_id=?,primary_key_state='active',rotation_error=NULL WHERE id=?",
-                             (target, encrypted,order['device_limit'],sub.get('credential_id') or c.encrypt(sub['id']),sub['id']))
+                conn.execute("UPDATE subscriptions SET expires=?,state='active',secret=?,reminder=0,device_limit=?,credential_id=?,primary_key_state='active',rotation_error=NULL,access_source=? WHERE id=?",
+                             (target, encrypted,order['device_limit'],sub.get('credential_id') or c.encrypt(sub['id']),order['kind'],sub['id']))
                 conn.execute("UPDATE orders SET status='active',error=NULL WHERE id=?", (order_id,))
         except Exception as exc:
             # Do not persist remote responses, URLs, private keys or credentials in logs.
@@ -211,11 +213,11 @@ async def tick():
             await reconcile_payment(order)
         except Exception as exc:
             log.warning('Payment poll error=%s', type(exc).__name__)
-    for order in all_rows("SELECT id FROM orders WHERE status='paid' ORDER BY created,id"):
+    for order in all_rows("SELECT id FROM orders WHERE status='paid' ORDER BY (kind='trial') DESC,created,id"):
         # A failed renewal blocks later renewals of the same subscription until it succeeds.
         current = one('SELECT * FROM orders WHERE id=?', (order['id'],))
-        previous = one("SELECT id FROM orders WHERE user_id=? AND protocol=? AND status='paid' AND (created<? OR (created=? AND id<?))",
-                       (current['user_id'], current['protocol'], current['created'], current['created'], current['id']))
+        previous = one("SELECT id FROM orders WHERE user_id=? AND protocol=? AND status='paid' AND ((kind='trial' AND ?!='trial') OR (kind=? AND (created<? OR (created=? AND id<?))))",
+                       (current['user_id'],current['protocol'],current['kind'],current['kind'],current['created'],current['created'],current['id']))
         if not previous:
             await fulfill(order['id'])
     async with lock:
@@ -230,7 +232,7 @@ async def tick():
     await process_devices()
     for order in all_rows("SELECT o.*,u.telegram_id FROM orders o JOIN users u ON u.id=o.user_id WHERE o.status='active' AND o.notified=0"):
         try:
-            await send(order['telegram_id'], 'Оплата подтверждена. VPN готов! Подключение находится в личном кабинете.')
+            await send(order['telegram_id'], 'Пробный VPN готов! Настройки находятся в личном кабинете.' if order['kind']=='trial' else 'Оплата подтверждена. VPN готов! Подключение находится в личном кабинете.')
             execute('UPDATE orders SET notified=1 WHERE id=?', (order['id'],))
         except Exception:
             pass

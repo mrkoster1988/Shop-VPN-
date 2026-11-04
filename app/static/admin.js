@@ -36,7 +36,7 @@ async function refresh({plans = true} = {}) {
   const [data, catalog] = await Promise.all([api('overview'), plans ? api('plans') : Promise.resolve(null)]);
   $('stats').innerHTML = `<div>Пользователи<strong>${data.users}</strong></div><div>Подписки<strong>${data.active}</strong></div><div>Подтверждено<strong>${data.revenue} ₽ / ${data.stars} ★</strong></div>`;
   if (catalog) $('plan-editors').innerHTML = catalog.plans.map(planForm).join('');
-  await Promise.all([refreshOrders(), refreshUsers(), plans ? refreshServers() : Promise.resolve()]);
+  await Promise.all([refreshOrders(), refreshUsers(), plans ? refreshServers() : Promise.resolve(), plans ? refreshTrialPolicy() : Promise.resolve()]);
 }
 $('admin-login').onsubmit = async event => {
   event.preventDefault();
@@ -58,6 +58,7 @@ $('exit').onclick = () => {
   $('users-query').value = ''; $('users-list').replaceChildren(); $('users-page').textContent = ''; $('users-state').textContent = '';
   if ($('user-dialog').open) $('user-dialog').close();
   clearUser();
+  $('trial-policy-editor').replaceChildren();$('trial-policy-count').textContent='';$('trial-policy-error').textContent='';
   $('list').replaceChildren(); $('stats').replaceChildren(); $('plan-editors').replaceChildren();
   $('admin-notice').textContent = ''; $('error').textContent = ''; $('dashboard').hidden = true; $('admin-login').hidden = false;
 };
@@ -163,7 +164,7 @@ async function loadUser(page) {
       const status = sub.access_active ? 'Активна' : sub.state === 'pending' ? 'Готовится' : 'Неактивна';
       return `<article class="subscription"><b>${esc(protocolLabel(sub.protocol))}</b><p>${status} · Срок: ${esc(dateTime(sub.expires))}</p><p>Дополнительных профилей: ${sub.device_limit ?? 4}</p></article>`;
     }).join('') : '<p>Подписок пока нет.</p>';
-    $('user-orders').innerHTML = data.orders.length ? data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${order.days} дней · ${order.amount} ${order.currency === 'XTR' ? '★' : '₽'}</b><p>${esc(protocolLabel(order.protocol))} · ${esc(orderStatus[order.status] || order.status)}</p><p>Заказ: ${esc(order.id)}</p><p>${esc(dateTime(order.created))} · ${esc(order.method)}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}</article>`).join('') : '<p>Заказов пока нет.</p>';
+    $('user-orders').innerHTML = data.orders.length ? data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${order.days} дней · ${order.amount} ${order.currency === 'XTR' ? '★' : '₽'}</b><p>${esc(protocolLabel(order.protocol))} · ${esc(orderStatus[order.status] || order.status)}</p><p>Заказ: ${esc(order.id)}</p><p>${esc(dateTime(order.created))} · ${esc(order.method==='trial'?'Пробный доступ':order.method)}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}</article>`).join('') : '<p>Заказов пока нет.</p>';
     const pages = Math.max(1, Math.ceil(data.orders_total / data.orders_page_size));
     $('user-orders-page').textContent = 'Заказов: ' + data.orders_total + ' · Страница ' + profilePage + ' из ' + pages;
     $('user-orders-prev').disabled = profilePage <= 1;
@@ -199,7 +200,7 @@ async function refreshOrders() {
     $('orders-page').textContent = 'Страница ' + data.page + ' из ' + pages;
     $('orders-prev').disabled = data.page <= 1;
     $('orders-next').disabled = data.page * data.page_size >= data.total;
-    $('list').innerHTML = data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${esc(protocolLabel(order.protocol))} · ${order.amount} ${order.currency === 'XTR' ? '★' : '₽'}</b><p><button class="text-link" data-order-user="${order.user_id}">${esc(order.email || 'Telegram ' + order.telegram_id)} · № ${order.user_id}</button></p><p>Заказ: ${esc(order.id)}</p><p>${esc(orderStatus[order.status] || order.status)} · ${esc(order.method)} · ${esc(dateTime(order.created))}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}<div class="actions">${order.can_confirm ? `<button data-action="confirm" data-id="${esc(order.id)}">Подтвердить поступление оплаты</button>` : ''}${order.can_reject ? `<button class="secondary" data-action="reject" data-id="${esc(order.id)}">Отменить заказ</button>` : ''}${order.can_retry ? `<button data-action="retry" data-id="${esc(order.id)}">Повторить выдачу</button>` : ''}</div></article>`).join('');
+    $('list').innerHTML = data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${esc(protocolLabel(order.protocol))} · ${order.amount} ${order.currency === 'XTR' ? '★' : '₽'}</b><p><button class="text-link" data-order-user="${order.user_id}">${esc(order.email || 'Telegram ' + order.telegram_id)} · № ${order.user_id}</button></p><p>Заказ: ${esc(order.id)}</p><p>${esc(orderStatus[order.status] || order.status)} · ${esc(order.method==='trial'?'Пробный доступ':order.method)} · ${esc(dateTime(order.created))}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}<div class="actions">${order.can_confirm ? `<button data-action="confirm" data-id="${esc(order.id)}">Подтвердить поступление оплаты</button>` : ''}${order.can_reject ? `<button class="secondary" data-action="reject" data-id="${esc(order.id)}">Отменить заказ</button>` : ''}${order.can_retry ? `<button data-action="retry" data-id="${esc(order.id)}">Повторить выдачу</button>` : ''}</div></article>`).join('');
   } catch (error) {
     if (request === ordersRequest) { $('list').replaceChildren(); $('orders-state').textContent = error.message; }
     throw error;
@@ -285,4 +286,16 @@ $('server-list').onclick = async event => {
   check.disabled=true;
   try { await api('servers/'+encodeURIComponent(check.dataset.serverCheck)+'/check',{method:'POST'}); await refreshServers(); }
   catch (error) { $('error').textContent=error.message; check.disabled=false; }
+};
+
+async function refreshTrialPolicy() {
+  const p=await api('trial');
+  $('trial-policy-count').textContent='Принято активаций: '+p.used+' из '+p.max_claims+'. Осталось: '+p.remaining;
+  $('trial-policy-editor').innerHTML=`<form class="plan-editor" data-trial-version="${p.version}"><label class="plan-enabled"><input name="enabled" type="checkbox" ${p.enabled?'checked':''}> Включить пробный доступ</label><label>Срок, дней<input name="days" type="number" min="1" max="3" value="${p.days}" required></label><label>Общий лимит активаций<input name="max_claims" type="number" min="1" max="100000" value="${p.max_claims}" required></label><button type="submit" class="small">Сохранить</button></form>`;
+}
+$('trial-policy-editor').onsubmit=async event=>{
+  event.preventDefault();const form=event.target.closest('[data-trial-version]');if(!form)return;
+  const values=new FormData(form),button=form.querySelector('button');button.disabled=true;
+  try {await api('trial',{method:'PUT',data:{enabled:values.has('enabled'),days:Number(values.get('days')),max_claims:Number(values.get('max_claims')),version:Number(form.dataset.trialVersion)}});await refreshTrialPolicy();$('trial-policy-error').textContent='';}
+  catch(e){$('trial-policy-error').textContent=e.message;button.disabled=false;}
 };

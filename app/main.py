@@ -24,7 +24,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from pydantic import BaseModel, Field, field_validator, ValidationError
 from starlette.applications import Starlette
 from starlette.routing import Mount
-from . import config as c, providers, service, servers
+from . import config as c, providers, service, servers, trials
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
 
@@ -201,7 +201,7 @@ async def catalog(request: Request):
     plans = [{**p, 'price': p['stars'] if tg else p['price']} for p in all_rows('SELECT id,name,days,price,stars,version,device_limit FROM plans WHERE enabled=1 ORDER BY position,id')]
     return {'plans': plans, 'currency': 'XTR' if tg else 'RUB',  'protocols': [{'id': 'xui', 'name': 'VLESS · 3x-ui', 'available': providers.available('xui', customer['id'] if customer else None)},
                                            {'id': 'wg', 'name': 'WireGuard', 'available': providers.available('wg', customer['id'] if customer else None)}],
-            'payment_mode': 'stars' if tg else c.PAYMENT_MODE, 'bot_username': c.BOT_USERNAME,
+            'trial':trials.offer(customer), 'payment_mode': 'stars' if tg else c.PAYMENT_MODE, 'bot_username': c.BOT_USERNAME,
             'support': os.getenv('SUPPORT_TEXT', 'Напишите администратору магазина.'),
             'receipts': not tg and os.getenv('YOOKASSA_RECEIPTS') == 'true',
             'terms': os.getenv('TERMS_TEXT', 'Условия продажи ещё не заполнены владельцем магазина.')}
@@ -257,8 +257,8 @@ async def logout(request: Request):
 
 @app.get('/api/me')
 async def me(user=Depends(current_user)):
-    subs = all_rows('SELECT s.id,s.protocol,s.expires,s.state,s.device_limit,s.primary_key_state,(s.rotation_error IS NOT NULL) AS primary_retrying,coalesce(l.enabled,0) AS link_enabled,coalesce(l.follow_rotation,0) AS link_follows_rotation FROM subscriptions s LEFT JOIN subscription_links l ON l.subscription_id=s.id WHERE s.user_id=?', (user['id'],))
-    orders = all_rows('SELECT id,protocol,plan,plan_name,days,amount,currency,method,status,created,payment_url,attempts,device_limit FROM orders WHERE user_id=? ORDER BY created DESC LIMIT 50', (user['id'],))
+    subs = all_rows('SELECT s.id,s.protocol,s.expires,s.state,s.device_limit,s.primary_key_state,s.access_source,(s.rotation_error IS NOT NULL) AS primary_retrying,coalesce(l.enabled,0) AS link_enabled,coalesce(l.follow_rotation,0) AS link_follows_rotation FROM subscriptions s LEFT JOIN subscription_links l ON l.subscription_id=s.id WHERE s.user_id=?', (user['id'],))
+    orders = all_rows('SELECT id,protocol,plan,plan_name,days,amount,currency,method,status,created,payment_url,attempts,device_limit,kind FROM orders WHERE user_id=? ORDER BY created DESC LIMIT 50', (user['id'],))
     return {'id': user['id'], 'email': user['email'], 'telegram_id': user['telegram_id'], 'subscriptions': subs, 'orders': orders}
 
 @app.post('/api/orders')
@@ -308,9 +308,21 @@ async def order_status(order_id: str, user=Depends(current_user)):
     order = one('SELECT * FROM orders WHERE id=? AND user_id=?', (order_id, user['id']))
     if not order:
         raise HTTPException(404, 'Заказ не найден')
-    return {k: order[k] for k in ('id', 'protocol', 'plan_name', 'days', 'amount', 'currency', 'method', 'status', 'payment_url','device_limit')} | {
+    return {k: order[k] for k in ('id', 'protocol', 'plan_name', 'days', 'amount', 'currency', 'method', 'status', 'payment_url','device_limit','kind')} | {
         'instructions': os.getenv('MANUAL_PAYMENT_TEXT', 'Свяжитесь с поддержкой и сообщите номер заказа.')
-        if order['method'] == 'manual' else ''}
+        if order['method'] == 'manual' else 'Пробный доступ без оплаты. Дождитесь выдачи в кабинете.' if order['kind']=='trial' else ''}
+
+@app.get('/api/admin/trial',dependencies=[Depends(admin)])
+async def trial_policy():return trials.policy()
+
+@app.put('/api/admin/trial',dependencies=[Depends(admin)])
+async def trial_update(data: trials.PolicyUpdate):
+    async with service.lock:return trials.update(data)
+
+@app.post('/api/trial')
+async def trial_claim(data: trials.Claim,user=Depends(current_user)):
+    async with service.lock:oid=trials.claim(user,data)
+    return await order_status(oid,user)
 
 class DeviceCreate(BaseModel):
     model_config = {'extra':'forbid'}
@@ -376,6 +388,7 @@ async def rotate_primary(sid: str,data: RotationCreate,user=Depends(current_user
             raw=conn.execute('SELECT * FROM subscriptions WHERE id=? AND user_id=?',(sid,user['id'])).fetchone()
             if not raw:raise HTTPException(404,'Подписка не найдена')
             sub=dict(raw)
+            if sub['access_source']=='trial':raise HTTPException(409,'Перевыпуск станет доступен после покупки тарифа')
             previous=conn.execute('SELECT id,state FROM primary_rotations WHERE subscription_id=? AND request_id=?',(sid,str(data.request_id))).fetchone()
             if previous:return {'rotation':dict(previous),'subscription_id':sid}
             if sub['state']!='active' or sub['expires']<=time.time() or sub['primary_key_state']!='active':
@@ -398,6 +411,7 @@ async def rotate_device(did: str,data: RotationCreate,user=Depends(current_user)
             if not raw:raise HTTPException(404,'Устройство не найдено')
             device=dict(raw)
             sub=dict(conn.execute('SELECT * FROM subscriptions WHERE id=?',(device['subscription_id'],)).fetchone())
+            if sub['access_source']=='trial':raise HTTPException(409,'Перевыпуск станет доступен после покупки тарифа')
             previous=conn.execute('SELECT id,state FROM device_rotations WHERE device_id=? AND request_id=?',(did,str(data.request_id))).fetchone()
             if previous:return {'rotation':dict(previous),'device':public_device(device,sub)}
             if device['state']!='active' or sub['state']!='active' or min(device['expires'],sub['expires'])<=time.time():
@@ -455,14 +469,14 @@ def link_metadata(row):
 @app.get('/api/subscriptions/{sid}/link')
 async def subscription_link(sid: str,user=Depends(current_user)):
     sub=owned_subscription(sid,user)
-    if sub['protocol']!='xui':raise HTTPException(409,'Ссылки подписки доступны для VLESS')
+    if sub['protocol']!='xui' or sub['access_source']=='trial':raise HTTPException(409,'Ссылки подписки доступны для оплаченного VLESS')
     return link_metadata(one('SELECT * FROM subscription_links WHERE subscription_id=?',(sid,)))
 
 @app.put('/api/subscriptions/{sid}/link')
 async def update_subscription_link(sid: str,data: LinkUpdate,user=Depends(current_user)):
     async with service.lock:
         sub=owned_subscription(sid,user)
-        if sub['protocol']!='xui':raise HTTPException(409,'Ссылки подписки доступны для VLESS')
+        if sub['protocol']!='xui' or sub['access_source']=='trial':raise HTTPException(409,'Ссылки подписки доступны для оплаченного VLESS')
         with db() as conn:
             conn.execute('BEGIN IMMEDIATE')
             raw=conn.execute('SELECT * FROM subscription_links WHERE subscription_id=?',(sid,)).fetchone()
@@ -487,7 +501,7 @@ async def update_subscription_link(sid: str,data: LinkUpdate,user=Depends(curren
 async def export_subscription(token: str):
     if not re.fullmatch(r'[A-Za-z0-9_-]{43}',token):raise HTTPException(404,'Подписка недоступна')
     row=one('SELECT s.* FROM subscription_links l JOIN subscriptions s ON s.id=l.subscription_id WHERE l.token_hash=? AND l.enabled=1',(digest(token),))
-    if not row or row['protocol']!='xui' or row['state']!='active' or row['primary_key_state']!='active' or row['expires']<=time.time() or not row['secret']:
+    if not row or row['protocol']!='xui' or row['access_source']=='trial' or row['state']!='active' or row['primary_key_state']!='active' or row['expires']<=time.time() or not row['secret']:
         raise HTTPException(404,'Подписка недоступна')
     try:config=c.decrypt(row['secret'])
     except Exception:raise HTTPException(503,'Профиль временно недоступен') from None
@@ -656,7 +670,7 @@ async def admin_user(user_id: int = APIPath(ge=1, le=9223372036854775807),
 @app.get('/api/admin/orders', dependencies=[Depends(admin)])
 async def admin_orders(q: str = Query(default='', max_length=100),
                        status: Literal['', 'pending', 'checkout', 'paid', 'active', 'canceled'] = '',
-                       method: Literal['', 'manual', 'yookassa', 'stars'] = '',
+                       method: Literal['', 'manual', 'yookassa', 'stars','trial'] = '',
                        protocol: Literal['', 'xui', 'wg'] = '',
                        page: int = Query(default=1, ge=1, le=1000000),
                        page_size: int = Query(default=25, ge=1, le=100)):
