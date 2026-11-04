@@ -15,6 +15,7 @@ async function api(path, {method = 'GET', data} = {}) {
 function planForm(plan) {
   return `<form class="plan-editor" data-plan-id="${esc(plan.id)}" data-version="${plan.version}">
     <div class="plan-editor-heading"><h3>${esc(plan.name)}</h3><span class="status">${plan.enabled ? 'В продаже' : 'Скрыт'}</span></div>
+    <p class="muted">Код: ${esc(plan.id)}</p>
     <label>Название<input name="name" value="${esc(plan.name)}" maxlength="80" required></label>
     <div class="plan-editor-fields">
       <label>Срок, дней<input name="days" type="number" value="${plan.days}" min="1" max="3650" step="1" required></label>
@@ -63,4 +64,28 @@ $('list').onclick = async event => {
   button.disabled = true;
   try { await api('orders/' + button.dataset.id + '/' + button.dataset.action, {method: 'POST'}); await refresh({plans: false}); }
   catch (error) { $('error').textContent = error.message; button.disabled = false; }
+};
+
+$('new-plan').onclick = () => {
+  $('create-plan-form').reset(); $('create-plan-error').textContent = '';
+  $('create-plan-dialog').showModal();
+};
+$('create-plan-cancel').onclick = () => $('create-plan-dialog').close();
+$('create-plan-form').onsubmit = async event => {
+  event.preventDefault();
+  const form = event.target;
+  const values = new FormData(form);
+  const button = form.querySelector('button[type="submit"]'); button.disabled = true;
+  $('create-plan-error').textContent = '';
+  try {
+    const saved = await api('plans', {method: 'POST', data: {
+      id: values.get('id'), name: values.get('name'), days: Number(values.get('days')),
+      price: Number(values.get('price')), stars: Number(values.get('stars')), enabled: values.has('enabled'),
+    }});
+    $('plan-editors').insertAdjacentHTML('beforeend', planForm(saved));
+    $('create-plan-dialog').close();
+    $('error').textContent = '';
+    $('admin-notice').textContent = saved.enabled ? 'Тариф создан и доступен покупателям.' : 'Тариф создан и пока скрыт. Включите его после проверки условий.';
+  } catch (error) { $('create-plan-error').textContent = error.message; }
+  finally { button.disabled = false; }
 };

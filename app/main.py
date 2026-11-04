@@ -95,22 +95,20 @@ class TgAuth(BaseModel):
     init_data: str = Field(max_length=10000)
 
 class Purchase(BaseModel):
-    plan: Literal['month', 'quarter', 'year']
+    plan: str = Field(min_length=1, max_length=32, pattern=r'^[a-z][a-z0-9_-]*$')
     protocol: Literal['xui', 'wg']
     accept_terms: bool = False
     plan_version: int = Field(default=1, ge=1, strict=True)
     receipt_email: str | None = Field(default=None, max_length=254)
 
 
-class PlanUpdate(BaseModel):
+class PlanFields(BaseModel):
     model_config = {'extra': 'forbid'}
     name: str = Field(min_length=1, max_length=80)
     days: int = Field(ge=1, le=3650, strict=True)
     price: int = Field(ge=1, le=1000000, strict=True)
     stars: int = Field(ge=1, le=100000, strict=True)
     enabled: bool = Field(strict=True)
-    version: int = Field(ge=1, strict=True)
-
     @field_validator('name')
     @classmethod
     def clean_name(cls, value):
@@ -118,6 +116,14 @@ class PlanUpdate(BaseModel):
         if not value or any(ord(char) < 32 for char in value):
             raise ValueError('Укажите название тарифа без управляющих символов')
         return value
+
+
+class PlanUpdate(PlanFields):
+    version: int = Field(ge=1, strict=True)
+
+class PlanCreate(PlanFields):
+    id: str = Field(min_length=1, max_length=32, pattern=r'^[a-z][a-z0-9_-]*$')
+    enabled: bool = Field(default=False, strict=True)
 
 
 def email_address(raw):
@@ -292,6 +298,22 @@ def admin_plan(row):
 @app.get('/api/admin/plans', dependencies=[Depends(admin)])
 async def admin_plans():
     return {'plans': [admin_plan(row) for row in all_rows('SELECT * FROM plans ORDER BY position,id')]}
+
+
+@app.post('/api/admin/plans', dependencies=[Depends(admin)])
+async def create_plan(data: PlanCreate):
+    async with service.lock:
+        with db() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            if conn.execute('SELECT 1 FROM plans WHERE id=?', (data.id,)).fetchone():
+                raise HTTPException(409, 'Тариф с таким кодом уже существует. Обновите список тарифов.')
+            position = conn.execute('SELECT coalesce(max(position),-1)+1 FROM plans').fetchone()[0]
+            conn.execute('INSERT INTO plans(id,name,days,price,stars,enabled,position,updated) VALUES (?,?,?,?,?,?,?,?)',
+                         (data.id, data.name, data.days, data.price, data.stars, int(data.enabled), position, int(time.time())))
+            saved = dict(conn.execute('SELECT * FROM plans WHERE id=?', (data.id,)).fetchone())
+            conn.execute('INSERT INTO plan_changes(plan_id,created,before_data,after_data) VALUES (?,?,?,?)',
+                         (data.id, saved['updated'], 'null', json.dumps(saved, ensure_ascii=False)))
+    return JSONResponse(admin_plan(saved), status_code=201)
 
 @app.put('/api/admin/plans/{plan_id}', dependencies=[Depends(admin)])
 async def update_plan(plan_id: str, data: PlanUpdate):

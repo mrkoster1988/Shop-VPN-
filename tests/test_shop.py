@@ -234,6 +234,10 @@ def test_shop_prefix_routes_sessions_and_login(client, monkeypatch):
         plan = listed.json()['plans'][0]
         payload = {k: plan[k] for k in ('name', 'days', 'price', 'stars', 'enabled', 'version')}
         assert shop.put('/shop/api/admin/plans/month', headers=headers, json=payload).status_code == 200
+        created = shop.post('/shop/api/admin/plans', headers=headers,
+            json={'id':'prefix-plan','name':'Новый тариф','days':2,'price':150,'stars':100})
+        assert created.status_code == 201
+        assert created.json()['enabled'] is False
         assert shop.get('/').status_code == 404
         assert shop.get('/api/catalog').status_code == 404
         response = shop.post('/shop/api/auth/register',
@@ -419,3 +423,92 @@ def test_editable_tariff_migrates_legacy_orders(tmp_path, monkeypatch):
     init_db()
     assert one('SELECT count(*) AS n FROM plans')['n'] == 3
     assert one('SELECT count(*) AS n FROM orders')['n'] == 1
+
+
+def new_plan(client, **changes):
+    return client.post('/api/admin/plans', headers={'Authorization': 'Bearer ' + c.ADMIN_TOKEN},
+        json={'id': 'week', 'name': 'На неделю', 'days': 7, 'price': 99, 'stars': 75, **changes})
+
+
+def test_custom_tariff_starts_hidden_survives_restart_and_has_audit(client):
+    from app.db import init_db
+    response = new_plan(client)
+    assert response.status_code == 201, response.text
+    created = response.json()
+    assert created['id'] == 'week' and created['version'] == 1 and created['enabled'] is False
+    assert created['position'] == 3
+    assert 'week' not in [p['id'] for p in client.get('/api/catalog').json()['plans']]
+    init_db()
+    saved = one("SELECT * FROM plans WHERE id='week'")
+    assert (saved['name'], saved['days'], saved['price'], saved['stars']) == ('На неделю', 7, 99, 75)
+    audit = one("SELECT * FROM plan_changes WHERE plan_id='week'")
+    assert json.loads(audit['before_data']) is None
+    assert json.loads(audit['after_data'])['enabled'] == 0
+    fields = ('name', 'days', 'price', 'stars', 'version')
+    result = save_plan(client, {**{k: saved[k] for k in fields}, 'enabled': True}, 'week')
+    assert result.status_code == 200
+    assert client.get('/api/catalog').json()['plans'][-1]['id'] == 'week'
+    assert new_plan(client, id='weekend').json()['position'] == 4
+
+
+def test_custom_tariff_creation_requires_admin_and_same_origin(client):
+    payload = {'id': 'day', 'name': 'На день', 'days': 1, 'price': 300, 'stars': 200}
+    assert client.post('/api/admin/plans', json=payload).status_code == 403
+    register(client)
+    assert client.post('/api/admin/plans', json=payload).status_code == 403
+    assert client.post('/api/admin/plans', json=payload,
+        headers={'Authorization':'Bearer '+c.ADMIN_TOKEN, 'Origin':'https://evil.example'}).status_code == 403
+    assert one('SELECT count(*) AS n FROM plans')['n'] == 3
+
+
+def test_custom_tariff_duplicate_does_not_replace_existing(client):
+    assert new_plan(client).status_code == 201
+    assert new_plan(client, price=1).status_code == 409
+    assert new_plan(client, id='month', price=1).status_code == 409
+    assert one("SELECT price FROM plans WHERE id='week'")['price'] == 99
+    assert one("SELECT price FROM plans WHERE id='month'")['price'] == 199
+    assert one('SELECT count(*) AS n FROM plan_changes')['n'] == 1
+
+
+@pytest.mark.parametrize('changes', [
+    {'id': '../admin'}, {'id': 'UPPER'}, {'id': 'two words'}, {'id': 'a'*33}, {'id': ''},
+    {'id': '1day'}, {'id': 'день'}, {'name': '  '}, {'price': -1}, {'days': 1.5},
+    {'enabled': 1}, {'version': 99},
+])
+def test_custom_tariff_creation_rejects_invalid_fields(client, changes):
+    assert new_plan(client, **changes).status_code == 422
+    assert one('SELECT count(*) AS n FROM plans')['n'] == 3
+    assert one('SELECT count(*) AS n FROM plan_changes')['n'] == 0
+
+
+def test_custom_tariff_can_be_purchased_and_fulfilled(client, monkeypatch):
+    assert new_plan(client, id='day', name='На день', days=1, price=300, enabled=True).status_code == 201
+    register(client)
+    request = {'plan':'day', 'protocol':'wg', 'plan_version':1}
+    result = client.post('/api/orders', json=request)
+    assert result.status_code == 200, result.text
+    created = result.json()
+    assert (created['amount'], created['days'], created['plan_name']) == (300, 1, 'На день')
+    assert client.post('/api/orders', json=request).json()['id'] == created['id']
+    async def provision(sub): return 'wireguard-day-config'
+    monkeypatch.setattr(providers, 'provision', provision)
+    assert confirm(client, created['id']).status_code == 200
+    asyncio.run(service.fulfill(created['id']))
+    expiry = one('SELECT expires FROM subscriptions')['expires']
+    assert time.time()+23*3600 < expiry < time.time()+25*3600
+
+
+def test_custom_tariff_stars_uses_its_own_price(client, monkeypatch):
+    assert new_plan(client, enabled=True).status_code == 201
+    monkeypatch.setattr(c, 'BOT_TOKEN', 'telegram-token')
+    monkeypatch.setenv('TERMS_TEXT', 'Merchant terms')
+    user = service.telegram_account(87654)
+    client.get(service.ticket(user['id']))
+    assert client.get('/api/catalog').json()['plans'][-1]['price'] == 75
+    seen = []
+    async def invoice(order):
+        seen.append(order); return 'https://t.me/$custom'
+    monkeypatch.setattr(providers, 'stars_invoice', invoice)
+    result = client.post('/api/orders', json={'plan':'week','protocol':'xui','accept_terms':True,'plan_version':1})
+    assert result.status_code == 200, result.text
+    assert (seen[0]['plan'], seen[0]['days'], seen[0]['amount'], seen[0]['currency']) == ('week', 7, 75, 'XTR')
