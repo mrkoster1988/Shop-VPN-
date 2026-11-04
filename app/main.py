@@ -24,7 +24,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from pydantic import BaseModel, Field, field_validator, ValidationError
 from starlette.applications import Starlette
 from starlette.routing import Mount
-from . import config as c, providers, service, servers, trials
+from . import config as c, providers, service, servers, trials, promos
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
 
@@ -115,6 +115,10 @@ class Purchase(BaseModel):
     accept_terms: bool = False
     plan_version: int = Field(default=1, ge=1, strict=True)
     receipt_email: str | None = Field(default=None, max_length=254)
+    promo_code: str | None = Field(default=None,min_length=1,max_length=32)
+    promo_version: int | None = Field(default=None,ge=1,strict=True)
+    quoted_amount: int | None = Field(default=None,ge=1,le=1000000,strict=True)
+    quote_currency: Literal['RUB','XTR'] | None = None
 
 
 class PlanFields(BaseModel):
@@ -258,7 +262,7 @@ async def logout(request: Request):
 @app.get('/api/me')
 async def me(user=Depends(current_user)):
     subs = all_rows('SELECT s.id,s.protocol,s.expires,s.state,s.device_limit,s.primary_key_state,s.access_source,(s.rotation_error IS NOT NULL) AS primary_retrying,coalesce(l.enabled,0) AS link_enabled,coalesce(l.follow_rotation,0) AS link_follows_rotation FROM subscriptions s LEFT JOIN subscription_links l ON l.subscription_id=s.id WHERE s.user_id=?', (user['id'],))
-    orders = all_rows('SELECT id,protocol,plan,plan_name,days,amount,currency,method,status,created,payment_url,attempts,device_limit,kind FROM orders WHERE user_id=? ORDER BY created DESC LIMIT 50', (user['id'],))
+    orders = all_rows('SELECT id,protocol,plan,plan_name,days,amount,currency,method,status,created,payment_url,attempts,device_limit,kind,base_amount,discount,promo_code,promo_percent FROM orders WHERE user_id=? ORDER BY created DESC LIMIT 50', (user['id'],))
     return {'id': user['id'], 'email': user['email'], 'telegram_id': user['telegram_id'], 'subscriptions': subs, 'orders': orders}
 
 @app.post('/api/orders')
@@ -274,26 +278,15 @@ async def purchase(data: Purchase, user=Depends(current_user)):
     if method == 'yookassa' and os.getenv('YOOKASSA_RECEIPTS') == 'true' and not email:
         raise HTTPException(422, 'Укажите email для чека')
     async with service.lock:
-        plan = one('SELECT * FROM plans WHERE id=? AND enabled=1', (data.plan,))
-        if not plan:
-            raise HTTPException(409, 'Тариф больше недоступен. Выберите другой тариф.')
-        if data.plan_version != plan['version']:
-            raise HTTPException(409, 'Условия тарифа изменились. Обновите тарифы и подтвердите покупку заново.')
-        order = one("SELECT * FROM orders WHERE user_id=? AND protocol=? AND plan=? AND method=? AND plan_version=? AND status='pending' AND created>? ORDER BY created DESC LIMIT 1",
-                    (user['id'], data.protocol, data.plan, method, plan['version'], int(time.time()) - 1800))
-        if not order:
-            oid = str(uuid.uuid4())
-            execute('INSERT INTO orders(id,user_id,protocol,plan,days,amount,created,receipt_email,currency,method,plan_version,plan_name,device_limit) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                    (oid, user['id'], data.protocol, plan['id'], plan['days'], plan['stars'] if method == 'stars' else plan['price'], int(time.time()), email, 'XTR' if method == 'stars' else 'RUB', method, plan['version'], plan['name'],plan['device_limit']))
-            order = one('SELECT * FROM orders WHERE id=?', (oid,))
-        if method == 'stars' and not order['payment_url']:
+        order = promos.make_order(data,user,method,email)
+        if method == 'stars' and order['status']=='pending' and not order['payment_url']:
             try:
                 url = await providers.stars_invoice(order)
                 execute('UPDATE orders SET payment_url=? WHERE id=?', (url, order['id']))
             except Exception as exc:
                 logging.warning('Stars invoice order=%s error=%s', order['id'], type(exc).__name__)
                 raise HTTPException(502, 'Не удалось создать счёт Telegram. Повторите запрос.')
-        if method == 'yookassa' and not order['payment_id']:
+        if method == 'yookassa' and order['status']=='pending' and not order['payment_id']:
             try:
                 result = await providers.payment(order, order['receipt_email'])
                 execute('UPDATE orders SET payment_id=?,payment_url=? WHERE id=?',
@@ -308,9 +301,26 @@ async def order_status(order_id: str, user=Depends(current_user)):
     order = one('SELECT * FROM orders WHERE id=? AND user_id=?', (order_id, user['id']))
     if not order:
         raise HTTPException(404, 'Заказ не найден')
-    return {k: order[k] for k in ('id', 'protocol', 'plan_name', 'days', 'amount', 'currency', 'method', 'status', 'payment_url','device_limit','kind')} | {
+    return {k: order[k] for k in ('id', 'protocol', 'plan_name', 'days', 'amount', 'currency', 'method', 'status', 'payment_url','device_limit','kind','base_amount','discount','promo_code','promo_percent')} | {
         'instructions': os.getenv('MANUAL_PAYMENT_TEXT', 'Свяжитесь с поддержкой и сообщите номер заказа.')
         if order['method'] == 'manual' else 'Пробный доступ без оплаты. Дождитесь выдачи в кабинете.' if order['kind']=='trial' else ''}
+
+@app.post('/api/quote')
+async def order_quote(data: promos.Quote,user=Depends(current_user)):
+    if not providers.available(data.protocol,user['id']):raise HTTPException(503,'Этот способ подключения сейчас недоступен')
+    return promos.quote(data,user)
+
+@app.get('/api/admin/coupons',dependencies=[Depends(admin)])
+async def coupons_list():return {'coupons':promos.listing()}
+
+@app.post('/api/admin/coupons',dependencies=[Depends(admin)])
+async def coupon_create(data: promos.CouponCreate):
+    async with service.lock:row=promos.create(data)
+    return JSONResponse(row,status_code=201)
+
+@app.put('/api/admin/coupons/{cid}',dependencies=[Depends(admin)])
+async def coupon_update(cid: str,data: promos.CouponUpdate):
+    async with service.lock:return promos.update(cid,data)
 
 @app.get('/api/admin/trial',dependencies=[Depends(admin)])
 async def trial_policy():return trials.policy()
@@ -658,7 +668,7 @@ async def admin_user(user_id: int = APIPath(ge=1, le=9223372036854775807),
             'SELECT id,protocol,expires,state,device_limit FROM subscriptions WHERE user_id=? ORDER BY protocol,id', (user_id,))]
         total = conn.execute('SELECT count(*) FROM orders WHERE user_id=?', (user_id,)).fetchone()[0]
         orders = [dict(order) for order in conn.execute("""SELECT id,protocol,plan,plan_name,days,amount,
-            currency,method,status,created,attempts,error FROM orders WHERE user_id=?
+            currency,method,status,created,attempts,error,promo_code,promo_percent,base_amount,discount FROM orders WHERE user_id=?
             ORDER BY created DESC,id DESC LIMIT ? OFFSET ?""", (user_id, orders_page_size, (orders_page-1)*orders_page_size))]
     now = int(time.time())
     for sub in subscriptions:
@@ -689,7 +699,7 @@ async def admin_orders(q: str = Query(default='', max_length=100),
         conn.execute('BEGIN')
         total = conn.execute('SELECT count(*) FROM orders o JOIN users u ON u.id=o.user_id' + where, args).fetchone()[0]
         rows = conn.execute("""SELECT o.id,o.user_id,o.protocol,o.plan,o.plan_name,o.days,o.amount,
-            o.currency,o.method,o.status,o.created,o.attempts,o.error,u.email,u.telegram_id,
+            o.currency,o.method,o.status,o.created,o.attempts,o.error,o.promo_code,o.promo_percent,o.base_amount,o.discount,u.email,u.telegram_id,
             (o.status='pending' AND o.method='manual' AND o.payment_id IS NULL) AS can_confirm,
             (o.status='paid') AS can_retry
             FROM orders o JOIN users u ON u.id=o.user_id""" + where +

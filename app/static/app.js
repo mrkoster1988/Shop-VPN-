@@ -4,6 +4,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const statusLabel = {pending:'Ожидает оплаты',checkout:'Оплата не завершена',paid:'Оплачено · готовим VPN',active:'Доступ выдан',canceled:'Отменён'};
 const money=(amount,currency)=>amount.toLocaleString('ru-RU')+' '+(currency==='XTR'?'★':'₽');
+let checkoutQuote=null,quoteRequest=0;
 let catalog, me, protocol = 'xui', selectedPlan, checkoutTrial=null, register = false, toastTimer;
 let linkSubscription=null, linkRequest=0, linkState=null;
 let sessionEpoch = 0, meRequest = 0, connectionRequest = 0, connection = null, connectionTimer;
@@ -41,7 +42,7 @@ function clearConnection() {
   $('connection-steps').replaceChildren();
 }
 function clearPrivate() {
-  me = null; selectedPlan = null; checkoutTrial=null; primaryRotationIntents.clear();
+  me = null; selectedPlan = null; checkoutTrial=null;resetQuote(); primaryRotationIntents.clear();
   $('link-dialog').close(); clearLink();
   $('devices-dialog').close(); clearDevices();
   $('config-dialog').close(); clearConnection();
@@ -85,13 +86,13 @@ function renderAccount() {
   $('orders').innerHTML = me.orders.length ? me.orders.map(o => `<div class="order"><div><b>${esc(protocolName(o.protocol))} · ${o.kind==='trial'?'Без оплаты':money(o.amount,o.currency)}</b><br><code>${esc(o.id)}</code><br>${date(o.created)}</div><div><span class="status ${esc(o.status)}">${esc(displayOrderStatus(o))}</span>${o.status==='pending'?`<br><button class="text-link" data-order="${esc(o.id)}">Оплатить / реквизиты</button>`:''}</div></div>`).join('') : '<p>Заказов пока нет.</p>';
 }
 async function beginCheckout(id) {
-  checkoutTrial=null;
+  checkoutTrial=null;resetQuote();
   selectedPlan = catalog.plans.find(p => p.id===id);
   await refreshMe();
   selectedPlan = catalog.plans.find(p => p.id===id);
   if (!selectedPlan) throw new Error('Тариф больше недоступен. Выберите другой тариф.');
   if (!me) { show('auth-dialog'); return; }
-  $('checkout-info').textContent = `${selectedPlan.name} / ${selectedPlan.days} дней / ${protocolName(protocol)} / ${money(selectedPlan.price,catalog.currency)} / ${profileAllowance(selectedPlan.device_limit ?? 4)}`;
+  $('promo-controls').hidden=false;renderCheckoutAmount();
   $('payment-result').replaceChildren(); $('checkout-form').hidden = false;
   $('terms-text').textContent=catalog.terms; $('accept-terms').checked=false; $('accept-terms').required=catalog.payment_mode==='stars';
   $('receipt-label').hidden = !catalog.receipts; $('receipt-label').querySelector('input').required = catalog.receipts;
@@ -102,7 +103,7 @@ function paymentResult(order) {
   $('checkout-form').hidden = true;
   $('payment-result').replaceChildren();
   const paragraph = document.createElement('p');
-  paragraph.textContent = `Заказ: ${order.id}\nТариф: ${order.plan_name || protocolName(order.protocol)} · ${order.days} дней\n${profileAllowance(order.device_limit ?? 4)}\nСумма: ${order.kind==='trial'?'Без оплаты':money(order.amount,order.currency)}\n${displayOrderStatus(order)}\n\n${order.instructions || ''}`;
+  paragraph.textContent = `Заказ: ${order.id}\nТариф: ${order.plan_name || protocolName(order.protocol)} · ${order.days} дней\n${profileAllowance(order.device_limit ?? 4)}\nСумма: ${order.kind==='trial'?'Без оплаты':money(order.amount,order.currency)}\n${displayOrderStatus(order)}${order.promo_code?'\nПромокод: '+order.promo_code+' · скидка '+money(order.discount,order.currency)+' от '+money(order.base_amount,order.currency):''}\n\n${order.instructions || ''}`;
   $('payment-result').append(paragraph);
   if (order.payment_url && order.status === 'pending') {
     const link = document.createElement('a');
@@ -124,8 +125,8 @@ $('auth-form').onsubmit = async event => {
   catch(e) { toast(e.message); } finally { b.disabled=false; }
 };
 $('checkout-form').onsubmit = async event => {
-  event.preventDefault(); const b=event.target.querySelector('button'); b.disabled=true;
-  try { const email=new FormData(event.target).get('receipt_email'); const path=checkoutTrial?'/api/trial':'/api/orders';const payload=checkoutTrial?{protocol:checkoutTrial.protocol,policy_version:checkoutTrial.version,accept_terms:$('accept-terms').checked}:{plan:selectedPlan.id,plan_version:selectedPlan.version,protocol,receipt_email:email||null,accept_terms:$('accept-terms').checked};const order=await api(path,payload);checkoutTrial=null;paymentResult(order);await refreshMe(); }
+  event.preventDefault(); const b=$('checkout-submit'); b.disabled=true;
+  try { if(!checkoutTrial && $('promo-code').value.trim() && !checkoutQuote)throw new Error('Сначала нажмите «Применить» и проверьте сумму скидки.'); const email=new FormData(event.target).get('receipt_email'); const path=checkoutTrial?'/api/trial':'/api/orders';const payload=checkoutTrial?{protocol:checkoutTrial.protocol,policy_version:checkoutTrial.version,accept_terms:$('accept-terms').checked}:{plan:selectedPlan.id,plan_version:selectedPlan.version,protocol,receipt_email:email||null,accept_terms:$('accept-terms').checked,...(checkoutQuote?{promo_code:checkoutQuote.promo_code,promo_version:checkoutQuote.promo_version,quoted_amount:checkoutQuote.amount,quote_currency:checkoutQuote.currency}:{})};const order=await api(path,payload);checkoutTrial=null;paymentResult(order);await refreshMe(); }
   catch(e) {
     if (e.status===409) {
       selectedPlan=null; checkoutTrial=null; $('checkout-dialog').close();
@@ -246,6 +247,32 @@ $('subscriptions').onclick = async event => {
   const button=event.target.closest('[data-config]');
   if (button) openConnection(button.dataset.config).catch(e=>toast(e.message));
 };
+function renderCheckoutAmount() {
+  if(!selectedPlan || checkoutTrial)return;
+  const summary=selectedPlan.name+' / '+selectedPlan.days+' дней / '+protocolName(protocol)+' / '+profileAllowance(selectedPlan.device_limit ?? 4);
+  $('checkout-info').textContent=summary+' / '+(checkoutQuote?'Было '+money(checkoutQuote.base_amount,checkoutQuote.currency)+' · скидка '+money(checkoutQuote.discount,checkoutQuote.currency)+' · к оплате '+money(checkoutQuote.amount,checkoutQuote.currency):money(selectedPlan.price,catalog.currency));
+}
+function resetQuote(clearInput=true) {
+  quoteRequest++;checkoutQuote=null;
+  if(clearInput)$('promo-code').value='';
+  $('promo-status').textContent='';$('promo-apply').disabled=false;renderCheckoutAmount();
+}
+$('checkout-dialog').addEventListener('close',()=>resetQuote());
+$('promo-code').oninput=()=>{resetQuote(false);if($('promo-code').value.trim())$('promo-status').textContent='Нажмите «Применить», чтобы рассчитать скидку.';};
+$('promo-clear').onclick=()=>resetQuote();
+async function applyPromo() {
+  if(!selectedPlan || checkoutTrial)return;
+  const code=$('promo-code').value.trim(),request=++quoteRequest,plan=selectedPlan.id,version=selectedPlan.version,chosen=protocol;
+  checkoutQuote=null;$('promo-apply').disabled=true;renderCheckoutAmount();
+  try {
+    const result=await api('/api/quote',{plan,plan_version:version,protocol:chosen,promo_code:code});
+    if(request!==quoteRequest || !$('checkout-dialog').open || selectedPlan?.id!==plan || protocol!==chosen)return;
+    checkoutQuote=result;$('promo-code').value=result.promo_code;
+    $('promo-status').textContent='Код '+result.promo_code+': '+result.promo_percent+'%, скидка '+money(result.discount,result.currency)+'. Итоговая сумма показана выше.';renderCheckoutAmount();
+  } catch(e){if(request===quoteRequest)$('promo-status').textContent=e.message;}
+  finally {if(request===quoteRequest)$('promo-apply').disabled=false;}
+}
+$('promo-apply').onclick=()=>applyPromo();
 function renderTrial() {
   const trial=catalog.trial;
   $('trial-offer').hidden=!trial || (!trial.enabled&&!trial.claim);
@@ -257,12 +284,12 @@ function renderTrial() {
   $('trial-start').disabled=!trial.claim && !(trial.eligible&&available) && trial.reason!=='telegram_required';
 }
 async function beginTrial() {
-  selectedPlan=null;checkoutTrial=null;
+  selectedPlan=null;checkoutTrial=null;resetQuote();
   await refreshMe();const trial=catalog.trial;
   if(trial?.claim){show('account-dialog');return;}
   if(!me?.telegram_id){show('auth-dialog');toast('Пробный доступ доступен при входе через Telegram-бота.');return;}
   if(!trial?.eligible || !catalog.protocols.find(p=>p.id===protocol)?.available)throw new Error('Пробный доступ сейчас недоступен.');
-  selectedPlan=null;checkoutTrial={protocol,version:trial.version};
+  selectedPlan=null;checkoutTrial={protocol,version:trial.version};$('promo-controls').hidden=true;
   $('checkout-info').textContent='Пробный доступ / '+trial.days+' дн. / '+protocolName(protocol)+' / без оплаты / только основной профиль';
   $('payment-result').replaceChildren();$('checkout-form').hidden=false;$('receipt-label').hidden=true;$('receipt-label').querySelector('input').required=false;
   $('terms-text').textContent=catalog.terms;$('accept-terms').checked=false;$('accept-terms').required=true;show('checkout-dialog');

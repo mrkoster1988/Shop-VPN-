@@ -36,7 +36,7 @@ async function refresh({plans = true} = {}) {
   const [data, catalog] = await Promise.all([api('overview'), plans ? api('plans') : Promise.resolve(null)]);
   $('stats').innerHTML = `<div>Пользователи<strong>${data.users}</strong></div><div>Подписки<strong>${data.active}</strong></div><div>Подтверждено<strong>${data.revenue} ₽ / ${data.stars} ★</strong></div>`;
   if (catalog) $('plan-editors').innerHTML = catalog.plans.map(planForm).join('');
-  await Promise.all([refreshOrders(), refreshUsers(), plans ? refreshServers() : Promise.resolve(), plans ? refreshTrialPolicy() : Promise.resolve()]);
+  await Promise.all([refreshOrders(), refreshUsers(), plans ? refreshServers() : Promise.resolve(), plans ? refreshTrialPolicy() : Promise.resolve(), plans ? refreshCoupons() : Promise.resolve()]);
 }
 $('admin-login').onsubmit = async event => {
   event.preventDefault();
@@ -58,6 +58,7 @@ $('exit').onclick = () => {
   $('users-query').value = ''; $('users-list').replaceChildren(); $('users-page').textContent = ''; $('users-state').textContent = '';
   if ($('user-dialog').open) $('user-dialog').close();
   clearUser();
+  $('coupons-list').replaceChildren();$('coupons-error').textContent='';$('coupon-create').reset();
   $('trial-policy-editor').replaceChildren();$('trial-policy-count').textContent='';$('trial-policy-error').textContent='';
   $('list').replaceChildren(); $('stats').replaceChildren(); $('plan-editors').replaceChildren();
   $('admin-notice').textContent = ''; $('error').textContent = ''; $('dashboard').hidden = true; $('admin-login').hidden = false;
@@ -164,7 +165,7 @@ async function loadUser(page) {
       const status = sub.access_active ? 'Активна' : sub.state === 'pending' ? 'Готовится' : 'Неактивна';
       return `<article class="subscription"><b>${esc(protocolLabel(sub.protocol))}</b><p>${status} · Срок: ${esc(dateTime(sub.expires))}</p><p>Дополнительных профилей: ${sub.device_limit ?? 4}</p></article>`;
     }).join('') : '<p>Подписок пока нет.</p>';
-    $('user-orders').innerHTML = data.orders.length ? data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${order.days} дней · ${order.amount} ${order.currency === 'XTR' ? '★' : '₽'}</b><p>${esc(protocolLabel(order.protocol))} · ${esc(orderStatus[order.status] || order.status)}</p><p>Заказ: ${esc(order.id)}</p><p>${esc(dateTime(order.created))} · ${esc(order.method==='trial'?'Пробный доступ':order.method)}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}</article>`).join('') : '<p>Заказов пока нет.</p>';
+    $('user-orders').innerHTML = data.orders.length ? data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${order.days} дней · ${order.amount} ${order.currency === 'XTR' ? '★' : '₽'}</b><p>${esc(protocolLabel(order.protocol))} · ${esc(orderStatus[order.status] || order.status)}</p><p>Заказ: ${esc(order.id)}</p>${order.promo_code?`<p>Код ${esc(order.promo_code)} · скидка ${order.discount} ${order.currency==='XTR'?'★':'₽'} от ${order.base_amount}</p>`:''}<p>${esc(dateTime(order.created))} · ${esc(order.method==='trial'?'Пробный доступ':order.method)}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}</article>`).join('') : '<p>Заказов пока нет.</p>';
     const pages = Math.max(1, Math.ceil(data.orders_total / data.orders_page_size));
     $('user-orders-page').textContent = 'Заказов: ' + data.orders_total + ' · Страница ' + profilePage + ' из ' + pages;
     $('user-orders-prev').disabled = profilePage <= 1;
@@ -200,7 +201,7 @@ async function refreshOrders() {
     $('orders-page').textContent = 'Страница ' + data.page + ' из ' + pages;
     $('orders-prev').disabled = data.page <= 1;
     $('orders-next').disabled = data.page * data.page_size >= data.total;
-    $('list').innerHTML = data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${esc(protocolLabel(order.protocol))} · ${order.amount} ${order.currency === 'XTR' ? '★' : '₽'}</b><p><button class="text-link" data-order-user="${order.user_id}">${esc(order.email || 'Telegram ' + order.telegram_id)} · № ${order.user_id}</button></p><p>Заказ: ${esc(order.id)}</p><p>${esc(orderStatus[order.status] || order.status)} · ${esc(order.method==='trial'?'Пробный доступ':order.method)} · ${esc(dateTime(order.created))}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}<div class="actions">${order.can_confirm ? `<button data-action="confirm" data-id="${esc(order.id)}">Подтвердить поступление оплаты</button>` : ''}${order.can_reject ? `<button class="secondary" data-action="reject" data-id="${esc(order.id)}">Отменить заказ</button>` : ''}${order.can_retry ? `<button data-action="retry" data-id="${esc(order.id)}">Повторить выдачу</button>` : ''}</div></article>`).join('');
+    $('list').innerHTML = data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${esc(protocolLabel(order.protocol))} · ${order.amount} ${order.currency === 'XTR' ? '★' : '₽'}</b><p><button class="text-link" data-order-user="${order.user_id}">${esc(order.email || 'Telegram ' + order.telegram_id)} · № ${order.user_id}</button></p><p>Заказ: ${esc(order.id)}</p>${order.promo_code?`<p>Код ${esc(order.promo_code)} · скидка ${order.discount} ${order.currency==='XTR'?'★':'₽'} от ${order.base_amount}</p>`:''}<p>${esc(orderStatus[order.status] || order.status)} · ${esc(order.method==='trial'?'Пробный доступ':order.method)} · ${esc(dateTime(order.created))}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}<div class="actions">${order.can_confirm ? `<button data-action="confirm" data-id="${esc(order.id)}">Подтвердить поступление оплаты</button>` : ''}${order.can_reject ? `<button class="secondary" data-action="reject" data-id="${esc(order.id)}">Отменить заказ</button>` : ''}${order.can_retry ? `<button data-action="retry" data-id="${esc(order.id)}">Повторить выдачу</button>` : ''}</div></article>`).join('');
   } catch (error) {
     if (request === ordersRequest) { $('list').replaceChildren(); $('orders-state').textContent = error.message; }
     throw error;
@@ -298,4 +299,25 @@ $('trial-policy-editor').onsubmit=async event=>{
   const values=new FormData(form),button=form.querySelector('button');button.disabled=true;
   try {await api('trial',{method:'PUT',data:{enabled:values.has('enabled'),days:Number(values.get('days')),max_claims:Number(values.get('max_claims')),version:Number(form.dataset.trialVersion)}});await refreshTrialPolicy();$('trial-policy-error').textContent='';}
   catch(e){$('trial-policy-error').textContent=e.message;button.disabled=false;}
+};
+
+function couponDate(ts) {
+  if(!ts)return '';
+  const d=new Date(ts*1000);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);
+}
+function couponForm(p) {
+  return `<form class="plan-editor" data-coupon="${esc(p.id)}" data-version="${p.version}"><h3>${esc(p.code)}</h3><p>Оформлено: ${p.used} из ${p.max_uses}. Применения не сбрасываются.</p><label>Скидка, %<input name="percent" type="number" min="1" max="90" required value="${p.percent}"></label><label>Лимит заказов<input name="max_uses" type="number" min="1" max="100000" required value="${p.max_uses}"></label><label>Окончание (часовой пояс браузера)<input name="expires_at" type="datetime-local" value="${couponDate(p.expires_at)}"></label><label>Код тарифа (пусто — все)<input name="plan_id" maxlength="32" value="${esc(p.plan_id || '')}"></label><label>Протокол<select name="protocol">${[['all','Все'],['xui','VLESS'],['wg','WireGuard']].map(([id,label])=>`<option value="${id}" ${p.protocol===id?'selected':''}>${label}</option>`).join('')}</select></label><label class="plan-enabled"><input name="enabled" type="checkbox" ${p.enabled?'checked':''}> Включён</label><button type="submit" class="small">Сохранить</button></form>`;
+}
+async function refreshCoupons(){const result=await api('coupons');$('coupons-list').innerHTML=result.coupons.map(couponForm).join('');}
+function couponFields(values){return {percent:Number(values.get('percent')),max_uses:Number(values.get('max_uses')),expires_at:values.get('expires_at')?Math.floor(new Date(values.get('expires_at')).getTime()/1000):0,plan_id:String(values.get('plan_id') || '').trim() || null,protocol:String(values.get('protocol')),enabled:values.has('enabled')};}
+$('coupon-create').onsubmit=async event=>{
+  event.preventDefault();const button=event.target.querySelector('button'),values=new FormData(event.target);button.disabled=true;
+  try {await api('coupons',{method:'POST',data:{...couponFields(values),code:String(values.get('code')).trim().toUpperCase()}});$('coupon-create').reset();await refreshCoupons();$('coupons-error').textContent='';}
+  catch(e){$('coupons-error').textContent=e.message;}finally{button.disabled=false;}
+};
+$('coupons-list').onsubmit=async event=>{
+  event.preventDefault();const form=event.target.closest('[data-coupon]');if(!form)return;
+  const button=form.querySelector('button'),values=new FormData(form);button.disabled=true;
+  try {await api('coupons/'+encodeURIComponent(form.dataset.coupon),{method:'PUT',data:{...couponFields(values),version:Number(form.dataset.version)}});await refreshCoupons();$('coupons-error').textContent='';}
+  catch(e){$('coupons-error').textContent=e.message;button.disabled=false;}
 };

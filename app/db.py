@@ -56,6 +56,19 @@ def init_db():
           id TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), protocol TEXT NOT NULL,
           expires INTEGER NOT NULL, state TEXT NOT NULL, secret TEXT,
           reminder INTEGER NOT NULL DEFAULT 0, server_id TEXT REFERENCES servers(id), UNIQUE(user_id, protocol));
+        CREATE TABLE IF NOT EXISTS coupons (
+          id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, percent INTEGER NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT 0, expires_at INTEGER NOT NULL DEFAULT 0,
+          max_uses INTEGER NOT NULL DEFAULT 100, plan_id TEXT REFERENCES plans(id),
+          protocol TEXT NOT NULL DEFAULT 'all', version INTEGER NOT NULL DEFAULT 1,
+          created INTEGER NOT NULL, updated INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS coupon_uses (
+          coupon_id TEXT NOT NULL REFERENCES coupons(id), user_id INTEGER NOT NULL REFERENCES users(id),
+          order_id TEXT NOT NULL UNIQUE REFERENCES orders(id), created INTEGER NOT NULL,
+          PRIMARY KEY(coupon_id,user_id));
+        CREATE TABLE IF NOT EXISTS coupon_changes (
+          id INTEGER PRIMARY KEY, coupon_id TEXT NOT NULL REFERENCES coupons(id), created INTEGER NOT NULL,
+          before_data TEXT NOT NULL, after_data TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS trial_policy (
           id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL DEFAULT 0,
           days INTEGER NOT NULL DEFAULT 1, max_claims INTEGER NOT NULL DEFAULT 100,
@@ -119,6 +132,11 @@ def init_db():
                 c.decrypt(row['secret'] or row['parent_secret'])  # Validate the existing key before encrypting migration data.
             conn.execute('UPDATE devices SET credential_id=? WHERE id=?',(c.encrypt(row['id']),row['id']))
         order_columns = {row['name'] for row in conn.execute('PRAGMA table_info(orders)')}
+        promo_columns={'base_amount':'INTEGER','discount':'INTEGER NOT NULL DEFAULT 0',
+            'promo_id':'TEXT REFERENCES coupons(id)','promo_code':'TEXT','promo_version':'INTEGER','promo_percent':'INTEGER'}
+        for column,definition in promo_columns.items():
+            if column not in order_columns:conn.execute('ALTER TABLE orders ADD COLUMN '+column+' '+definition)
+        conn.execute('UPDATE orders SET base_amount=amount WHERE base_amount IS NULL')
         if 'kind' not in order_columns:
             conn.execute("ALTER TABLE orders ADD COLUMN kind TEXT NOT NULL DEFAULT 'purchase'")
         if 'access_source' not in sub_columns:

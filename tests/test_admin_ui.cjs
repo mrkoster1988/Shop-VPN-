@@ -153,3 +153,9 @@ test('trial policy editor displays the lifetime activation budget and version',a
   assert.ok(p.element('trial-policy-count').textContent.includes('7 из 100'));
   assert.ok(p.element('trial-policy-editor').innerHTML.includes('data-trial-version="3"'));
 });
+
+test('coupon form preserves its immutable code and shows consumed reservations',()=>{
+  const p=adminPage();const markup=p.run("couponForm({id:'c1',code:'SAVE10',percent:10,enabled:false,expires_at:0,max_uses:5,used:3,plan_id:null,protocol:'all',version:2})");
+  assert.ok(markup.includes('SAVE10')&&markup.includes('3 из 5')&&markup.includes('data-version="2"'));
+  assert.ok(!markup.includes('name="code"'));
+});

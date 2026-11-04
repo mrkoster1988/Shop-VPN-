@@ -326,3 +326,26 @@ test('trial account shows no payment claim or paid profile features',async()=>{
   assert.ok(subscriptions.includes('Пробный доступ')&&!subscriptions.includes('data-primary-rotate')&&!subscriptions.includes('data-link='));
   assert.ok(orders.includes('Без оплаты')&&orders.includes('Готовим пробный VPN')&&!orders.includes('Оплачено'));
 });
+
+test('promo quote shows exact discount and sends the approved amount to checkout',async()=>{
+  const p=await customerPage();await p.run("beginCheckout('month')");p.element('promo-code').value='SAVE10';
+  p.respond('/shop/api/quote',{plan:'month',protocol:'xui',plan_version:1,base_amount:199,amount:180,discount:19,currency:'RUB',promo_code:'SAVE10',promo_version:2,promo_percent:10});
+  await p.run('applyPromo()');assert.ok(p.element('checkout-info').textContent.includes('180')&&p.element('checkout-info').textContent.includes('19'));
+  p.respond('/shop/api/orders',{id:'discount-order',plan_name:'Month',protocol:'xui',days:30,amount:180,currency:'RUB',method:'manual',status:'pending',base_amount:199,discount:19,promo_code:'SAVE10',promo_percent:10});
+  await p.element('checkout-form').onsubmit({preventDefault(){},target:{fields:{receipt_email:''}}});
+  const order=p.calls.find(c=>c.url==='/shop/api/orders');assert.ok(order);
+  const body=JSON.parse(order.opts.body);assert.equal(body.quoted_amount,180);assert.equal(body.promo_version,2);assert.equal(body.quote_currency,'RUB');
+});
+
+test('typing a code without applying it cannot silently buy at full price',async()=>{
+  const p=await customerPage();await p.run("beginCheckout('month')");p.element('promo-code').value='SAVE10';
+  await p.element('checkout-form').onsubmit({preventDefault(){},target:{fields:{receipt_email:''}}});
+  assert.ok(!p.calls.some(c=>c.url==='/shop/api/orders'));
+  assert.ok(p.element('toast').textContent.includes('Применить'));
+});
+
+test('a closed checkout cannot receive a late discount quote',async()=>{
+  const p=await customerPage();await p.run("beginCheckout('month')");p.element('promo-code').value='SAVE10';const reply=p.defer('/shop/api/quote');
+  const pending=p.run('applyPromo()');p.element('checkout-dialog').close();reply({amount:1,currency:'RUB',base_amount:199,discount:198,promo_code:'OLD',promo_version:1,promo_percent:90});await pending;
+  assert.equal(p.run('checkoutQuote'),null);assert.equal(p.element('promo-code').value,'');assert.equal(p.element('promo-status').textContent,'');
+});

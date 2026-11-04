@@ -85,7 +85,7 @@ def claim(user,data):
         if not server:raise HTTPException(409,'Для пробного доступа сейчас нет свободного сервера')
         sid,oid=str(uuid.uuid4()),str(uuid.uuid4());now=int(time.time())
         conn.execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state,server_id,device_limit,access_source) VALUES (?,?,?,0,'pending',?,0,'trial')",(sid,user['id'],data.protocol,server['id']))
-        conn.execute("INSERT INTO orders(id,user_id,protocol,plan,plan_name,days,amount,currency,method,status,created,plan_version,device_limit,kind) VALUES (?,?,?,'trial','Пробный доступ',?,0,'XTR','trial','paid',?,?,0,'trial')",
+        conn.execute("INSERT INTO orders(id,user_id,protocol,plan,plan_name,days,amount,currency,method,status,created,plan_version,device_limit,kind,base_amount) VALUES (?,?,?,'trial','Пробный доступ',?,0,'XTR','trial','paid',?,?,0,'trial',0)",
             (oid,user['id'],data.protocol,p['days'],now,p['version']))
         conn.execute('INSERT INTO trial_claims(user_id,order_id,protocol,created,policy_version,terms_snapshot) VALUES (?,?,?,?,?,?)',
             (user['id'],oid,data.protocol,now,p['version'],os.environ['TERMS_TEXT']))
