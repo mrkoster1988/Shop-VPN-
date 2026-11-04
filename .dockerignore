@@ -1,0 +1,9 @@
+.env
+.env.*
+data
+wg-data
+.venv
+__pycache__
+.pytest_cache
+tests
+*.zip

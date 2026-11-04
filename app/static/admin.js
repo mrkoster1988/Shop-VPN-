@@ -1,0 +1,12 @@
+'use strict';
+const basePath = document.querySelector('meta[name="shop-base"]').content;
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let token='';
+async function api(path,post=false){const r=await fetch(basePath + '/api/admin/'+path,{method:post?'POST':'GET',headers:{Authorization:'Bearer '+token}});const data=await r.json();if(!r.ok)throw new Error(typeof data.detail==='string'?data.detail:'Ошибка запроса');return data;}
+async function refresh(){const data=await api('overview');$('stats').innerHTML=`<div>Пользователи<strong>${data.users}</strong></div><div>Подписки<strong>${data.active}</strong></div><div>Подтверждено<strong>${data.revenue} ₽ / ${data.stars} ★</strong></div>`;
+$('list').innerHTML=data.orders.map(o=>`<article class="admin-order"><b>${esc(o.email||'Telegram '+o.telegram_id)} · ${esc(o.protocol)} · ${o.amount} ${o.currency==='XTR'?'★':'₽'}</b><p>Заказ: ${esc(o.id)}</p><p>Статус: ${esc(o.status)} / ${new Date(o.created*1000).toLocaleString('ru-RU')}</p>${o.error?`<p>Ошибка выдачи: ${esc(o.error)} / попыток: ${o.attempts}</p>`:''}<div class="actions">${o.status==='pending'&&o.method==='manual'&&!o.payment_id?`<button data-action="confirm" data-id="${o.id}">Подтвердить поступление оплаты</button><button class="secondary" data-action="reject" data-id="${o.id}">Отменить заказ</button>`:''}${o.status==='paid'?`<button data-action="retry" data-id="${o.id}">Повторить выдачу</button>`:''}</div></article>`).join('');}
+$('admin-login').onsubmit=async e=>{e.preventDefault();token=$('key').value;try{await refresh();$('key').value='';$('admin-login').hidden=true;$('dashboard').hidden=false;$('error').textContent='';}catch(e){token='';$('error').textContent=e.message;}};
+$('reload').onclick=()=>refresh().catch(e=>$('error').textContent=e.message);
+$('exit').onclick=()=>{token='';$('list').replaceChildren();$('stats').replaceChildren();$('dashboard').hidden=true;$('admin-login').hidden=false;};
+$('list').onclick=async event=>{const b=event.target.closest('[data-action]');if(!b)return;if(b.dataset.action==='confirm'&&!confirm('Вы проверили фактическое поступление денег по этому заказу?'))return;b.disabled=true;try{await api('orders/'+b.dataset.id+'/'+b.dataset.action,true);await refresh();}catch(e){$('error').textContent=e.message;b.disabled=false;}};

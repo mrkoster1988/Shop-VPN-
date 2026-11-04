@@ -1,0 +1,16 @@
+# Merge these routes into the existing pushok.shop site block.
+# Keep all existing routes for the main website.
+# PUBLIC_URL=https://pushok.shop/shop
+pushok.shop {
+    encode gzip
+    @shop_root path /shop
+    redir @shop_root /shop/ 308
+    @shop path /shop/*
+    handle @shop {
+        reverse_proxy 127.0.0.1:8000
+    }
+    # Retain the existing handle / reverse_proxy / file_server for the main site here.
+}
+# Caddy runs on the host. In Docker use the appropriate private/host network.
+# Do not enable access logs: /shop/login contains a single-use credential.
+# Use handle, not handle_path: the application expects the /shop prefix.

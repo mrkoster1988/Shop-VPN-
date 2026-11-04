@@ -382,3 +382,13 @@ python3 -m unittest discover -s tests -p test_release.py
 ```
 
 Справка GitHub: https://docs.github.com/en/rest/releases/releases
+
+
+## Автоматические проверки разработки
+
+Workflow `.github/workflows/ci.yml` выполняет pytest и проверки синтаксиса
+JavaScript, Python и Bash при push в `main`, в pull request и при ручном запуске.
+Release вызывает этот же workflow на том же коммите и публикует релиз только
+после успешного завершения всех проверок. Проверки не требуют секретов VPS,
+платёжных сервисов или Telegram: внешние вызовы подменяются тестовыми ответами.
+Публикация кода и релизов не обновляет установленный магазин автоматически.
