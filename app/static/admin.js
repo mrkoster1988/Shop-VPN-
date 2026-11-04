@@ -36,7 +36,7 @@ async function refresh({plans = true} = {}) {
   const [data, catalog] = await Promise.all([api('overview'), plans ? api('plans') : Promise.resolve(null)]);
   $('stats').innerHTML = `<div>Пользователи<strong>${data.users}</strong></div><div>Подписки<strong>${data.active}</strong></div><div>Подтверждено<strong>${data.revenue} ₽ / ${data.stars} ★</strong></div>`;
   if (catalog) $('plan-editors').innerHTML = catalog.plans.map(planForm).join('');
-  await Promise.all([refreshOrders(), refreshUsers(), plans ? refreshServers() : Promise.resolve(), plans ? refreshTrialPolicy() : Promise.resolve(), plans ? refreshCoupons() : Promise.resolve()]);
+  await Promise.all([refreshOrders(), refreshUsers(), plans ? refreshServers() : Promise.resolve(), plans ? refreshTrialPolicy() : Promise.resolve(), plans ? refreshCoupons() : Promise.resolve(), plans ? refreshReferralPolicy() : Promise.resolve()]);
 }
 $('admin-login').onsubmit = async event => {
   event.preventDefault();
@@ -58,6 +58,7 @@ $('exit').onclick = () => {
   $('users-query').value = ''; $('users-list').replaceChildren(); $('users-page').textContent = ''; $('users-state').textContent = '';
   if ($('user-dialog').open) $('user-dialog').close();
   clearUser();
+  $('referral-policy-editor').replaceChildren();$('referral-policy-count').textContent='';$('referral-policy-error').textContent='';
   $('coupons-list').replaceChildren();$('coupons-error').textContent='';$('coupon-create').reset();
   $('trial-policy-editor').replaceChildren();$('trial-policy-count').textContent='';$('trial-policy-error').textContent='';
   $('list').replaceChildren(); $('stats').replaceChildren(); $('plan-editors').replaceChildren();
@@ -165,7 +166,7 @@ async function loadUser(page) {
       const status = sub.access_active ? 'Активна' : sub.state === 'pending' ? 'Готовится' : 'Неактивна';
       return `<article class="subscription"><b>${esc(protocolLabel(sub.protocol))}</b><p>${status} · Срок: ${esc(dateTime(sub.expires))}</p><p>Дополнительных профилей: ${sub.device_limit ?? 4}</p></article>`;
     }).join('') : '<p>Подписок пока нет.</p>';
-    $('user-orders').innerHTML = data.orders.length ? data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${order.days} дней · ${order.amount} ${order.currency === 'XTR' ? '★' : '₽'}</b><p>${esc(protocolLabel(order.protocol))} · ${esc(orderStatus[order.status] || order.status)}</p><p>Заказ: ${esc(order.id)}</p>${order.promo_code?`<p>Код ${esc(order.promo_code)} · скидка ${order.discount} ${order.currency==='XTR'?'★':'₽'} от ${order.base_amount}</p>`:''}<p>${esc(dateTime(order.created))} · ${esc(order.method==='trial'?'Пробный доступ':order.method)}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}</article>`).join('') : '<p>Заказов пока нет.</p>';
+    $('user-orders').innerHTML = data.orders.length ? data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${order.days} дней · ${order.method==='referral'?'Бонус · '+order.days+' дней':order.amount+' '+(order.currency === 'XTR' ? '★' : '₽')}</b><p>${esc(protocolLabel(order.protocol))} · ${esc(orderStatus[order.status] || order.status)}</p><p>Заказ: ${esc(order.id)}</p>${order.promo_code?`<p>Код ${esc(order.promo_code)} · скидка ${order.discount} ${order.currency==='XTR'?'★':'₽'} от ${order.base_amount}</p>`:''}<p>${esc(dateTime(order.created))} · ${esc(order.method==='referral'?'Бонусное продление':order.method==='trial'?'Пробный доступ':order.method)}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}</article>`).join('') : '<p>Заказов пока нет.</p>';
     const pages = Math.max(1, Math.ceil(data.orders_total / data.orders_page_size));
     $('user-orders-page').textContent = 'Заказов: ' + data.orders_total + ' · Страница ' + profilePage + ' из ' + pages;
     $('user-orders-prev').disabled = profilePage <= 1;
@@ -201,7 +202,7 @@ async function refreshOrders() {
     $('orders-page').textContent = 'Страница ' + data.page + ' из ' + pages;
     $('orders-prev').disabled = data.page <= 1;
     $('orders-next').disabled = data.page * data.page_size >= data.total;
-    $('list').innerHTML = data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${esc(protocolLabel(order.protocol))} · ${order.amount} ${order.currency === 'XTR' ? '★' : '₽'}</b><p><button class="text-link" data-order-user="${order.user_id}">${esc(order.email || 'Telegram ' + order.telegram_id)} · № ${order.user_id}</button></p><p>Заказ: ${esc(order.id)}</p>${order.promo_code?`<p>Код ${esc(order.promo_code)} · скидка ${order.discount} ${order.currency==='XTR'?'★':'₽'} от ${order.base_amount}</p>`:''}<p>${esc(orderStatus[order.status] || order.status)} · ${esc(order.method==='trial'?'Пробный доступ':order.method)} · ${esc(dateTime(order.created))}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}<div class="actions">${order.can_confirm ? `<button data-action="confirm" data-id="${esc(order.id)}">Подтвердить поступление оплаты</button>` : ''}${order.can_reject ? `<button class="secondary" data-action="reject" data-id="${esc(order.id)}">Отменить заказ</button>` : ''}${order.can_retry ? `<button data-action="retry" data-id="${esc(order.id)}">Повторить выдачу</button>` : ''}</div></article>`).join('');
+    $('list').innerHTML = data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${esc(protocolLabel(order.protocol))} · ${order.method==='referral'?'Бонус · '+order.days+' дней':order.amount+' '+(order.currency === 'XTR' ? '★' : '₽')}</b><p><button class="text-link" data-order-user="${order.user_id}">${esc(order.email || 'Telegram ' + order.telegram_id)} · № ${order.user_id}</button></p><p>Заказ: ${esc(order.id)}</p>${order.promo_code?`<p>Код ${esc(order.promo_code)} · скидка ${order.discount} ${order.currency==='XTR'?'★':'₽'} от ${order.base_amount}</p>`:''}<p>${esc(orderStatus[order.status] || order.status)} · ${esc(order.method==='referral'?'Бонусное продление':order.method==='trial'?'Пробный доступ':order.method)} · ${esc(dateTime(order.created))}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}<div class="actions">${order.can_confirm ? `<button data-action="confirm" data-id="${esc(order.id)}">Подтвердить поступление оплаты</button>` : ''}${order.can_reject ? `<button class="secondary" data-action="reject" data-id="${esc(order.id)}">Отменить заказ</button>` : ''}${order.can_retry ? `<button data-action="retry" data-id="${esc(order.id)}">Повторить выдачу</button>` : ''}</div></article>`).join('');
   } catch (error) {
     if (request === ordersRequest) { $('list').replaceChildren(); $('orders-state').textContent = error.message; }
     throw error;
@@ -320,4 +321,18 @@ $('coupons-list').onsubmit=async event=>{
   const button=form.querySelector('button'),values=new FormData(form);button.disabled=true;
   try {await api('coupons/'+encodeURIComponent(form.dataset.coupon),{method:'PUT',data:{...couponFields(values),version:Number(form.dataset.version)}});await refreshCoupons();$('coupons-error').textContent='';}
   catch(e){$('coupons-error').textContent=e.message;button.disabled=false;}
+};
+
+function referralPolicyForm(p) {
+  return `<form class="plan-editor" data-referral-version="${p.version}"><label class="plan-enabled"><input name="enabled" type="checkbox" ${p.enabled?'checked':''}> Принимать новые приглашения</label><label>Бонус пригласившему, дней<input name="days" type="number" min="1" max="30" required value="${p.days}"></label><label>Лимит принятых приглашений за всё время<input name="max_invites" type="number" min="1" max="100000" required value="${p.max_invites}"></label><label>Минимальная оплата на сайте, ₽<input name="min_rub" type="number" min="1" max="1000000" required value="${p.min_rub}"></label><label>Минимальная оплата в Telegram, ★<input name="min_stars" type="number" min="1" max="100000" required value="${p.min_stars}"></label><button type="submit" class="small">Сохранить условия приглашений</button></form>`;
+}
+async function refreshReferralPolicy() {
+  const p=await api('referrals');$('referral-policy-editor').innerHTML=referralPolicyForm(p);
+  $('referral-policy-count').textContent='Принято: '+p.used+' · свободно: '+p.remaining+' · версия '+p.version;
+}
+$('referral-policy-editor').onsubmit=async event=>{
+  const form=event.target.closest('form[data-referral-version]');if(!form)return;event.preventDefault();
+  const values=new FormData(form),button=form.querySelector('button');button.disabled=true;
+  try {await api('referrals',{method:'PUT',data:{enabled:values.has('enabled'),days:Number(values.get('days')),max_invites:Number(values.get('max_invites')),min_rub:Number(values.get('min_rub')),min_stars:Number(values.get('min_stars')),version:Number(form.dataset.referralVersion)}});await refreshReferralPolicy();$('referral-policy-error').textContent='';}
+  catch(e){$('referral-policy-error').textContent=e.message;button.disabled=false;}
 };

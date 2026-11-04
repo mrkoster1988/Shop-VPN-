@@ -24,7 +24,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from pydantic import BaseModel, Field, field_validator, ValidationError
 from starlette.applications import Starlette
 from starlette.routing import Mount
-from . import config as c, providers, service, servers, trials, promos
+from . import config as c, providers, service, servers, trials, promos, referrals
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
 
@@ -263,7 +263,27 @@ async def logout(request: Request):
 async def me(user=Depends(current_user)):
     subs = all_rows('SELECT s.id,s.protocol,s.expires,s.state,s.device_limit,s.primary_key_state,s.access_source,(s.rotation_error IS NOT NULL) AS primary_retrying,coalesce(l.enabled,0) AS link_enabled,coalesce(l.follow_rotation,0) AS link_follows_rotation FROM subscriptions s LEFT JOIN subscription_links l ON l.subscription_id=s.id WHERE s.user_id=?', (user['id'],))
     orders = all_rows('SELECT id,protocol,plan,plan_name,days,amount,currency,method,status,created,payment_url,attempts,device_limit,kind,base_amount,discount,promo_code,promo_percent FROM orders WHERE user_id=? ORDER BY created DESC LIMIT 50', (user['id'],))
-    return {'id': user['id'], 'email': user['email'], 'telegram_id': user['telegram_id'], 'subscriptions': subs, 'orders': orders}
+    return {'id': user['id'], 'email': user['email'], 'telegram_id': user['telegram_id'], 'subscriptions': subs, 'orders': orders, 'referrals':referrals.summary(user)}
+
+@app.post('/api/referrals/code')
+async def referral_code(user=Depends(current_user)):
+    async with service.lock:return referrals.code(user)
+
+@app.post('/api/referrals/bind')
+async def referral_bind(data: referrals.Bind,user=Depends(current_user)):
+    async with service.lock:return referrals.bind(user,data)
+
+@app.post('/api/referrals/redeem')
+async def referral_redeem(data: referrals.Redeem,user=Depends(current_user)):
+    async with service.lock:oid=referrals.redeem(user,data)
+    return await order_status(oid,user)
+
+@app.get('/api/admin/referrals',dependencies=[Depends(admin)])
+async def referral_policy():return referrals.policy()
+
+@app.put('/api/admin/referrals',dependencies=[Depends(admin)])
+async def referral_policy_update(data: referrals.PolicyUpdate):
+    async with service.lock:return referrals.update(data)
 
 @app.post('/api/orders')
 async def purchase(data: Purchase, user=Depends(current_user)):
@@ -680,7 +700,7 @@ async def admin_user(user_id: int = APIPath(ge=1, le=9223372036854775807),
 @app.get('/api/admin/orders', dependencies=[Depends(admin)])
 async def admin_orders(q: str = Query(default='', max_length=100),
                        status: Literal['', 'pending', 'checkout', 'paid', 'active', 'canceled'] = '',
-                       method: Literal['', 'manual', 'yookassa', 'stars','trial'] = '',
+                       method: Literal['', 'manual', 'yookassa', 'stars','trial','referral'] = '',
                        protocol: Literal['', 'xui', 'wg'] = '',
                        page: int = Query(default=1, ge=1, le=1000000),
                        page_size: int = Query(default=25, ge=1, le=100)):
@@ -726,6 +746,7 @@ async def confirm(oid: str):
         with db() as conn:
             changed = conn.execute("UPDATE orders SET status='paid' WHERE id=? AND status='pending'", (oid,)).rowcount
             if changed:
+                referrals.award_locked(conn,oid)
                 conn.execute('INSERT INTO audit(created,action,order_id) VALUES (?,?,?)',
                              (int(time.time()), 'manual_payment_confirmed', oid))
     return {'ok': True}

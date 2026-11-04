@@ -69,6 +69,30 @@ def init_db():
         CREATE TABLE IF NOT EXISTS coupon_changes (
           id INTEGER PRIMARY KEY, coupon_id TEXT NOT NULL REFERENCES coupons(id), created INTEGER NOT NULL,
           before_data TEXT NOT NULL, after_data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS referral_policy (
+          id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL DEFAULT 0,
+          days INTEGER NOT NULL DEFAULT 7, max_invites INTEGER NOT NULL DEFAULT 100,
+          min_rub INTEGER NOT NULL DEFAULT 199, min_stars INTEGER NOT NULL DEFAULT 150,
+          version INTEGER NOT NULL DEFAULT 1, updated INTEGER NOT NULL DEFAULT 0);
+        INSERT OR IGNORE INTO referral_policy(id) VALUES (1);
+        CREATE TABLE IF NOT EXISTS referral_policy_changes (
+          id INTEGER PRIMARY KEY, created INTEGER NOT NULL, before_data TEXT NOT NULL, after_data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS referral_codes (
+          user_id INTEGER PRIMARY KEY REFERENCES users(id), code TEXT NOT NULL UNIQUE, created INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS referral_bindings (
+          invitee_id INTEGER PRIMARY KEY REFERENCES users(id), inviter_id INTEGER NOT NULL REFERENCES users(id),
+          days INTEGER NOT NULL, min_rub INTEGER NOT NULL, min_stars INTEGER NOT NULL,
+          policy_version INTEGER NOT NULL, created INTEGER NOT NULL, CHECK(invitee_id!=inviter_id));
+        CREATE INDEX IF NOT EXISTS referral_inviter ON referral_bindings(inviter_id);
+        CREATE TABLE IF NOT EXISTS referral_rewards (
+          invitee_id INTEGER PRIMARY KEY REFERENCES referral_bindings(invitee_id),
+          inviter_id INTEGER NOT NULL REFERENCES users(id), order_id TEXT NOT NULL UNIQUE REFERENCES orders(id),
+          days INTEGER NOT NULL, created INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS referral_rewards_inviter ON referral_rewards(inviter_id);
+        CREATE TABLE IF NOT EXISTS referral_redemptions (
+          user_id INTEGER NOT NULL REFERENCES users(id), request_id TEXT NOT NULL,
+          subscription_id TEXT NOT NULL REFERENCES subscriptions(id), order_id TEXT NOT NULL UNIQUE REFERENCES orders(id),
+          days INTEGER NOT NULL, created INTEGER NOT NULL, PRIMARY KEY(user_id,request_id));
         CREATE TABLE IF NOT EXISTS trial_policy (
           id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL DEFAULT 0,
           days INTEGER NOT NULL DEFAULT 1, max_claims INTEGER NOT NULL DEFAULT 100,

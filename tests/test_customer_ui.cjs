@@ -349,3 +349,45 @@ test('a closed checkout cannot receive a late discount quote',async()=>{
   const pending=p.run('applyPromo()');p.element('checkout-dialog').close();reply({amount:1,currency:'RUB',base_amount:199,discount:198,promo_code:'OLD',promo_version:1,promo_percent:90});await pending;
   assert.equal(p.run('checkoutQuote'),null);assert.equal(p.element('promo-code').value,'');assert.equal(p.element('promo-status').textContent,'');
 });
+
+function referralState(overrides={}) {
+  return {policy:{enabled:true,days:7,min_rub:199,min_stars:150,version:2},balance_days:7,earned_days:7,spent_days:0,invited:2,rewarded:1,can_bind:false,can_share:true,url:'/shop/?ref=abc',code:'abc',bound:null,history:[{days:7,created:100}],...overrides};
+}
+
+test('referral terms balance and bonus action are shown without enabling trial redemption',async()=>{
+  const p=await customerPage();p.state.customer.referrals=referralState();await p.run('refreshMe()');
+  assert.ok(p.element('referral-info').textContent.includes('Бонусных дней: 7'));
+  assert.ok(p.element('referral-info').textContent.includes('199 ₽'));
+  assert.ok(p.element('subscriptions').innerHTML.includes('data-referral="sub-a"'));
+  p.state.customer.subscriptions[0].access_source='trial';await p.run('refreshMe()');
+  assert.ok(!p.element('subscriptions').innerHTML.includes('data-referral='));
+  await p.element('logout').onclick();
+  assert.equal(p.element('referral-url').value,'');assert.equal(p.element('referral-history').innerHTML,'');assert.equal(p.element('referrals-panel').hidden,true);
+});
+
+test('referral acceptance requires explicit action and sends policy snapshot',async()=>{
+  const p=await customerPage();p.state.customer.referrals=referralState({can_bind:true,can_share:false,url:null});
+  p.run("location.search='?ref=aaaaaaaaaaaaaaaaaaaaaaaa'");await p.run('refreshMe()');
+  assert.equal(p.element('referral-code').value,'aaaaaaaaaaaaaaaaaaaaaaaa');
+  assert.equal(p.calls.filter(c=>c.url.endsWith('/bind')).length,0);
+  p.element('referral-accept').checked=true;p.respond('/shop/api/referrals/bind',{});
+  await p.element('referral-bind').onsubmit({preventDefault(){}});
+  const call=p.calls.find(c=>c.url.endsWith('/bind'));
+  assert.deepEqual(JSON.parse(call.opts.body),{code:'aaaaaaaaaaaaaaaaaaaaaaaa',policy_version:2,accept_terms:true});
+});
+
+test('failed bonus redemption retry preserves request identity',async()=>{
+  const p=await customerPage();p.state.customer.referrals=referralState();await p.run('refreshMe()');p.element('referral-days').value='3';
+  p.respond('/shop/api/referrals/redeem',{detail:'Temporary error'},502);
+  await assert.rejects(p.run("redeemReferral('sub-a')"),/Temporary error/);
+  p.respond('/shop/api/referrals/redeem',{id:'bonus-order'});await p.run("redeemReferral('sub-a')");
+  const bodies=p.calls.filter(c=>c.url.endsWith('/redeem')).map(c=>JSON.parse(c.opts.body));
+  assert.equal(bodies.length,2);assert.equal(bodies[0].request_id,bodies[1].request_id);assert.equal(bodies[0].days,3);
+});
+
+test('logout during bonus refresh prevents late private status',async()=>{
+  const p=await customerPage();p.state.customer.referrals=referralState();await p.run('refreshMe()');p.element('referral-days').value='3';
+  p.respond('/shop/api/referrals/redeem',{id:'private-bonus-order'});const release=p.defer('/shop/api/me');
+  const request=p.run("redeemReferral('sub-a')");await tick();await p.element('logout').onclick();release(p.state.customer,401);await assert.rejects(request,/Сессия изменилась/);
+  assert.equal(p.element('referral-status').textContent,'');
+});

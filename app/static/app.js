@@ -5,6 +5,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const statusLabel = {pending:'Ожидает оплаты',checkout:'Оплата не завершена',paid:'Оплачено · готовим VPN',active:'Доступ выдан',canceled:'Отменён'};
 const money=(amount,currency)=>amount.toLocaleString('ru-RU')+' '+(currency==='XTR'?'★':'₽');
 let checkoutQuote=null,quoteRequest=0;
+let referralIntents=new Map();
 let catalog, me, protocol = 'xui', selectedPlan, checkoutTrial=null, register = false, toastTimer;
 let linkSubscription=null, linkRequest=0, linkState=null;
 let sessionEpoch = 0, meRequest = 0, connectionRequest = 0, connection = null, connectionTimer;
@@ -23,7 +24,7 @@ function show(id) { if (!$(id).open) $(id).showModal(); }
 function date(ts) { return new Date(ts*1000).toLocaleDateString('ru-RU'); }
 function protocolName(id) { return id === 'wg' ? 'WireGuard' : 'VLESS'; }
 function profileAllowance(limit) { return limit===0 ? 'Только основной профиль' : 'Основной + до '+limit+' дополнительных профилей'; }
-function displayOrderStatus(order) { return order.kind==='trial'&&order.status==='paid'?'Готовим пробный VPN':order.kind==='trial'&&order.status==='active'?'Пробный доступ выдан':statusLabel[order.status] || order.status; }
+function displayOrderStatus(order) { return order.kind==='referral'&&order.status==='paid'?'Добавляем бонусные дни':order.kind==='referral'&&order.status==='active'?'Бонусные дни добавлены':order.kind==='trial'&&order.status==='paid'?'Готовим пробный VPN':order.kind==='trial'&&order.status==='active'?'Пробный доступ выдан':statusLabel[order.status] || order.status; }
 function renderPlans() {
   $('protocols').innerHTML = catalog.protocols.map(p => `<button class="${p.id===protocol?'chosen':''}" data-protocol="${p.id}" aria-pressed="${p.id===protocol}">${esc(protocolName(p.id))}${p.available?'':' · скоро'}</button>`).join('');
   const available = catalog.protocols.find(p => p.id===protocol).available;
@@ -42,7 +43,7 @@ function clearConnection() {
   $('connection-steps').replaceChildren();
 }
 function clearPrivate() {
-  me = null; selectedPlan = null; checkoutTrial=null;resetQuote(); primaryRotationIntents.clear();
+  me = null; selectedPlan = null; checkoutTrial=null;resetQuote(); primaryRotationIntents.clear();referralIntents.clear();$('referral-url').value='';$('referral-code').value='';$('referral-accept').checked=false;$('referral-status').textContent='';$('referral-info').textContent='';$('referral-history').replaceChildren();$('referrals-panel').hidden=true;
   $('link-dialog').close(); clearLink();
   $('devices-dialog').close(); clearDevices();
   $('config-dialog').close(); clearConnection();
@@ -77,13 +78,14 @@ async function refreshMe() {
 }
 function renderAccount() {
   if (!me) return;
+  renderReferrals();
   $('identity').textContent = me.email || 'Telegram · ' + me.telegram_id;
   $('subscriptions').innerHTML = me.subscriptions.length ? me.subscriptions.map(s => {
     const active = s.state === 'active' && s.expires*1000 > Date.now();
     const primaryReady=active && (s.primary_key_state || 'active')==='active';
-    return `<article class="subscription"><h3>${esc(protocolName(s.protocol))}</h3>${s.access_source==='trial'?'<span class="status">Пробный доступ</span>':''}<p>${active?'Доступ до '+date(s.expires):s.state==='pending'?'Подключение готовится':'Подписка закончилась'}</p><p>${esc(profileAllowance(s.device_limit ?? 4))}</p>${primaryReady?`<button class="small" data-config="${esc(s.id)}">Основной профиль ↗</button>${s.access_source!=='trial'?`<button class="text-link" data-primary-rotate="${esc(s.id)}">Сменить основной ключ</button>`:''}`:s.primary_key_state==='rotating'?`<p>Меняем основной ключ${s.primary_retrying?' · повторим после ошибки':''}. Дополнительные профили не меняются.</p>`:''}${s.protocol==='xui'&&s.state!=='pending'&&s.access_source!=='trial'?`<button class="text-link" data-link="${esc(s.id)}">Ссылка подписки</button>`:''}${s.state!=='pending'?` ${s.access_source!=='trial'?`<button class="small secondary" data-devices="${esc(s.id)}">Устройства</button>`:''}<button class="text-link" data-renew="${esc(s.protocol)}">${active?'Продлить подписку':'Возобновить подписку'}</button>`:''}</article>`;
+    return `<article class="subscription"><h3>${esc(protocolName(s.protocol))}</h3>${s.access_source==='trial'?'<span class="status">Пробный доступ</span>':''}<p>${active?'Доступ до '+date(s.expires):s.state==='pending'?'Подключение готовится':'Подписка закончилась'}</p><p>${esc(profileAllowance(s.device_limit ?? 4))}</p>${primaryReady?`<button class="small" data-config="${esc(s.id)}">Основной профиль ↗</button>${s.access_source!=='trial'?`<button class="text-link" data-primary-rotate="${esc(s.id)}">Сменить основной ключ</button>`:''}`:s.primary_key_state==='rotating'?`<p>Меняем основной ключ${s.primary_retrying?' · повторим после ошибки':''}. Дополнительные профили не меняются.</p>`:''}${s.protocol==='xui'&&s.state!=='pending'&&s.access_source!=='trial'?`<button class="text-link" data-link="${esc(s.id)}">Ссылка подписки</button>`:''}${active&&s.access_source!=='trial'&&me.referrals?.balance_days>0?`<button class="text-link" data-referral="${esc(s.id)}">Потратить бонус</button>`:''}${s.state!=='pending'?` ${s.access_source!=='trial'?`<button class="small secondary" data-devices="${esc(s.id)}">Устройства</button>`:''}<button class="text-link" data-renew="${esc(s.protocol)}">${active?'Продлить подписку':'Возобновить подписку'}</button>`:''}</article>`;
   }).join('') : '<p>Подписок пока нет. Выберите тариф на главной странице.</p>';
-  $('orders').innerHTML = me.orders.length ? me.orders.map(o => `<div class="order"><div><b>${esc(protocolName(o.protocol))} · ${o.kind==='trial'?'Без оплаты':money(o.amount,o.currency)}</b><br><code>${esc(o.id)}</code><br>${date(o.created)}</div><div><span class="status ${esc(o.status)}">${esc(displayOrderStatus(o))}</span>${o.status==='pending'?`<br><button class="text-link" data-order="${esc(o.id)}">Оплатить / реквизиты</button>`:''}</div></div>`).join('') : '<p>Заказов пока нет.</p>';
+  $('orders').innerHTML = me.orders.length ? me.orders.map(o => `<div class="order"><div><b>${esc(protocolName(o.protocol))} · ${o.kind==='referral'?'Бонус · '+o.days+' дней':o.kind==='trial'?'Без оплаты':money(o.amount,o.currency)}</b><br><code>${esc(o.id)}</code><br>${date(o.created)}</div><div><span class="status ${esc(o.status)}">${esc(displayOrderStatus(o))}</span>${o.status==='pending'?`<br><button class="text-link" data-order="${esc(o.id)}">Оплатить / реквизиты</button>`:''}</div></div>`).join('') : '<p>Заказов пока нет.</p>';
 }
 async function beginCheckout(id) {
   checkoutTrial=null;resetQuote();
@@ -103,7 +105,7 @@ function paymentResult(order) {
   $('checkout-form').hidden = true;
   $('payment-result').replaceChildren();
   const paragraph = document.createElement('p');
-  paragraph.textContent = `Заказ: ${order.id}\nТариф: ${order.plan_name || protocolName(order.protocol)} · ${order.days} дней\n${profileAllowance(order.device_limit ?? 4)}\nСумма: ${order.kind==='trial'?'Без оплаты':money(order.amount,order.currency)}\n${displayOrderStatus(order)}${order.promo_code?'\nПромокод: '+order.promo_code+' · скидка '+money(order.discount,order.currency)+' от '+money(order.base_amount,order.currency):''}\n\n${order.instructions || ''}`;
+  paragraph.textContent = `Заказ: ${order.id}\nТариф: ${order.plan_name || protocolName(order.protocol)} · ${order.days} дней\n${profileAllowance(order.device_limit ?? 4)}\nСумма: ${order.kind==='referral'?'Бонусные дни':order.kind==='trial'?'Без оплаты':money(order.amount,order.currency)}\n${displayOrderStatus(order)}${order.promo_code?'\nПромокод: '+order.promo_code+' · скидка '+money(order.discount,order.currency)+' от '+money(order.base_amount,order.currency):''}\n\n${order.instructions || ''}`;
   $('payment-result').append(paragraph);
   if (order.payment_url && order.status === 'pending') {
     const link = document.createElement('a');
@@ -219,6 +221,7 @@ $('config-qr').onerror = () => {
   $('config-status').textContent='QR-код не загрузился. Используйте копирование или скачивание настроек.';
 };
 $('subscriptions').onclick = async event => {
+  const bonus=event.target.closest('[data-referral]');if(bonus){bonus.disabled=true;try {await redeemReferral(bonus.dataset.referral);}catch(e){toast(e.message);}finally{bonus.disabled=false;}return;}
   const link=event.target.closest('[data-link]');
   if(link){await openLink(link.dataset.link).catch(e=>toast(e.message));return;}
   const rotate=event.target.closest('[data-primary-rotate]');
@@ -419,7 +422,41 @@ $('logout').onclick = async () => {
     const tg=window.Telegram?.WebApp;
     if(tg?.initData) { tg.ready(); tg.expand(); await api('/api/auth/telegram',{init_data:tg.initData}); }
     await refreshMe();
+    if(/^[a-f0-9]{24}$/.test(new URLSearchParams(location.search).get('ref') || '')) {show(me?'account-dialog':'auth-dialog');toast('Примите приглашение в кабинете до первого заказа или пробного доступа.');}
     if(new URLSearchParams(location.search).has('payment')) { history.replaceState(null,'',basePath+'/'); show(me?'account-dialog':'auth-dialog'); }
     setInterval(async()=>{ if(me && ( $('account-dialog').open || $('checkout-dialog').open || $('config-dialog').open || $('devices-dialog').open )) { try { await refreshMe(); } catch {} } },15000);
   } catch(e) { toast(e.message); }
 })();
+
+function renderReferrals() {
+  const r=me?.referrals;$('referrals-panel').hidden=!r;if(!r)return;
+  const p=r.policy;
+  $('referral-info').textContent='Бонусных дней: '+r.balance_days+' · начислено '+r.earned_days+' · использовано '+r.spent_days+'. Приглашений: '+r.invited+', с бонусом: '+r.rewarded+'. '+(p.enabled?'За одну подходящую оплату друга: '+p.days+' дней пригласившему. Минимум фактической оплаты: '+p.min_rub+' ₽ или '+p.min_stars+' ★.':'Новые приглашения сейчас отключены.')+(r.bound?' Ваше приглашение принято: '+r.bound.days+' дней пригласившему после оплаты от '+r.bound.min_rub+' ₽ или '+r.bound.min_stars+' ★.'+(r.bound.rewarded?' Бонус начислен.':''): ' Приглашение принимают до первого заказа или trial.');
+  $('referral-code-create').hidden=!r.can_share || !!r.url;
+  $('referral-share').hidden=!r.url;$('referral-url').value=r.url || '';
+  $('referral-bind').hidden=!r.can_bind;
+  const initial=new URLSearchParams(location.search).get('ref');
+  if(r.can_bind && !$('referral-code').value && /^[a-f0-9]{24}$/.test(initial || ''))$('referral-code').value=initial;
+  $('referral-days').max=String(Math.max(1,Math.min(365,r.balance_days)));
+  $('referral-days').disabled=r.balance_days<1;
+  $('referral-history').innerHTML=r.history.map(h=>'<p>+'+h.days+' дней · '+date(h.created)+'</p>').join('');
+}
+$('referral-code-create').onclick=async()=>{
+  const b=$('referral-code-create');b.disabled=true;
+  try {const r=await api('/api/referrals/code',{});if(me){me.referrals=r;renderReferrals();}}
+  catch(e){toast(e.message);}finally{b.disabled=false;}
+};
+$('referral-copy').onclick=async()=>{try {if(me?.referrals?.url){await navigator.clipboard.writeText(me.referrals.url);toast('Ссылка скопирована');}}catch {toast('Выделите и скопируйте ссылку вручную.');}};
+$('referral-bind').onsubmit=async event=>{
+  event.preventDefault();if(!me?.referrals)return;const b=$('referral-bind-submit');b.disabled=true;
+  try {await api('/api/referrals/bind',{code:$('referral-code').value.trim(),policy_version:me.referrals.policy.version,accept_terms:$('referral-accept').checked});await refreshMe();toast('Приглашение принято');}
+  catch(e){toast(e.message);}finally{b.disabled=false;}
+};
+async function redeemReferral(sid) {
+  const epoch=sessionEpoch,uid=me?.id;
+  const days=Number($('referral-days').value);
+  if(!Number.isInteger(days)||days<1||days>365||days>(me?.referrals?.balance_days || 0))throw new Error('Проверьте число бонусных дней');
+  const key=sid+':'+days;if(!referralIntents.has(key))referralIntents.set(key,crypto.randomUUID());
+  const order=await api('/api/referrals/redeem',{subscription_id:sid,days,request_id:referralIntents.get(key)});
+  await refreshMe();if(epoch!==sessionEpoch || uid!==me?.id)return;referralIntents.delete(key);$('referral-status').textContent='Бонусное продление в очереди. Заказ: '+order.id;
+}

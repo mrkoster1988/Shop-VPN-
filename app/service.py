@@ -6,7 +6,7 @@ import time
 import uuid
 from decimal import Decimal, InvalidOperation
 import httpx
-from . import config as c, providers, servers
+from . import config as c, providers, servers, referrals
 from .db import db, one, all_rows, execute
 from .security import digest
 
@@ -51,7 +51,9 @@ async def reconcile_payment(order):
     if not valid:
         raise RuntimeError('Payment verification mismatch')
     if payment.get('status') == 'succeeded' and payment.get('paid') is True:
-        execute("UPDATE orders SET status='paid',error=NULL,next_attempt=0 WHERE id=? AND status='pending'", (order['id'],))
+        with db() as conn:
+            changed=conn.execute("UPDATE orders SET status='paid',error=NULL,next_attempt=0 WHERE id=? AND status='pending'", (order['id'],)).rowcount
+            if changed:referrals.award_locked(conn,order['id'])
     elif payment.get('status') == 'canceled':
         execute("UPDATE orders SET status='canceled' WHERE id=? AND status='pending'", (order['id'],))
 
@@ -102,7 +104,7 @@ async def fulfill(order_id):
             with db() as conn:
                 conn.executemany("UPDATE devices SET secret=?,expires=?,error=NULL WHERE id=?",device_secrets)
                 conn.execute("UPDATE subscriptions SET expires=?,state='active',secret=?,reminder=0,device_limit=?,credential_id=?,primary_key_state='active',rotation_error=NULL,access_source=? WHERE id=?",
-                             (target, encrypted,order['device_limit'],sub.get('credential_id') or c.encrypt(sub['id']),order['kind'],sub['id']))
+                             (target, encrypted,sub['device_limit'] if order['kind']=='referral' else order['device_limit'],sub.get('credential_id') or c.encrypt(sub['id']),sub['access_source'] if order['kind']=='referral' else order['kind'],sub['id']))
                 conn.execute("UPDATE orders SET status='active',error=NULL WHERE id=?", (order_id,))
         except Exception as exc:
             # Do not persist remote responses, URLs, private keys or credentials in logs.
@@ -216,7 +218,7 @@ async def tick():
     for order in all_rows("SELECT id FROM orders WHERE status='paid' ORDER BY (kind='trial') DESC,created,id"):
         # A failed renewal blocks later renewals of the same subscription until it succeeds.
         current = one('SELECT * FROM orders WHERE id=?', (order['id'],))
-        previous = one("SELECT id FROM orders WHERE user_id=? AND protocol=? AND status='paid' AND ((kind='trial' AND ?!='trial') OR (kind=? AND (created<? OR (created=? AND id<?))))",
+        previous = one("SELECT id FROM orders WHERE user_id=? AND protocol=? AND status='paid' AND ((kind='trial' AND ?!='trial') OR ((kind='trial')=(?='trial') AND (created<? OR (created=? AND id<?))))",
                        (current['user_id'],current['protocol'],current['kind'],current['kind'],current['created'],current['created'],current['id']))
         if not previous:
             await fulfill(order['id'])
@@ -232,7 +234,7 @@ async def tick():
     await process_devices()
     for order in all_rows("SELECT o.*,u.telegram_id FROM orders o JOIN users u ON u.id=o.user_id WHERE o.status='active' AND o.notified=0"):
         try:
-            await send(order['telegram_id'], 'Пробный VPN готов! Настройки находятся в личном кабинете.' if order['kind']=='trial' else 'Оплата подтверждена. VPN готов! Подключение находится в личном кабинете.')
+            await send(order['telegram_id'], 'Пробный VPN готов! Настройки находятся в личном кабинете.' if order['kind']=='trial' else 'Бонусные дни добавлены к подписке.' if order['kind']=='referral' else 'Оплата подтверждена. VPN готов! Подключение находится в личном кабинете.')
             execute('UPDATE orders SET notified=1 WHERE id=?', (order['id'],))
         except Exception:
             pass
@@ -341,5 +343,6 @@ def record_stars(tg_id, payment):
         raise RuntimeError('Stars payment mismatch')
     with db() as conn:
         # Only authenticated getUpdates results reach this function. Replayed events do not add days.
-        conn.execute("UPDATE orders SET status='paid',payment_id=?,next_attempt=0 WHERE id=? AND status IN ('pending','checkout')",
-                     (payment['telegram_payment_charge_id'], order['id']))
+        changed=conn.execute("UPDATE orders SET status='paid',payment_id=?,next_attempt=0 WHERE id=? AND status IN ('pending','checkout')",
+                     (payment['telegram_payment_charge_id'], order['id'])).rowcount
+        if changed:referrals.award_locked(conn,order['id'])

@@ -159,3 +159,9 @@ test('coupon form preserves its immutable code and shows consumed reservations',
   assert.ok(markup.includes('SAVE10')&&markup.includes('3 из 5')&&markup.includes('data-version="2"'));
   assert.ok(!markup.includes('name="code"'));
 });
+
+test('referral policy editor shows bounded minimums and immutable invitation budget',()=>{
+  const p=adminPage();const html=p.run("referralPolicyForm({enabled:false,days:7,max_invites:100,min_rub:199,min_stars:150,version:4})");
+  assert.ok(html.includes('data-referral-version="4"'));assert.ok(html.includes('name="min_rub"'));assert.ok(html.includes('name="min_stars"'));assert.ok(html.includes('max="30"'));
+  p.run("$('exit').onclick()");assert.equal(p.element('referral-policy-editor').innerHTML,'');
+});
