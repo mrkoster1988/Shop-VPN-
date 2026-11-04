@@ -6,7 +6,7 @@ import time
 import uuid
 from decimal import Decimal, InvalidOperation
 import httpx
-from . import config as c, providers
+from . import config as c, providers, servers
 from .db import db, one, all_rows, execute
 from .security import digest
 
@@ -62,18 +62,25 @@ async def fulfill(order_id):
         order = one('SELECT * FROM orders WHERE id=?', (order_id,))
         if not order or order['status'] != 'paid' or order['next_attempt'] > time.time():
             return
-        sub = one('SELECT * FROM subscriptions WHERE user_id=? AND protocol=?',
-                  (order['user_id'], order['protocol']))
-        if not sub:
-            sid = str(uuid.uuid4())
-            execute('INSERT INTO subscriptions(id,user_id,protocol,expires,state) VALUES (?,?,?,?,?)',
-                    (sid, order['user_id'], order['protocol'], 0, 'pending'))
-            sub = one('SELECT * FROM subscriptions WHERE id=?', (sid,))
-        target = order['target_expires']
-        if target is None:
-            target = max(int(time.time()), sub['expires']) + order['days'] * 86400
-            execute('UPDATE orders SET target_expires=? WHERE id=?', (target, order_id))
         try:
+            with db() as conn:
+                conn.execute('BEGIN IMMEDIATE')
+                raw = conn.execute('SELECT * FROM subscriptions WHERE user_id=? AND protocol=?', (order['user_id'],order['protocol'])).fetchone()
+                if raw is None:
+                    server = servers.select(conn, order['protocol'])
+                    if server is None:
+                        raise RuntimeError('NoServerAvailable')
+                    sid = str(uuid.uuid4())
+                    conn.execute('INSERT INTO subscriptions(id,user_id,protocol,expires,state,server_id) VALUES (?,?,?,?,?,?)',
+                        (sid,order['user_id'],order['protocol'],0,'pending',server['id']))
+                    raw = conn.execute('SELECT * FROM subscriptions WHERE id=?',(sid,)).fetchone()
+                sub = dict(raw)
+                if not sub['server_id']:
+                    raise RuntimeError('ServerBindingMissing')
+                target = order['target_expires']
+                if target is None:
+                    target = max(int(time.time()),sub['expires']) + order['days']*86400
+                    conn.execute('UPDATE orders SET target_expires=? WHERE id=?',(target,order_id))
             secret = await providers.provision({**sub, 'expires': target})
             encrypted = c.encrypt(secret)
             with db() as conn:

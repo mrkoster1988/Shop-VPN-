@@ -1,0 +1,188 @@
+"""Server registry. Connection profiles stay encrypted and never enter API responses."""
+import ipaddress
+import json
+import os
+import time
+import uuid
+from urllib.parse import urlsplit
+from pydantic import BaseModel, Field, field_validator
+from fastapi import HTTPException
+from . import config as c
+from .db import db, one, all_rows
+
+
+class Profile(BaseModel):
+    model_config = {'extra': 'forbid'}
+    url: str = Field(min_length=1, max_length=2048)
+
+    @field_validator('url')
+    @classmethod
+    def url_is_private_or_tls(cls, value):
+        parsed = urlsplit(value)
+        try:
+            host = parsed.hostname
+            parsed.port
+        except ValueError:
+            raise ValueError('Некорректный адрес сервера')
+        if (parsed.scheme not in ('http', 'https') or not host or parsed.username or parsed.password
+                or parsed.query or parsed.fragment or any(ord(x) < 33 for x in value)):
+            raise ValueError('Укажите HTTP(S) адрес без логина, query и fragment')
+        if parsed.scheme == 'http':
+            try:
+                private = ipaddress.ip_address(host).is_private
+            except ValueError:
+                private = host == 'localhost' or ('.' not in host and ':' not in host)
+            if not private:
+                raise ValueError('Для публичного сервера требуется HTTPS')
+        return value.rstrip('/')
+
+class XUIProfile(Profile):
+    username: str = Field(min_length=1, max_length=256)
+    password: str = Field(min_length=1, max_length=2048)
+    inbound_id: int = Field(ge=1, le=2147483647, strict=True)
+    link_template: str = Field(min_length=15, max_length=4096)
+    flow: str = Field(default='', max_length=100)
+
+    @field_validator('link_template')
+    @classmethod
+    def vless_template(cls, value):
+        if not value.startswith('vless://{uuid}@') or value.count('{uuid}') != 1 or any(ord(x) < 33 for x in value):
+            raise ValueError('Ссылка должна начинаться с vless://{uuid}@')
+        return value
+
+class WGProfile(Profile):
+    token: str = Field(min_length=32, max_length=2048)
+
+    @field_validator('token')
+    @classmethod
+    def valid_header(cls, value):
+        if any(ord(x) < 33 or ord(x) > 126 for x in value):
+            raise ValueError('Токен должен содержать печатные ASCII-символы без пробелов')
+        return value
+
+
+def validated(protocol, settings):
+    model = XUIProfile if protocol == 'xui' else WGProfile
+    return model.model_validate(settings).model_dump()
+
+
+def decode(row):
+    return json.loads(c.decrypt(row['settings']))
+
+
+def public(row):
+    fields = ('id','name','location','protocol','state','capacity','version','created','health','checked_at','error_code')
+    result = {key: row[key] for key in fields}
+    result['profile'] = 'legacy_vless' if row['protocol'] == 'xui' else 'wireguard_agent'
+    result['bound_subscriptions'] = row.get('bound_subscriptions', 0)
+    result['occupied'] = row.get('occupied', 0)
+    return result
+
+
+def list_servers():
+    now = int(time.time())
+    return [public(row) for row in all_rows("""SELECT v.*,
+        (SELECT count(*) FROM subscriptions s WHERE s.server_id=v.id) AS bound_subscriptions,
+        (SELECT count(*) FROM subscriptions s WHERE s.server_id=v.id AND (s.state='pending' OR (s.state='active' AND s.expires>?))) AS occupied
+        FROM servers v ORDER BY v.created,v.id""", (now,))]
+
+
+def select(conn, protocol):
+    row = conn.execute("""SELECT v.*,
+        (SELECT count(*) FROM subscriptions s WHERE s.server_id=v.id AND (s.state='pending' OR (s.state='active' AND s.expires>?))) AS occupied
+        FROM servers v WHERE v.protocol=? AND v.state='active' AND v.health!='error'
+        ORDER BY occupied,v.created,v.id""", (int(time.time()), protocol)).fetchall()
+    for candidate in row:
+        if candidate['capacity'] == 0 or candidate['occupied'] < candidate['capacity']:
+            return dict(candidate)
+    return None
+
+
+def available(protocol, user_id=None):
+    with db() as conn:
+        if user_id is not None:
+            sub = conn.execute('SELECT server_id FROM subscriptions WHERE user_id=? AND protocol=?', (user_id,protocol)).fetchone()
+            if sub:
+                if not sub['server_id']:
+                    return False
+                row = conn.execute('SELECT state,health FROM servers WHERE id=?', (sub['server_id'],)).fetchone()
+                return bool(row and row['state'] in ('active','draining') and row['health'] != 'error')
+        return select(conn, protocol) is not None
+
+
+def for_subscription(sub, *, revoking=False):
+    sid = sub.get('server_id')
+    row = one('SELECT * FROM servers WHERE id=?', (sid,)) if sid else None
+    if not row or row['protocol'] != sub['protocol']:
+        raise RuntimeError('ServerBindingMissing')
+    if not revoking and row['state'] not in ('active','draining'):
+        raise RuntimeError('ServerUnavailable')
+    # Pinned attempts always use this profile, even after a failed health check.
+    return row, decode(row)
+
+
+def create(data):
+    now, sid = int(time.time()), str(uuid.uuid4())
+    profile = validated(data.protocol, data.settings)
+    with db() as conn:
+        conn.execute('INSERT INTO servers(id,name,location,protocol,capacity,settings,created) VALUES (?,?,?,?,?,?,?)',
+            (sid,data.name,data.location,data.protocol,data.capacity,c.encrypt(json.dumps(profile)),now))
+        conn.execute('INSERT INTO server_changes(server_id,created,action,version) VALUES (?,?,?,1)', (sid,now,'created'))
+        row = dict(conn.execute('SELECT * FROM servers WHERE id=?',(sid,)).fetchone())
+    return public(row)
+
+
+def update(sid, data):
+    with db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        raw = conn.execute('SELECT * FROM servers WHERE id=?',(sid,)).fetchone()
+        if not raw:
+            raise HTTPException(404,'Сервер не найден')
+        before = dict(raw)
+        if before['version'] != data.version:
+            raise HTTPException(409,'Сервер уже изменён. Обновите список.')
+        profile = decode(before)
+        replacement = validated(before['protocol'], data.settings) if data.settings is not None else profile
+        bound = conn.execute('SELECT count(*) FROM subscriptions WHERE server_id=?',(sid,)).fetchone()[0]
+        identity = ('url','inbound_id','link_template','flow') if before['protocol']=='xui' else ('url',)
+        if bound and any(profile.get(k)!=replacement.get(k) for k in identity):
+            raise HTTPException(409,'У сервера есть подписки. Для другого endpoint создайте отдельный сервер.')
+        credentials_changed = replacement != profile
+        health = 'unknown' if credentials_changed else before['health']
+        if data.state == 'active' and (credentials_changed or before['state']!='active') and health != 'ok':
+            raise HTTPException(409,'Сначала сохраните настройки и успешно проверьте сервер, затем включите продажи.')
+        conn.execute('UPDATE servers SET name=?,location=?,state=?,capacity=?,settings=?,health=?,checked_at=?,error_code=?,version=version+1 WHERE id=?',
+            (data.name,data.location,data.state,data.capacity,c.encrypt(json.dumps(replacement)),health,
+             None if credentials_changed else before['checked_at'],None if credentials_changed else before['error_code'],sid))
+        row = dict(conn.execute('SELECT * FROM servers WHERE id=?',(sid,)).fetchone())
+        conn.execute('INSERT INTO server_changes(server_id,created,action,version) VALUES (?,?,?,?)', (sid,int(time.time()),'updated',row['version']))
+    return public(row)
+
+
+def import_environment():
+    # One-time snapshot pins old subscriptions before any remote operation can run.
+    with db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        if conn.execute("SELECT 1 FROM meta WHERE key='server_registry_initialized'").fetchone():
+            for row in conn.execute('SELECT settings FROM servers'):
+                c.decrypt(row['settings'])
+            return
+        definitions = []
+        keys = ('XUI_URL','XUI_USERNAME','XUI_PASSWORD','XUI_INBOUND_ID','XUI_LINK_TEMPLATE')
+        if all(os.getenv(k) for k in keys):
+            definitions.append(('xui', {'url':os.environ['XUI_URL'],'username':os.environ['XUI_USERNAME'],
+                'password':os.environ['XUI_PASSWORD'],'inbound_id':int(os.environ['XUI_INBOUND_ID']),
+                'link_template':os.environ['XUI_LINK_TEMPLATE'],'flow':os.getenv('XUI_FLOW','')}))
+        if all(os.getenv(k) for k in ('WG_AGENT_URL','WG_AGENT_TOKEN')):
+            definitions.append(('wg',{'url':os.environ['WG_AGENT_URL'],'token':os.environ['WG_AGENT_TOKEN']}))
+        legacy_protocols = {row[0] for row in conn.execute('SELECT DISTINCT protocol FROM subscriptions WHERE server_id IS NULL')}
+        if legacy_protocols - {protocol for protocol, _ in definitions}:
+            raise RuntimeError('Original provider settings required to bind legacy subscriptions')
+        for protocol, profile in definitions:
+            sid = 'legacy-' + protocol
+            profile = validated(protocol, profile)
+            conn.execute("INSERT INTO servers(id,name,protocol,state,settings,created) VALUES (?,?,?,'active',?,?)",
+                (sid,'Импорт из .env · '+protocol,protocol,c.encrypt(json.dumps(profile)),int(time.time())))
+            conn.execute('UPDATE subscriptions SET server_id=? WHERE protocol=? AND server_id IS NULL',(sid,protocol))
+            conn.execute('INSERT INTO server_changes(server_id,created,action,version) VALUES (?,?,?,1)',(sid,int(time.time()),'environment_imported'))
+        conn.execute("INSERT INTO meta(key,value) VALUES ('server_registry_initialized','1')")

@@ -18,10 +18,15 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(c,'BOT_TOKEN','')
     monkeypatch.setenv('ENCRYPTION_KEY',Fernet.generate_key().decode())
     monkeypatch.setenv('BACKGROUND_TASKS','false')
-    monkeypatch.setattr(providers,'available',lambda _:True)
+    monkeypatch.setattr(providers,'available',lambda _,user_id=None:True)
     service.lock=asyncio.Lock()
     hits.clear()
-    with TestClient(app) as test: yield test
+    with TestClient(app) as test:
+        for protocol, profile in [('xui',{'url':'https://panel.example','username':'test','password':'private','inbound_id':1,'link_template':'vless://{uuid}@vpn.example','flow':''}),
+                                  ('wg',{'url':'https://agent.example','token':'a'*32})]:
+            execute("INSERT INTO servers(id,name,protocol,state,health,settings,created) VALUES (?,?,?,'active','ok',?,0)",
+                    ('test-'+protocol,'Test '+protocol,protocol,c.encrypt(json.dumps(profile))))
+        yield test
 
 def register(client,email='user@example.com'):
     assert client.post('/api/auth/register',json={'email':email,'password':'correct-horse-123'}).status_code==200
@@ -60,7 +65,7 @@ def test_csrf_and_admin_boundary(client):
 
 def test_catalog_and_unconfigured_provider(client,monkeypatch):
     assert client.get('/api/catalog').json()['plans'][0]['price']==199
-    monkeypatch.setattr(providers,'available',lambda _:False)
+    monkeypatch.setattr(providers,'available',lambda _,user_id=None:False)
     register(client)
     assert client.post('/api/orders',json={'plan':'month','protocol':'wg'}).status_code==503
 
@@ -229,6 +234,10 @@ def test_shop_prefix_routes_sessions_and_login(client, monkeypatch):
         assert shop.get('/shop/health').json() == {'status': 'ok'}
         assert shop.get('/shop/api/catalog').status_code == 200
         headers = {'Authorization': 'Bearer ' + c.ADMIN_TOKEN, 'Origin': 'http://testserver'}
+        registry = shop.get('/shop/api/admin/servers', headers=headers)
+        assert registry.status_code == 200
+        assert len(registry.json()['servers']) == 2
+        assert all('settings' not in row for row in registry.json()['servers'])
         listed = shop.get('/shop/api/admin/plans', headers=headers)
         assert listed.status_code == 200
         plan = listed.json()['plans'][0]
@@ -720,3 +729,244 @@ def test_admin_order_action_flags_follow_state_and_method(client, monkeypatch):
 ])
 def test_admin_order_filters_validate_inputs(client, params):
     assert client.get('/api/admin/orders',params=params,headers=admin_headers()).status_code == 422
+
+
+@pytest.fixture
+def registry_client(client, monkeypatch):
+    from app import servers
+    monkeypatch.setattr(providers,'available',servers.available)
+    execute('DELETE FROM servers')
+    return client
+
+
+def server_body(protocol='xui', **changes):
+    profile = {'url':'https://panel.example/private-path','username':'owner','password':'private-panel-password',
+               'inbound_id':7,'link_template':'vless://{uuid}@vpn.example:443?security=tls','flow':''} if protocol=='xui' else {'url':'https://agent.example','token':'private-agent-token-'+'a'*32}
+    return {'name':'Test server','location':'Финляндия','protocol':protocol,'settings':profile,**changes}
+
+
+def server_create(client, protocol='xui', **changes):
+    return client.post('/api/admin/servers',json=server_body(protocol,**changes),headers=admin_headers())
+
+
+def server_patch(client, row, **changes):
+    payload={key:row[key] for key in ('name','location','capacity','state','version')}
+    return client.put('/api/admin/servers/'+row['id'],json={**payload,**changes},headers=admin_headers())
+
+
+def server_enable(client, row, monkeypatch):
+    async def probe(_): return None
+    monkeypatch.setattr(providers,'probe_server',probe)
+    checked=client.post('/api/admin/servers/'+row['id']+'/check',headers=admin_headers())
+    assert checked.status_code==200 and checked.json()['health']=='ok'
+    result=server_patch(client,checked.json(),state='active')
+    assert result.status_code==200,result.text
+    return result.json()
+
+
+def test_server_registry_encrypted_and_hidden_from_responses(registry_client):
+    client=registry_client
+    response=server_create(client)
+    assert response.status_code==201,response.text
+    row=response.json()
+    assert row['state']=='disabled' and row['health']=='unknown'
+    assert not any(x in response.text for x in ('private-panel-password','private-path','owner','settings'))
+    encrypted=one('SELECT settings FROM servers')['settings']
+    assert 'private-panel-password' not in encrypted
+    assert json.loads(c.decrypt(encrypted))['password']=='private-panel-password'
+    listing=client.get('/api/admin/servers',headers=admin_headers())
+    assert listing.headers['cache-control']=='no-store'
+    assert 'private-panel-password' not in listing.text and 'private-path' not in listing.text
+    assert one('SELECT action FROM server_changes')['action']=='created'
+
+
+def test_server_registry_authentication_and_validation_redact_secrets(client):
+    assert client.get('/api/admin/servers').status_code==403
+    assert client.post('/api/admin/servers',json=server_body()).status_code==403
+    row=server_create(client).json()
+    assert client.put('/api/admin/servers/'+row['id'],json={}).status_code==403
+    assert client.post('/api/admin/servers/'+row['id']+'/check').status_code==403
+    invalid=server_body(settings=[{'password':'never-echo-this-password'}])
+    response=client.post('/api/admin/servers',json=invalid,headers=admin_headers())
+    assert response.status_code==422 and 'never-echo' not in response.text
+    response=client.post('/api/admin/servers',json={**server_body(),'token':'never-echo-token'},headers=admin_headers())
+    assert response.status_code==422 and 'never-echo-token' not in response.text
+    assert client.post('/api/admin/servers',json=server_body(),headers={**admin_headers(),'Origin':'https://evil.example'}).status_code==403
+
+
+@pytest.mark.parametrize('profile', [
+    {'url':'http://8.8.8.8'}, {'url':'https://user:password@panel.example'},
+    {'url':'https://panel.example?password=secret'}, {'url':'https://panel.example/#fragment'},
+    {'inbound_id':0}, {'inbound_id':True}, {'link_template':'https://wrong.example'}, {'password':''},
+])
+def test_server_profiles_validate_without_echoing_input(registry_client, profile):
+    body=server_body(); body['settings'].update(profile)
+    response=registry_client.post('/api/admin/servers',json=body,headers=admin_headers())
+    assert response.status_code==422
+    assert 'private-panel-password' not in response.text
+    assert one('SELECT count(*) AS n FROM servers')['n']==0
+
+
+def test_server_requires_check_before_active_and_has_version_conflicts(registry_client,monkeypatch):
+    row=server_create(registry_client).json()
+    assert server_patch(registry_client,row,state='active').status_code==409
+    active=server_enable(registry_client,row,monkeypatch)
+    assert server_patch(registry_client,row,name='Stale edit').status_code==409
+    assert providers.available('xui')
+    assert one('SELECT count(*) AS n FROM server_changes')['n']==2
+    async def broken(_): raise RuntimeError('must-not-leak-private-password')
+    monkeypatch.setattr(providers,'probe_server',broken)
+    failed=registry_client.post('/api/admin/servers/'+active['id']+'/check',headers=admin_headers())
+    assert failed.json()['health']=='error' and 'must-not-leak' not in failed.text
+    assert not providers.available('xui')
+
+
+def test_servers_assign_once_and_renew_in_draining_mode(registry_client,monkeypatch):
+    client=registry_client
+    first=server_enable(client,server_create(client).json(),monkeypatch)
+    second=server_enable(client,server_create(client,name='Second').json(),monkeypatch)
+    register(client)
+    calls=[]
+    async def provision(sub): calls.append(dict(sub)); return 'vless://'+sub['id']
+    monkeypatch.setattr(providers,'provision',provision)
+    initial=order(client); confirm(client,initial['id']); asyncio.run(service.fulfill(initial['id']))
+    sub=one('SELECT * FROM subscriptions'); pinned=sub['server_id']
+    original=first if first['id']==pinned else second
+    assert server_patch(client,original,state='draining').status_code==200
+    other=second if second['id']!=pinned else first
+    assert server_patch(client,other,state='disabled').status_code==200
+    assert not providers.available('xui') and providers.available('xui',1)
+    renewal=order(client); confirm(client,renewal['id']); asyncio.run(service.fulfill(renewal['id']))
+    assert len(calls)==2 and all(call['server_id']==pinned for call in calls)
+    assert one('SELECT expires FROM subscriptions')['expires']==sub['expires']+30*86400
+    assert client.get('/api/catalog').json()['protocols'][0]['available'] is True
+    client.post('/api/auth/logout')
+    register(client,'new@example.com')
+    assert client.post('/api/orders',json={'plan':'month','protocol':'xui'}).status_code==503
+
+
+def test_failed_issue_retains_assignment_and_retries_same_server(registry_client,monkeypatch):
+    client=registry_client
+    server_enable(client,server_create(client).json(),monkeypatch)
+    register(client)
+    calls=[]
+    async def fail(sub): calls.append(dict(sub)); raise RuntimeError('failure')
+    monkeypatch.setattr(providers,'provision',fail)
+    initial=order(client); confirm(client,initial['id']); asyncio.run(service.fulfill(initial['id']))
+    bound=one('SELECT * FROM subscriptions')
+    server_enable(client,server_create(client,name='Alternative').json(),monkeypatch)
+    execute('UPDATE orders SET next_attempt=0 WHERE id=?',(initial['id'],))
+    async def succeed(sub): calls.append(dict(sub)); return 'vless://same'
+    monkeypatch.setattr(providers,'provision',succeed)
+    asyncio.run(service.fulfill(initial['id']))
+    assert calls[0]['id']==calls[1]['id'] and calls[0]['server_id']==calls[1]['server_id']==bound['server_id']
+    assert calls[0]['expires']==calls[1]['expires']
+
+
+def test_server_endpoint_cannot_change_with_bound_subscriptions(registry_client,monkeypatch):
+    client=registry_client
+    row=server_enable(client,server_create(client).json(),monkeypatch)
+    uid=add_customer('bound@example.com')
+    execute('INSERT INTO subscriptions(id,user_id,protocol,state,expires,server_id) VALUES (?,?,?,?,?,?)',('bound',uid,'xui','active',int(time.time())+1000,row['id']))
+    changed=server_body()['settings']; changed['url']='https://other.example'
+    assert server_patch(client,row,state='disabled',settings=changed).status_code==409
+    same=server_body()['settings']; same['password']='rotated-private-password'
+    result=server_patch(client,row,state='disabled',settings=same)
+    assert result.status_code==200 and result.json()['health']=='unknown'
+    assert one('SELECT server_id FROM subscriptions')['server_id']==row['id']
+    assert 'rotated-private-password' not in result.text
+
+
+def test_server_capacity_blocks_only_new_assignments(registry_client,monkeypatch):
+    client=registry_client
+    row=server_enable(client,server_create(client,capacity=1).json(),monkeypatch)
+    uid=add_customer('occupied@example.com')
+    execute('INSERT INTO subscriptions(id,user_id,protocol,state,expires,server_id) VALUES (?,?,?,?,?,?)',('occupied',uid,'xui','pending',0,row['id']))
+    assert not providers.available('xui') and providers.available('xui',uid)
+    view=client.get('/api/admin/servers',headers=admin_headers()).json()['servers'][0]
+    assert view['occupied']==1 and view['bound_subscriptions']==1
+    execute("UPDATE subscriptions SET state='expired' WHERE id='occupied'")
+    assert providers.available('xui')
+
+
+def test_legacy_server_import_pins_existing_subscriptions_once(tmp_path,monkeypatch):
+    from app import servers
+    from app.db import init_db
+    monkeypatch.setattr(c,'DB',tmp_path/'legacy-servers.db')
+    monkeypatch.setenv('ENCRYPTION_KEY',Fernet.generate_key().decode())
+    profile=server_body()['settings']
+    for name,key in [('XUI_URL','url'),('XUI_USERNAME','username'),('XUI_PASSWORD','password'),('XUI_LINK_TEMPLATE','link_template')]: monkeypatch.setenv(name,profile[key])
+    monkeypatch.setenv('XUI_INBOUND_ID','7'); monkeypatch.delenv('WG_AGENT_URL',raising=False)
+    init_db(); uid=add_customer('legacy@example.com')
+    execute('INSERT INTO subscriptions(id,user_id,protocol,state,expires,secret) VALUES (?,?,?,?,?,?)',('old-key',uid,'xui','active',2000000000,c.encrypt('old-vless-config')))
+    servers.import_environment()
+    assert one('SELECT server_id FROM subscriptions')['server_id']=='legacy-xui'
+    monkeypatch.setenv('XUI_URL','https://changed.example')
+    servers.import_environment()
+    row=one("SELECT * FROM servers WHERE id='legacy-xui'")
+    assert servers.decode(row)['url']==profile['url']
+    assert c.decrypt(one('SELECT secret FROM subscriptions')['secret'])=='old-vless-config'
+
+
+def test_unbound_legacy_subscription_never_moves_to_new_server(registry_client,monkeypatch):
+    client=registry_client
+    server_enable(client,server_create(client).json(),monkeypatch)
+    register(client)
+    created=order(client); confirm(client,created['id'])
+    execute('INSERT INTO subscriptions(id,user_id,protocol,state,expires,secret) VALUES (?,?,?,?,?,?)',('unbound',1,'xui','active',2000000000,c.encrypt('old-config')))
+    calls=[]
+    async def provision(sub): calls.append(sub); return 'wrong'
+    monkeypatch.setattr(providers,'provision',provision)
+    asyncio.run(service.fulfill(created['id']))
+    assert not calls
+    assert one('SELECT status,error FROM orders')=={'status':'paid','error':'RuntimeError'}
+    assert one('SELECT server_id FROM subscriptions')['server_id'] is None
+    assert providers.available('xui',1) is False
+    assert client.get('/api/admin/servers',headers=admin_headers()).json()['unassigned_subscriptions']==1
+
+
+def test_server_probe_does_not_follow_redirects_or_disclose_errors(registry_client,monkeypatch):
+    import httpx
+    row=server_create(registry_client).json(); calls=[]
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(302,headers={'location':'https://leak.example'})
+    cls=httpx.AsyncClient
+    monkeypatch.setattr(providers.httpx,'AsyncClient',lambda **kwargs:cls(transport=httpx.MockTransport(handler),**kwargs))
+    result=registry_client.post('/api/admin/servers/'+row['id']+'/check',headers=admin_headers())
+    assert result.json()['health']=='error' and result.json()['error_code']=='ProviderCheckFailed'
+    assert len(calls)==1 and calls[0].url.host=='panel.example'
+    assert 'private-panel-password' not in result.text and 'leak.example' not in result.text
+
+
+def test_server_probe_cannot_mark_changed_profile_healthy(registry_client,monkeypatch):
+    row=server_create(registry_client).json()
+    async def changing(_): execute('UPDATE servers SET version=version+1 WHERE id=?',(row['id'],))
+    monkeypatch.setattr(providers,'probe_server',changing)
+    response=registry_client.post('/api/admin/servers/'+row['id']+'/check',headers=admin_headers())
+    assert response.status_code==409
+    assert one('SELECT health FROM servers')['health']=='unknown'
+
+
+def test_wireguard_server_validates_token_and_allows_private_http(registry_client):
+    body=server_body('wg'); body['settings']['token']='short-private-token'
+    response=registry_client.post('/api/admin/servers',json=body,headers=admin_headers())
+    assert response.status_code==422 and 'short-private-token' not in response.text
+    body['settings']={'url':'http://127.0.0.1:8081','token':'a'*32}
+    response=registry_client.post('/api/admin/servers',json=body,headers=admin_headers())
+    assert response.status_code==201 and response.json()['protocol']=='wg'
+    assert providers.available('wg') is False
+
+
+def test_legacy_import_missing_profile_rolls_back_and_can_be_retried(tmp_path,monkeypatch):
+    from app import servers
+    from app.db import init_db
+    monkeypatch.setattr(c,'DB',tmp_path/'missing-profile.db')
+    monkeypatch.setenv('ENCRYPTION_KEY',Fernet.generate_key().decode())
+    monkeypatch.delenv('XUI_URL',raising=False); monkeypatch.delenv('WG_AGENT_URL',raising=False)
+    init_db(); uid=add_customer('old@example.com')
+    execute('INSERT INTO subscriptions(id,user_id,protocol,state,expires) VALUES (?,?,?,?,?)',('old',uid,'xui','active',2000000000))
+    with pytest.raises(RuntimeError,match='Original provider settings'):
+        servers.import_environment()
+    assert one("SELECT value FROM meta WHERE key='server_registry_initialized'") is None
+    assert one('SELECT server_id FROM subscriptions')['server_id'] is None

@@ -4,6 +4,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let token = '', authEpoch = 0, usersPage = 1, usersQuery = '', usersRequest = 0;
 let selectedUser = null, profilePage = 1, profileRequest = 0;
+let serverCache = [], editingServer = null;
 let ordersPage = 1, ordersRequest = 0, ordersFilters = {q:'', status:'', method:'', protocol:''};
 async function api(path, {method = 'GET', data} = {}) {
   const epoch = authEpoch;
@@ -34,7 +35,7 @@ async function refresh({plans = true} = {}) {
   const [data, catalog] = await Promise.all([api('overview'), plans ? api('plans') : Promise.resolve(null)]);
   $('stats').innerHTML = `<div>Пользователи<strong>${data.users}</strong></div><div>Подписки<strong>${data.active}</strong></div><div>Подтверждено<strong>${data.revenue} ₽ / ${data.stars} ★</strong></div>`;
   if (catalog) $('plan-editors').innerHTML = catalog.plans.map(planForm).join('');
-  await Promise.all([refreshOrders(), refreshUsers()]);
+  await Promise.all([refreshOrders(), refreshUsers(), plans ? refreshServers() : Promise.resolve()]);
 }
 $('admin-login').onsubmit = async event => {
   event.preventDefault();
@@ -48,6 +49,9 @@ $('reload').onclick = () => refresh().catch(error => $('error').textContent = er
 $('exit').onclick = () => {
   authEpoch++; token = ''; usersRequest++; usersPage = 1; usersQuery = '';
   ordersRequest++; ordersPage = 1; ordersFilters = {q:'', status:'', method:'', protocol:''};
+  serverCache = []; editingServer = null; $('server-list').replaceChildren(); $('servers-notice').textContent = '';
+  if ($('server-dialog').open) $('server-dialog').close();
+  $('server-form').reset();
   $('orders-search').reset(); $('orders-state').textContent = ''; $('orders-page').textContent = '';
   $('orders-prev').disabled = true; $('orders-next').disabled = true;
   $('users-query').value = ''; $('users-list').replaceChildren(); $('users-page').textContent = ''; $('users-state').textContent = '';
@@ -210,3 +214,67 @@ $('orders-search').onsubmit = event => {
 $('orders-reset').onclick = () => { $('orders-search').reset(); ordersFilters = {q:'', status:'', method:'', protocol:''}; showOrders(1); };
 $('orders-prev').onclick = () => showOrders(Math.max(1, ordersPage-1));
 $('orders-next').onclick = () => showOrders(ordersPage+1);
+
+const serverState = {active:'Принимать новых', draining:'Только продления', maintenance:'Обслуживание', disabled:'Выдача выключена'};
+function serverCard(server) {
+  const health = server.health === 'ok' ? 'API доступен' : server.health === 'error' ? 'Ошибка API' : 'Ещё не проверен';
+  return `<form class="plan-editor" data-server="${esc(server.id)}" data-version="${server.version}"><h3>${esc(server.name)}</h3><p>${esc(protocolLabel(server.protocol))} · ${health}</p><p>Проверка: ${esc(dateTime(server.checked_at))}</p><p>Занято: ${server.occupied} · Всего привязано: ${server.bound_subscriptions}</p><label>Название<input name="name" value="${esc(server.name)}" maxlength="80" required></label><label>Локация<input name="location" value="${esc(server.location)}" maxlength="80"></label><label>Лимит занятых подписок (0 — без лимита)<input name="capacity" type="number" min="0" max="1000000" value="${server.capacity}" required></label><label>Режим<select name="state">${Object.entries(serverState).map(([id,label])=>`<option value="${id}" ${server.state===id?'selected':''}>${label}</option>`).join('')}</select></label><button type="submit" class="small">Сохранить режим</button><button type="button" class="small secondary" data-server-check="${esc(server.id)}">Проверить API</button><button type="button" class="text-link" data-server-edit="${esc(server.id)}">Профиль подключения</button></form>`;
+}
+async function refreshServers() {
+  const data = await api('servers');
+  serverCache = data.servers;
+  $('server-list').innerHTML = data.servers.map(serverCard).join('');
+  $('servers-notice').textContent = data.unassigned_subscriptions ? 'Есть подписки без привязки: '+data.unassigned_subscriptions+'. Автоматический перенос запрещён; проверьте настройки миграции.' : data.servers.length ? '' : 'Добавьте первый сервер для продажи VPN.';
+}
+function showServerFields() {
+  const xui = $('server-protocol').value === 'xui';
+  $('server-xui-fields').hidden = !xui; $('server-wg-fields').hidden = xui;
+}
+$('server-protocol').onchange = showServerFields;
+function openServer(server = null) {
+  editingServer = server;
+  const form = $('server-form'); form.reset();
+  form.elements.name.value = server?.name || ''; form.elements.location.value = server?.location || '';
+  form.elements.capacity.value = server?.capacity || 0; form.elements.protocol.value = server?.protocol || 'xui';
+  form.elements.protocol.disabled = !!server; form.elements.url.required = !server;
+  $('server-title').textContent = server ? 'Профиль сервера' : 'Новый сервер';
+  $('server-form-error').textContent = ''; showServerFields(); $('server-dialog').showModal();
+}
+$('new-server').onclick = () => openServer();
+$('server-close').onclick = () => $('server-dialog').close();
+$('server-dialog').addEventListener('close', () => { $('server-form').reset(); editingServer = null; });
+$('server-form').onsubmit = async event => {
+  event.preventDefault();
+  const form = event.target, values = new FormData(form), button = form.querySelector('button[type="submit"]');
+  button.disabled = true; $('server-form-error').textContent = '';
+  const original = editingServer, protocol = original?.protocol || String(values.get('protocol'));
+  try {
+    const url = String(values.get('url') || '').trim();
+    const fields = protocol === 'xui' ? ['username','password','inbound_id','link_template','flow'] : ['token'];
+    if (!url && fields.some(key=>values.get(key))) throw new Error('Для замены профиля укажите адрес и все данные подключения.');
+    const profile = url ? protocol === 'xui' ? {url,username:String(values.get('username')),password:String(values.get('password')),inbound_id:Number(values.get('inbound_id')),link_template:String(values.get('link_template')),flow:String(values.get('flow') || '')} : {url,token:String(values.get('token'))} : null;
+    const data = {name:String(values.get('name')),location:String(values.get('location') || ''),capacity:Number(values.get('capacity'))};
+    if (original) { data.version=original.version; data.state=profile ? 'disabled' : original.state; if (profile) data.settings=profile; }
+    else { data.protocol=protocol; data.settings=profile; }
+    await api(original ? 'servers/'+encodeURIComponent(original.id) : 'servers', {method:original?'PUT':'POST',data});
+    $('server-dialog').close(); await refreshServers();
+    $('admin-notice').textContent = profile ? 'Профиль сохранён. Проверьте API сервера перед включением продаж.' : 'Сервер сохранён.';
+  } catch (error) { $('server-form-error').textContent=error.message; }
+  finally { button.disabled=false; }
+};
+$('server-list').onsubmit = async event => {
+  event.preventDefault(); const form=event.target.closest('[data-server]'); if (!form) return;
+  const values=new FormData(form), button=form.querySelector('button[type="submit"]'); button.disabled=true;
+  try {
+    await api('servers/'+encodeURIComponent(form.dataset.server), {method:'PUT',data:{name:String(values.get('name')),location:String(values.get('location') || ''),capacity:Number(values.get('capacity')),state:String(values.get('state')),version:Number(form.dataset.version)}});
+    await refreshServers(); $('error').textContent='';
+  } catch (error) { $('error').textContent=error.message; button.disabled=false; }
+};
+$('server-list').onclick = async event => {
+  const edit=event.target.closest('[data-server-edit]');
+  if (edit) { openServer(serverCache.find(s=>s.id===edit.dataset.serverEdit)); return; }
+  const check=event.target.closest('[data-server-check]'); if (!check) return;
+  check.disabled=true;
+  try { await api('servers/'+encodeURIComponent(check.dataset.serverCheck)+'/check',{method:'POST'}); await refreshServers(); }
+  catch (error) { $('error').textContent=error.message; check.disabled=false; }
+};

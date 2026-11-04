@@ -44,10 +44,18 @@ def init_db():
           attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL DEFAULT 0,
           error TEXT, notified INTEGER NOT NULL DEFAULT 0,
           plan_version INTEGER NOT NULL DEFAULT 1, plan_name TEXT);
+        CREATE TABLE IF NOT EXISTS servers (
+          id TEXT PRIMARY KEY, name TEXT NOT NULL, location TEXT NOT NULL DEFAULT '',
+          protocol TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'disabled', capacity INTEGER NOT NULL DEFAULT 0,
+          settings TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, created INTEGER NOT NULL,
+          health TEXT NOT NULL DEFAULT 'unknown', checked_at INTEGER, error_code TEXT);
+        CREATE TABLE IF NOT EXISTS server_changes (
+          id INTEGER PRIMARY KEY, server_id TEXT NOT NULL REFERENCES servers(id), created INTEGER NOT NULL,
+          action TEXT NOT NULL, version INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS subscriptions (
           id TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), protocol TEXT NOT NULL,
           expires INTEGER NOT NULL, state TEXT NOT NULL, secret TEXT,
-          reminder INTEGER NOT NULL DEFAULT 0, UNIQUE(user_id, protocol));
+          reminder INTEGER NOT NULL DEFAULT 0, server_id TEXT REFERENCES servers(id), UNIQUE(user_id, protocol));
         CREATE TABLE IF NOT EXISTS audit (
           id INTEGER PRIMARY KEY, created INTEGER NOT NULL, action TEXT NOT NULL, order_id TEXT);
         CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
@@ -60,6 +68,10 @@ def init_db():
             conn.execute('ALTER TABLE orders ADD COLUMN plan_version INTEGER NOT NULL DEFAULT 1')
         if 'plan_name' not in columns:
             conn.execute('ALTER TABLE orders ADD COLUMN plan_name TEXT')
+        sub_columns = {row['name'] for row in conn.execute('PRAGMA table_info(subscriptions)')}
+        if 'server_id' not in sub_columns:
+            conn.execute('ALTER TABLE subscriptions ADD COLUMN server_id TEXT REFERENCES servers(id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS subscriptions_server ON subscriptions(server_id,state,expires)')
         for position, plan in enumerate(c.PLANS):
             conn.execute('INSERT OR IGNORE INTO plans(id,name,days,price,stars,position) VALUES (?,?,?,?,?,?)',
                          (plan['id'], plan['name'], plan['days'], plan['price'], plan['stars'], position))

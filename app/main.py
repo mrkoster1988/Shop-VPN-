@@ -16,10 +16,12 @@ import qrcode
 from fastapi import FastAPI, Depends, HTTPException, Request, Query, Path as APIPath
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field, field_validator
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+from pydantic import BaseModel, Field, field_validator, ValidationError
 from starlette.applications import Starlette
 from starlette.routing import Mount
-from . import config as c, providers, service
+from . import config as c, providers, service, servers
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
 
@@ -39,6 +41,10 @@ async def lifespan(app):
         raise RuntimeError('PAYMENT_MODE must be manual or yookassa')
     if c.PAYMENT_MODE == 'yookassa' and not all(os.getenv(k) for k in ('YOOKASSA_SHOP_ID', 'YOOKASSA_SECRET')):
         raise RuntimeError('Configure YooKassa credentials')
+    try:
+        servers.import_environment()
+    except Exception:
+        raise RuntimeError('Server registry import failed; check legacy provider settings') from None
     tasks = []
     if os.getenv('BACKGROUND_TASKS', 'true') == 'true':
         tasks.append(asyncio.create_task(service.worker()))
@@ -52,6 +58,12 @@ async def lifespan(app):
             await task
 
 app = FastAPI(title='Pushok VPN', lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+@app.exception_handler(RequestValidationError)
+async def safe_validation(request, exc):
+    if request.url.path.removeprefix(c.BASE_PATH).startswith('/api/admin/servers'):
+        return JSONResponse({'detail':'Проверьте поля сервера и профиль подключения.'},status_code=422)
+    return await request_validation_exception_handler(request,exc)
+
 # Bounded per-process rate limits; run one process as required by SQLite worker design.
 hits = defaultdict(deque)
 
@@ -126,6 +138,30 @@ class PlanCreate(PlanFields):
     enabled: bool = Field(default=False, strict=True)
 
 
+class ServerFields(BaseModel):
+    model_config = {'extra':'forbid'}
+    name: str = Field(min_length=1, max_length=80)
+    location: str = Field(default='', max_length=80)
+    capacity: int = Field(default=0, ge=0, le=1000000, strict=True)
+
+    @field_validator('name', 'location')
+    @classmethod
+    def safe_label(cls, value, info):
+        value = value.strip()
+        if (info.field_name=='name' and not value) or any(ord(x)<32 for x in value):
+            raise ValueError('Некорректное название или локация')
+        return value
+
+class ServerCreate(ServerFields):
+    protocol: Literal['xui','wg']
+    settings: dict
+
+class ServerUpdate(ServerFields):
+    state: Literal['active','draining','maintenance','disabled']
+    version: int = Field(ge=1, strict=True)
+    settings: dict | None = None
+
+
 def email_address(raw):
     value = raw.strip().lower()
     if not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', value):
@@ -152,12 +188,14 @@ async def admin_page():
 @app.get('/api/catalog')
 async def catalog(request: Request):
     try:
-        tg = bool(current_user(request)['telegram_id'])
+        customer = current_user(request)
+        tg = bool(customer['telegram_id'])
     except HTTPException:
+        customer = None
         tg = False
     plans = [{**p, 'price': p['stars'] if tg else p['price']} for p in all_rows('SELECT id,name,days,price,stars,version FROM plans WHERE enabled=1 ORDER BY position,id')]
-    return {'plans': plans, 'currency': 'XTR' if tg else 'RUB',  'protocols': [{'id': 'xui', 'name': 'VLESS · 3x-ui', 'available': providers.available('xui')},
-                                           {'id': 'wg', 'name': 'WireGuard', 'available': providers.available('wg')}],
+    return {'plans': plans, 'currency': 'XTR' if tg else 'RUB',  'protocols': [{'id': 'xui', 'name': 'VLESS · 3x-ui', 'available': providers.available('xui', customer['id'] if customer else None)},
+                                           {'id': 'wg', 'name': 'WireGuard', 'available': providers.available('wg', customer['id'] if customer else None)}],
             'payment_mode': 'stars' if tg else c.PAYMENT_MODE, 'bot_username': c.BOT_USERNAME,
             'support': os.getenv('SUPPORT_TEXT', 'Напишите администратору магазина.'),
             'receipts': not tg and os.getenv('YOOKASSA_RECEIPTS') == 'true',
@@ -220,7 +258,7 @@ async def me(user=Depends(current_user)):
 
 @app.post('/api/orders')
 async def purchase(data: Purchase, user=Depends(current_user)):
-    if not providers.available(data.protocol):
+    if not providers.available(data.protocol, user['id']):
         raise HTTPException(503, 'Этот способ подключения ещё не настроен')
     method = 'stars' if user['telegram_id'] else c.PAYMENT_MODE
     if method == 'stars' and (not c.BOT_TOKEN or not os.getenv('TERMS_TEXT')):
@@ -294,6 +332,45 @@ async def qr(sid: str, user=Depends(current_user)):
 
 def admin_plan(row):
     return {**row, 'enabled': bool(row['enabled'])}
+
+
+@app.get('/api/admin/servers', dependencies=[Depends(admin)])
+async def admin_servers():
+    return {'servers':servers.list_servers(), 'unassigned_subscriptions':one('SELECT count(*) AS n FROM subscriptions WHERE server_id IS NULL')['n']}
+
+@app.post('/api/admin/servers', dependencies=[Depends(admin)])
+async def create_server(data: ServerCreate):
+    async with service.lock:
+        try:
+            result = servers.create(data)
+        except (ValidationError, ValueError):
+            raise HTTPException(422,'Проверьте профиль подключения: адрес, секреты, inbound и шаблон VLESS.') from None
+    return JSONResponse(result, status_code=201)
+
+@app.put('/api/admin/servers/{sid}', dependencies=[Depends(admin)])
+async def update_server(sid: str, data: ServerUpdate):
+    async with service.lock:
+        try:
+            return servers.update(sid,data)
+        except (ValidationError, ValueError):
+            raise HTTPException(422,'Проверьте профиль подключения. Секреты в ответе не возвращаются.') from None
+
+@app.post('/api/admin/servers/{sid}/check', dependencies=[Depends(admin)])
+async def check_server(sid: str):
+    row = one('SELECT * FROM servers WHERE id=?',(sid,))
+    if not row:
+        raise HTTPException(404,'Сервер не найден')
+    try:
+        await providers.probe_server(row)
+        health, error = 'ok', None
+    except Exception:
+        health, error = 'error', 'ProviderCheckFailed'
+    with db() as conn:
+        changed = conn.execute('UPDATE servers SET health=?,checked_at=?,error_code=? WHERE id=? AND version=?',
+            (health,int(time.time()),error,sid,row['version'])).rowcount
+    if not changed:
+        raise HTTPException(409,'Настройки изменились во время проверки. Запустите проверку заново.')
+    return next(item for item in servers.list_servers() if item['id']==sid)
 
 @app.get('/api/admin/plans', dependencies=[Depends(admin)])
 async def admin_plans():

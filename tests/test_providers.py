@@ -1,6 +1,19 @@
 import asyncio, json
 import httpx
+import pytest
+from cryptography.fernet import Fernet
+from app import config as c, servers
+from app.db import init_db
 from app import providers
+
+
+@pytest.fixture(autouse=True)
+def registry(tmp_path,monkeypatch):
+    monkeypatch.setattr(c,'DB',tmp_path/'providers.db')
+    monkeypatch.setenv('ENCRYPTION_KEY',Fernet.generate_key().decode())
+    for key in ('XUI_URL','WG_AGENT_URL'):
+        monkeypatch.delenv(key,raising=False)
+    init_db()
 
 
 def test_xui_add_retry_updates_same_uuid(monkeypatch):
@@ -20,7 +33,8 @@ def test_xui_add_retry_updates_same_uuid(monkeypatch):
         return httpx.Response(200,json={'success':True})
     cls=httpx.AsyncClient
     monkeypatch.setattr(providers.httpx,'AsyncClient',lambda **kw:cls(transport=httpx.MockTransport(handler),**kw))
-    sub={'id':'stable-id','expires':2000000000,'protocol':'xui'}
+    servers.import_environment()
+    sub={'id':'stable-id','expires':2000000000,'protocol':'xui','server_id':'legacy-xui'}
     a=asyncio.run(providers.provision(sub))
     b=asyncio.run(providers.provision(sub))
     assert a==b=='vless://stable-id@vpn.example:443?security=tls'
@@ -32,18 +46,19 @@ def test_xui_add_retry_updates_same_uuid(monkeypatch):
 
 def test_wireguard_provider_passes_stable_id_and_expiry(monkeypatch):
     monkeypatch.setenv('WG_AGENT_URL','https://wg.example')
-    monkeypatch.setenv('WG_AGENT_TOKEN','agent-secret')
+    monkeypatch.setenv('WG_AGENT_TOKEN','a'*32)
     calls=[]
     def handler(request):
         calls.append(request)
         return httpx.Response(200,json={'config':'[Interface]\nPrivateKey = test'})
     cls=httpx.AsyncClient
     monkeypatch.setattr(providers.httpx,'AsyncClient',lambda **kw:cls(transport=httpx.MockTransport(handler),**kw))
-    sub={'id':'stable-id','expires':2000000000,'protocol':'wg'}
+    servers.import_environment()
+    sub={'id':'stable-id','expires':2000000000,'protocol':'wg','server_id':'legacy-wg'}
     assert asyncio.run(providers.provision(sub)).startswith('[Interface]')
     assert calls[0].url.path=='/peers/stable-id'
     assert json.loads(calls[0].content)['expires']==2000000000
-    assert calls[0].headers['authorization']=='Bearer agent-secret'
+    assert calls[0].headers['authorization']=='Bearer '+'a'*32
 
 
 def test_yookassa_creation_uses_order_idempotency(monkeypatch):
@@ -65,3 +80,27 @@ def test_yookassa_creation_uses_order_idempotency(monkeypatch):
     assert data['amount']=={'value':'199.00','currency':'RUB'}
     assert data['capture'] is True and data['receipt']['customer']['email']=='receipt@example.com'
     assert data['confirmation']['return_url'] == 'https://pushok.shop/shop/?payment=return'
+
+
+def test_registry_profiles_route_to_pinned_agent_without_environment_fallback(monkeypatch):
+    from app.db import execute
+    calls=[]
+    for sid, host, token in [('a','https://agent-a.example','a'*32),('b','https://agent-b.example','b'*32)]:
+        execute("INSERT INTO servers(id,name,protocol,state,settings,created) VALUES (?,?,?,'active',?,0)",
+            (sid,sid,'wg',c.encrypt(json.dumps({'url':host,'token':token}))))
+    monkeypatch.setenv('WG_AGENT_URL','https://wrong.example')
+    def handler(request):
+        calls.append(request)
+        return httpx.Response(200,json={'config':'[Interface]\nPrivateKey = test'})
+    cls=httpx.AsyncClient
+    monkeypatch.setattr(providers.httpx,'AsyncClient',lambda **kw:cls(transport=httpx.MockTransport(handler),**kw))
+    for sid in ('a','b'):
+        asyncio.run(providers.provision({'id':'stable-'+sid,'protocol':'wg','server_id':sid,'expires':2000000000}))
+    assert [request.url.host for request in calls]==['agent-a.example','agent-b.example']
+    assert calls[0].headers['authorization']=='Bearer '+'a'*32
+    execute("UPDATE servers SET state='disabled' WHERE id='a'")
+    asyncio.run(providers.disable({'id':'stable-a','protocol':'wg','server_id':'a'}))
+    assert calls[-1].method=='DELETE' and calls[-1].url.host=='agent-a.example'
+    with pytest.raises(RuntimeError,match='ServerBindingMissing'):
+        asyncio.run(providers.provision({'id':'unbound','protocol':'wg','expires':2000000000}))
+    assert len(calls)==3

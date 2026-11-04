@@ -2,32 +2,42 @@
 import json
 import os
 import httpx
-from . import config as c
+from . import config as c, servers
 
 
-def available(protocol):
-    if protocol == 'xui':
-        return all(os.getenv(k) for k in ('XUI_URL', 'XUI_USERNAME', 'XUI_PASSWORD', 'XUI_INBOUND_ID', 'XUI_LINK_TEMPLATE'))
-    return all(os.getenv(k) for k in ('WG_AGENT_URL', 'WG_AGENT_TOKEN'))
+def available(protocol, user_id=None):
+    return servers.available(protocol, user_id)
+
+async def xui_inbound(client, profile):
+    base, inbound_id = profile['url'], profile['inbound_id']
+    r = await client.post(base + '/login', data={'username':profile['username'], 'password':profile['password']})
+    r.raise_for_status()
+    if not r.json().get('success'):
+        raise RuntimeError('3x-ui login failed')
+    r = await client.get(base + f'/panel/api/inbounds/get/{inbound_id}')
+    r.raise_for_status()
+    result = r.json()
+    if not result.get('success') or result.get('obj',{}).get('protocol') != 'vless':
+        raise RuntimeError('3x-ui VLESS inbound unavailable')
+    return result['obj']
+
+async def probe_server(row):
+    profile = servers.decode(row)
+    async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
+        if row['protocol']=='xui':
+            await xui_inbound(client, profile)
+        else:
+            r = await client.get(profile['url']+'/health', headers={'Authorization':'Bearer '+profile['token']})
+            r.raise_for_status()
+            if r.json().get('status') != 'ok':
+                raise RuntimeError('WireGuard agent unavailable')
 
 
 async def xui_client(sub, enabled=True):
-    base = os.environ['XUI_URL'].rstrip('/')
-    inbound_id = int(os.environ['XUI_INBOUND_ID'])
-    async with httpx.AsyncClient(timeout=25) as client:
-        r = await client.post(base + '/login', data={
-            'username': os.environ['XUI_USERNAME'], 'password': os.environ['XUI_PASSWORD']})
-        r.raise_for_status()
-        if not r.json().get('success'):
-            raise RuntimeError('3x-ui login failed')
-        r = await client.get(base + f'/panel/api/inbounds/get/{inbound_id}')
-        r.raise_for_status()
-        result = r.json()
-        if not result.get('success'):
-            raise RuntimeError('3x-ui inbound unavailable')
-        inbound = result['obj']
-        if inbound.get('protocol') != 'vless':
-            raise RuntimeError('Only a VLESS inbound is supported')
+    _, profile = servers.for_subscription(sub, revoking=not enabled)
+    base, inbound_id = profile['url'], profile['inbound_id']
+    async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
+        inbound = await xui_inbound(client, profile)
         settings = inbound['settings']
         settings = json.loads(settings) if isinstance(settings, str) else settings
         clients = settings.get('clients', [])
@@ -35,7 +45,7 @@ async def xui_client(sub, enabled=True):
         if not enabled and not existing:
             return ''
         payload = dict(existing) if existing else {
-            'id': sub['id'], 'email': 'pushok_' + sub['id'], 'flow': os.getenv('XUI_FLOW', ''),
+            'id': sub['id'], 'email': 'pushok_' + sub['id'], 'flow': profile['flow'],
             'limitIp': 0, 'totalGB': 0, 'subId': sub['id'].replace('-', '')}
         payload.update(enable=enabled, expiryTime=sub['expires'] * 1000)
         endpoint = f"updateClient/{sub['id']}" if existing else 'addClient'
@@ -44,17 +54,16 @@ async def xui_client(sub, enabled=True):
         r.raise_for_status()
         if not r.json().get('success'):
             raise RuntimeError('3x-ui client operation failed')
-    return os.environ['XUI_LINK_TEMPLATE'].replace('{uuid}', sub['id'])
+    return profile['link_template'].replace('{uuid}', sub['id'])
 
 
 async def provision(sub):
-    if not available(sub['protocol']):
-        raise RuntimeError('Provider not configured')
     if sub['protocol'] == 'xui':
         return await xui_client(sub)
-    async with httpx.AsyncClient(timeout=25) as client:
-        r = await client.put(os.environ['WG_AGENT_URL'].rstrip('/') + '/peers/' + sub['id'],
-                             headers={'Authorization': 'Bearer ' + os.environ['WG_AGENT_TOKEN']},
+    _, profile = servers.for_subscription(sub)
+    async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
+        r = await client.put(profile['url'] + '/peers/' + sub['id'],
+                             headers={'Authorization': 'Bearer ' + profile['token']},
                              json={'expires': sub['expires']})
         r.raise_for_status()
         return r.json()['config']
@@ -64,9 +73,10 @@ async def disable(sub):
     if sub['protocol'] == 'xui':
         await xui_client(sub, enabled=False)
     else:
-        async with httpx.AsyncClient(timeout=25) as client:
-            r = await client.delete(os.environ['WG_AGENT_URL'].rstrip('/') + '/peers/' + sub['id'],
-                                    headers={'Authorization': 'Bearer ' + os.environ['WG_AGENT_TOKEN']})
+        _, profile = servers.for_subscription(sub, revoking=True)
+        async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
+            r = await client.delete(profile['url'] + '/peers/' + sub['id'],
+                                    headers={'Authorization': 'Bearer ' + profile['token']})
             r.raise_for_status()
 
 

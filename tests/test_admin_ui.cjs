@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const vm = require('node:vm');
 const fs = require('node:fs');
 
-function adminPage() {
+function adminPage(options={}) {
   const elements = new Map();
   function element(id) {
     if (!elements.has(id)) elements.set(id, {
@@ -15,15 +15,15 @@ function adminPage() {
     });
     return elements.get(id);
   }
-  const replies = [], requests = [];
+  const replies = [], requests = [], bodies = [];
   const context = vm.createContext({
     document:{getElementById:element, querySelector:()=>({content:'/shop'})},
-    URLSearchParams, FormData,
-    fetch:url=>new Promise(resolve=>{ requests.push(url); replies.push(body=>resolve({ok:true,json:async()=>body})); }),
+    URLSearchParams, FormData:options.FormData || FormData,
+    fetch:(url,opts)=>new Promise(resolve=>{ requests.push(url); bodies.push(opts.body ? JSON.parse(opts.body) : null); replies.push(body=>resolve({ok:true,json:async()=>body})); }),
   });
   vm.runInContext(fs.readFileSync('app/static/admin.js','utf8'), context);
   vm.runInContext("token='admin-test-token'", context);
-  return {element, run:code=>vm.runInContext(code,context), reply:body=>replies.at(-1)(body), replyAt:(index,body)=>replies[index](body), requests};
+  return {element, run:code=>vm.runInContext(code,context), reply:body=>replies.at(-1)(body), replyAt:(index,body)=>replies[index](body), requests,bodies};
 }
 
 test('logout rejects an in-flight response with customer data', async () => {
@@ -95,4 +95,28 @@ test('order pagination moves back when the last filtered row leaves a page', asy
   await request;
   assert.equal(page.element('orders-page').textContent,'Страница 1 из 1');
   assert.equal(page.element('orders-next').disabled,true);
+});
+
+function uiServer(options={}) {
+  return {id:'node-a',name:'<img src=x>',location:'Финляндия',protocol:'xui',state:'active',capacity:0,version:1,health:'unknown',checked_at:null,occupied:1,bound_subscriptions:2,...options};
+}
+
+test('registry renders untested API honestly and escapes server names', async () => {
+  const page=adminPage(); const request=page.run('refreshServers()');
+  page.reply({servers:[uiServer()],unassigned_subscriptions:0}); await request;
+  const markup=page.element('server-list').innerHTML;
+  assert.ok(markup.includes('Ещё не проверен') && markup.includes('&lt;img src=x&gt;'));
+  assert.ok(!markup.includes('<img') && !markup.includes('API доступен'));
+});
+
+test('editing server metadata preserves connection credentials without sending a profile', async () => {
+  class Fields { constructor(form){this.fields=form.fields;} get(name){return this.fields[name];} }
+  const page=adminPage({FormData:Fields});
+  const request=page.run(`$('server-list').onsubmit({preventDefault(){},target:{dataset:{server:'node-a',version:'1'},fields:{name:'New name',location:'FI',capacity:'10',state:'draining'},closest(){return this;},querySelector(){return {disabled:false};}}})`);
+  assert.deepEqual(page.bodies[0],{name:'New name',location:'FI',capacity:10,state:'draining',version:1});
+  page.replyAt(0,uiServer({name:'New name',state:'draining',version:2}));
+  await new Promise(setImmediate);
+  page.replyAt(1,{servers:[uiServer({name:'New name',state:'draining',version:2})],unassigned_subscriptions:0});
+  await request;
+  assert.ok(page.element('server-list').innerHTML.includes('New name'));
 });
