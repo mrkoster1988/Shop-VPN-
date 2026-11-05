@@ -12,6 +12,22 @@ from .security import digest
 
 log = logging.getLogger('pushok')
 lock = asyncio.Lock()
+worker_health={}
+
+def reset_health():
+    worker_health.clear();worker_health.update(last_started=None,last_success=None,last_failure=None,running=False)
+
+reset_health()
+
+async def worker_iteration():
+    worker_health['last_started']=int(time.time());worker_health['running']=True
+    try:await tick()
+    except asyncio.CancelledError:raise
+    except Exception:
+        worker_health['last_failure']=int(time.time());raise
+    else:worker_health['last_success']=int(time.time());worker_health['last_failure']=None
+    finally:worker_health['running']=False
+
 
 
 def telegram_account(tg_id):
@@ -252,7 +268,7 @@ async def tick():
 async def worker():
     while True:
         try:
-            await tick()
+            await worker_iteration()
         except Exception as exc:
             log.error('Worker iteration error=%s', type(exc).__name__)
         await asyncio.sleep(15)

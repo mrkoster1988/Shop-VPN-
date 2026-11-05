@@ -16,3 +16,5 @@ input[type=checkbox]{display:inline-block;width:auto;margin-right:8px;accent-col
 .trial-offer{margin:24px 0;padding:26px;border:1px solid #bcc7b8;border-radius:16px;background:#e9efdf}.trial-offer h3{font-size:24px;margin:8px 0}.trial-offer .footnote{margin-bottom:0}
 
 #coupons-list select,#coupon-create select{display:block;width:100%;font:inherit;padding:12px;border:1px solid var(--line);border-radius:9px;background:white;color:var(--ink)}#promo-controls .actions{gap:14px;margin-top:10px}#promo-controls .footnote{font-size:12px}
+
+.table-scroll{overflow-x:auto} .table-scroll table{width:100%;border-collapse:collapse} .table-scroll th,.table-scroll td{padding:12px;text-align:left;border-bottom:1px solid #deded6} #diagnostics-json{width:100%;box-sizing:border-box;font-family:monospace;min-height:120px}

@@ -165,3 +165,28 @@ test('referral policy editor shows bounded minimums and immutable invitation bud
   assert.ok(html.includes('data-referral-version="4"'));assert.ok(html.includes('name="min_rub"'));assert.ok(html.includes('name="min_stars"'));assert.ok(html.includes('max="30"'));
   p.run("$('exit').onclick()");assert.equal(p.element('referral-policy-editor').innerHTML,'');
 });
+
+function diagnosticReport(overrides={}) {
+  return {format:1,generated_at:100,status:'needs_attention',warnings:['worker_not_observed'],worker:{state:'not_observed',last_success:null},queues:{issuance:{pending:2,due:1,with_error:1,oldest_age_seconds:200}},expiry:{pending:0},servers:{xui:{assignable:1,cached_api_ok_24h:0},wg:{assignable:0,cached_api_ok_24h:0}},...overrides};
+}
+
+test('diagnostics escapes unknown codes and shows cached rather than live evidence',async()=>{
+  const p=adminPage();const request=p.run('refreshDiagnostics()');
+  p.reply(diagnosticReport({warnings:['<img src=x>']}));await request;
+  const html=p.element('diagnostics-report').innerHTML;
+  assert.ok(html.includes('&lt;img src=x&gt;'));assert.ok(!html.includes('<img'));
+  assert.ok(html.includes('Недавние успешные API-проверки'));
+  assert.equal(JSON.parse(p.element('diagnostics-json').value).format,1);
+});
+
+test('logout rejects and clears a pending diagnostics report',async()=>{
+  const p=adminPage();const request=p.run('refreshDiagnostics()');p.run("$('exit').onclick()");
+  p.reply(diagnosticReport());await request;
+  assert.equal(p.element('diagnostics-report').innerHTML,'');assert.equal(p.element('diagnostics-json').value,'');assert.equal(p.element('diagnostics-error').textContent,'');
+});
+
+test('newer diagnostics cannot be replaced by an older response',async()=>{
+  const p=adminPage();const first=p.run('refreshDiagnostics()'),second=p.run('refreshDiagnostics()');
+  p.replyAt(1,diagnosticReport({generated_at:200}));await second;p.replyAt(0,diagnosticReport({generated_at:100}));await first;
+  assert.equal(JSON.parse(p.element('diagnostics-json').value).generated_at,200);
+});

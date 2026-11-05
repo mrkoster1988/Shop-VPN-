@@ -176,3 +176,21 @@ def test_subscription_urls_are_redacted_in_proxy_templates():
     assert '@private_shop path /shop/login /shop/sub/*' in caddy and 'log_skip @private_shop' in caddy
     assert 'request>uri replace REDACTED' in caddy
     assert 'location ^~ /shop/sub/' in (root/'nginx.example.conf').read_text()
+
+
+@pytest.mark.parametrize('upgrade',[False,True])
+def test_bootstrap_pins_install_and_legacy_upgrade_separately(tmp_path,upgrade):
+    import io,tarfile
+    root=Path(__file__).parents[1];archive=tmp_path/'mock.tar.gz';binary=tmp_path/'bin';binary.mkdir();log=tmp_path/'curl-args'
+    with tarfile.open(archive,'w:gz') as tar:
+        code=b'import json,sys;print(json.dumps({"script":sys.argv[0],"args":sys.argv[1:]}))\n'
+        for name in ('install.py','upgrade.py'):
+            member=tarfile.TarInfo('release/scripts/'+name);member.size=len(code);tar.addfile(member,io.BytesIO(code))
+    curl=binary/'curl';curl.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$MOCK_LOG"\nprevious=""\nfor item do\n if [ "$previous" = "-o" ]; then cp "$MOCK_ARCHIVE" "$item"; fi\n previous="$item"\ndone\n');curl.chmod(0o755)
+    sudo=binary/'sudo';sudo.write_text('#!/bin/sh\nexec "$@"\n');sudo.chmod(0o755)
+    env={**os.environ,'PATH':str(binary)+os.pathsep+os.environ['PATH'],'MOCK_LOG':str(log),'MOCK_ARCHIVE':str(archive)}
+    result=subprocess.run(['bash',str(root/'install.sh'),*(['--upgrade','plan'] if upgrade else ['--plan'])],env=env,capture_output=True,text=True,check=True)
+    output=json.loads(result.stdout)
+    assert output['script'].endswith('/scripts/'+('upgrade.py' if upgrade else 'install.py'))
+    assert ('/v0.022.tar.gz' if upgrade else '/'+i.VERSION+'.tar.gz') in log.read_text()
+    assert '--source' in output['args'] and ('plan' if upgrade else '--plan') in output['args']

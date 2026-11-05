@@ -24,7 +24,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from pydantic import BaseModel, Field, field_validator, ValidationError
 from starlette.applications import Starlette
 from starlette.routing import Mount
-from . import config as c, providers, service, servers, trials, promos, referrals
+from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
 
@@ -48,6 +48,7 @@ async def lifespan(app):
         servers.import_environment()
     except Exception:
         raise RuntimeError('Server registry import failed; check legacy provider settings') from None
+    service.reset_health()
     tasks = []
     if os.getenv('BACKGROUND_TASKS', 'true') == 'true' and os.getenv('MAINTENANCE_MODE')!='true':
         tasks.append(asyncio.create_task(service.worker()))
@@ -650,6 +651,11 @@ async def update_plan(plan_id: str, data: PlanUpdate):
             conn.execute('INSERT INTO plan_changes(plan_id,created,before_data,after_data) VALUES (?,?,?,?)',
                          (plan_id, after['updated'], json.dumps(before, ensure_ascii=False), json.dumps(after, ensure_ascii=False)))
     return admin_plan(after)
+
+@app.get('/api/admin/diagnostics',dependencies=[Depends(admin)])
+async def diagnostic_report():
+    try:return diagnostics.report(dict(service.worker_health))
+    except sqlite3.Error:raise HTTPException(503,'Не удалось прочитать локальное состояние магазина') from None
 
 @app.get('/api/admin/overview', dependencies=[Depends(admin)])
 async def overview():

@@ -2,6 +2,7 @@
 const basePath = document.querySelector('meta[name="shop-base"]').content;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let diagnosticsRequest=0;
 let token = '', authEpoch = 0, usersPage = 1, usersQuery = '', usersRequest = 0;
 let selectedUser = null, profilePage = 1, profileRequest = 0;
 let serverCache = [], editingServer = null;
@@ -36,7 +37,7 @@ async function refresh({plans = true} = {}) {
   const [data, catalog] = await Promise.all([api('overview'), plans ? api('plans') : Promise.resolve(null)]);
   $('stats').innerHTML = `<div>Пользователи<strong>${data.users}</strong></div><div>Подписки<strong>${data.active}</strong></div><div>Подтверждено<strong>${data.revenue} ₽ / ${data.stars} ★</strong></div>`;
   if (catalog) $('plan-editors').innerHTML = catalog.plans.map(planForm).join('');
-  await Promise.all([refreshOrders(), refreshUsers(), plans ? refreshServers() : Promise.resolve(), plans ? refreshTrialPolicy() : Promise.resolve(), plans ? refreshCoupons() : Promise.resolve(), plans ? refreshReferralPolicy() : Promise.resolve()]);
+  await Promise.all([refreshDiagnostics(),refreshOrders(), refreshUsers(), plans ? refreshServers() : Promise.resolve(), plans ? refreshTrialPolicy() : Promise.resolve(), plans ? refreshCoupons() : Promise.resolve(), plans ? refreshReferralPolicy() : Promise.resolve()]);
 }
 $('admin-login').onsubmit = async event => {
   event.preventDefault();
@@ -48,6 +49,7 @@ $('admin-login').onsubmit = async event => {
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => {
+  diagnosticsRequest++;$('diagnostics-report').replaceChildren();$('diagnostics-error').textContent='';$('diagnostics-json').value='';
   authEpoch++; token = ''; usersRequest++; usersPage = 1; usersQuery = '';
   ordersRequest++; ordersPage = 1; ordersFilters = {q:'', status:'', method:'', protocol:''};
   serverCache = []; editingServer = null; $('server-list').replaceChildren(); $('servers-notice').textContent = '';
@@ -336,3 +338,19 @@ $('referral-policy-editor').onsubmit=async event=>{
   try {await api('referrals',{method:'PUT',data:{enabled:values.has('enabled'),days:Number(values.get('days')),max_invites:Number(values.get('max_invites')),min_rub:Number(values.get('min_rub')),min_stars:Number(values.get('min_stars')),version:Number(form.dataset.referralVersion)}});await refreshReferralPolicy();$('referral-policy-error').textContent='';}
   catch(e){$('referral-policy-error').textContent=e.message;button.disabled=false;}
 };
+
+const diagnosticWarnings={worker_disabled:'Фоновые задачи выключены настройками',encryption_key_invalid:'Неверный формат ключа шифрования',worker_failed:'Последний цикл worker завершился ошибкой',worker_not_observed:'Цикл worker ещё не наблюдался в этом процессе',worker_slow:'Цикл worker выполняется больше 3 минут',worker_stale:'Нет свежего успешного цикла worker',queue_errors:'В очереди есть задания с ошибками',queue_wait_over_10m:'Задания выдачи или устройств ожидают больше 10 минут',expiry_wait_over_10m:'Есть доступы с просроченным отзывом больше 10 минут',queues_paused:'Фоновые задачи выключены при непустой очереди',server_probe_not_recent_ok:'Не все включённые серверы имеют успешную API-проверку за сутки',no_new_assignments_xui:'Нет сервера VLESS для новых назначений',no_new_assignments_wg:'Нет сервера WireGuard для новых назначений',no_active_plans:'Нет опубликованных тарифов',no_assignable_servers:'Нет серверов для новых назначений',payment_settings_incomplete:'Не заполнены настройки оплаты',telegram_sales_settings_incomplete:'Не заполнены настройки продаж в Telegram'};
+const diagnosticWorker={disabled:'Выключен настройками',not_observed:'Ещё не наблюдался',failed:'Ошибка последнего цикла',busy:'Выполняет цикл',slow:'Длительный цикл',stale:'Нет свежего успешного цикла',recent_success:'Недавно завершил цикл'};
+function diagnosticsMarkup(r) {
+  const labels={issuance:'Выдача и продление',payment_poll:'Сверка ЮKassa',devices:'Создание/отзыв устройств',device_rotations:'Смена ключей устройств',primary_rotations:'Смена основного ключа'};
+  return `<p><b>${r.status==='local_checks_ok'?'Локальные проверки без замечаний':'Требуется внимание'}</b> · ${esc(new Date(r.generated_at*1000).toLocaleString('ru-RU'))}</p><p>Worker: ${esc(diagnosticWorker[r.worker.state] || r.worker.state)}. Последний успешный цикл: ${r.worker.last_success?esc(new Date(r.worker.last_success*1000).toLocaleString('ru-RU')):'не наблюдался'}.</p>${r.warnings.length?'<ul>'+r.warnings.map(w=>'<li>'+esc(diagnosticWarnings[w] || w)+'</li>').join('')+'</ul>':''}<div class="table-scroll"><table><thead><tr><th>Очередь</th><th>Ожидает</th><th>Срок повтора наступил</th><th>С ошибкой</th><th>Возраст старейшего, сек.</th></tr></thead><tbody>${Object.entries(r.queues).map(([key,q])=>`<tr><td>${esc(labels[key] || key)}</td><td>${esc(q.pending)}</td><td>${esc(q.due)}</td><td>${esc(q.with_error)}</td><td>${esc(q.oldest_age_seconds ?? '—')}</td></tr>`).join('')}</tbody></table></div><p>Подписок с истёкшим сроком в состоянии active: ${esc(r.expiry.pending)}. Это очередь проверки отзыва, а не доказательство текущего доступа на узле.</p><p>Серверы VLESS / WireGuard для новых назначений: ${esc(r.servers.xui.assignable)} / ${esc(r.servers.wg.assignable)}. Недавние успешные API-проверки: ${esc(r.servers.xui.cached_api_ok_24h)} / ${esc(r.servers.wg.cached_api_ok_24h)}.</p><p>Статус относится только к локальным наблюдениям. Проверка трафика, платежа и восстановления копии выполняется отдельно.</p>`;
+}
+async function refreshDiagnostics() {
+  const request=++diagnosticsRequest,epoch=authEpoch;$('diagnostics-refresh').disabled=true;
+  try {
+    const r=await api('diagnostics');if(request!==diagnosticsRequest || epoch!==authEpoch)return;
+    $('diagnostics-report').innerHTML=diagnosticsMarkup(r);$('diagnostics-json').value=JSON.stringify(r,null,2);$('diagnostics-error').textContent='';
+  }catch(e){if(request===diagnosticsRequest && epoch===authEpoch){$('diagnostics-report').replaceChildren();$('diagnostics-json').value='';$('diagnostics-error').textContent=e.message;}}
+  finally {if(request===diagnosticsRequest && epoch===authEpoch)$('diagnostics-refresh').disabled=false;}
+}
+$('diagnostics-refresh').onclick=()=>refreshDiagnostics();
