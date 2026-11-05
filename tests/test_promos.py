@@ -130,8 +130,8 @@ def test_small_price_never_becomes_free(buyer):
 
 
 def test_admin_authorization_origin_identity_and_audit(buyer):
-    assert buyer.get('/api/admin/coupons').status_code==403
-    assert buyer.post('/api/admin/coupons',json={'code':'SAVE10','percent':10}).status_code==403
+    assert buyer.get('/api/admin/coupons').status_code==401
+    assert buyer.post('/api/admin/coupons',json={'code':'SAVE10','percent':10}).status_code==401
     assert buyer.post('/api/admin/coupons',headers={**admin_headers(),'Origin':'https://evil.example'},json={'code':'SAVE10','percent':10}).status_code==403
     row=coupon(buyer,code='save10');assert row['code']=='SAVE10'
     assert buyer.post('/api/admin/coupons',headers=admin_headers(),json={'code':'SaVe10','percent':20}).status_code==409

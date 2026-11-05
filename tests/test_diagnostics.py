@@ -43,7 +43,9 @@ def test_admin_boundary_and_safe_snapshot_without_remote_calls(client,monkeypatc
     for secret in (oid,'private-customer@example.com','private-provider-url-and-key','https://panel.example',c.ADMIN_TOKEN,os.environ['ENCRYPTION_KEY']):assert secret not in text
     assert data['scope']=={'external_requests':False,'ciphertext_scan':False,'vpn_traffic_verified':False,'real_payments_verified':False,'backup_verified':False,'worker_process_only':True}
     assert data['queues']['issuance']['pending']==1 and data['queues']['issuance']['with_error']==1
-    assert list(sqlite3.connect(c.DB).iterdump())==before
+    after=list(sqlite3.connect(c.DB).iterdump())
+    assert [line for line in after if not line.startswith('INSERT INTO "admin_audit"')]==before
+    assert one('SELECT count(*) AS n FROM admin_audit')['n']==1
     assert client.get('/api/admin/diagnostics',headers=headers()).headers['cache-control']=='no-store'
 
 
