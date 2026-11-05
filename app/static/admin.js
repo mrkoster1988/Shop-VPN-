@@ -132,7 +132,7 @@ $('admin-login').onsubmit = async event => {
   finally{button.disabled=false}
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
-$('exit').onclick = async () => { try{await fetch(basePath+'/api/admin/auth/logout',{method:'POST',credentials:'same-origin'})}catch{} role='';
+$('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{}); role='';
   adsFinanceRequest++;adsFinancePage=1;adsExpenseIntents.clear();
   for(const id of ['ads-finance-summary','ads-finance-obligations','ads-finance-error','ads-expense-list','ads-expense-status','ads-finance-page'])$(id).replaceChildren();
   for(const id of ['ads-finance-start','ads-finance-end','ads-expense-amount','ads-expense-date','ads-expense-reference','ads-expense-note'])$(id).value='';

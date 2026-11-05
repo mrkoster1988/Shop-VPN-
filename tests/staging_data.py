@@ -87,9 +87,9 @@ def main():
         from app.security import digest
         execute('INSERT INTO tickets VALUES (?,?,?)',(digest(json.load(sys.stdin)['ticket']),1,int(time.time())+600));result={'written':True}
     elif command=='settings':
-        from app.db import one
-        row=one('SELECT support_text,terms_text FROM store_settings WHERE id=1')
-        result={'support_text':row['support_text'],'terms_configured':bool(row['terms_text'].strip())} if row else {}
+        path=Path(sys.argv[2]) if len(sys.argv)>2 else Path(os.environ.get('DATA_DIR','data'))/'shop.db'
+        with sqlite3.connect(path) as conn:row=conn.execute('SELECT support_text,terms_text FROM store_settings WHERE id=1').fetchone()
+        result={'support_text':row[0],'terms_configured':bool(row[1].strip())} if row else {}
     elif command=='sentinel':
         from app.db import execute
         execute("INSERT INTO meta(key,value) VALUES ('docker_staging_sentinel',?)",(json.load(sys.stdin)['value'],));result={'written':True}

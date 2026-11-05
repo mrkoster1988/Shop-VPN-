@@ -207,9 +207,14 @@ class Staging:
         old=managed.get('table_digests',{});new=restored.get('table_digests',{})
         changed=[name for name in set(old)&set(new) if old[name]!=new[name]]
         missing=sorted(set(old)-set(new));added=sorted(set(new)-set(old))
-        check(not changed and not missing and not added and restored['counts']['sessions']==0,
+        allowed_new={'admin_audit','password_reset_tokens','staff_sessions','staff_users',
+                     'store_settings','support_cases','support_messages'}
+        check(not changed and not missing and set(added)<=allowed_new and restored['counts']['sessions']==0,
               'Backup restore mismatch: changed='+','.join(sorted(changed))+
               '; missing='+','.join(missing)+'; added='+','.join(added))
+        restored_settings=self.data('settings',database='/tmp/final-restore/shop.db')
+        check(restored_settings=={'support_text':'Disposable CI fixture','terms_configured':False},
+              'Store settings were not preserved by backup restore')
         self.run('refuse overwrite',base+['restore','/tmp/final.pvb','--target','/tmp/final-restore'],env=env,ok=(1,))
         diagnostic=self.json('status CLI',['docker','exec',cid,'python','scripts/status.py','--url',self.backend_url],ok=(0,1))
         check(diagnostic['scope']['external_requests'] is False and diagnostic['release']==version(self.args.source),'Diagnostic scope/version mismatch')
