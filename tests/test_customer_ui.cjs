@@ -391,3 +391,57 @@ test('logout during bonus refresh prevents late private status',async()=>{
   const request=p.run("redeemReferral('sub-a')");await tick();await p.element('logout').onclick();release(p.state.customer,401);await assert.rejects(request,/Сессия изменилась/);
   assert.equal(p.element('referral-status').textContent,'');
 });
+
+test('password form is email-only and rejects a mismatching repeat',async()=>{
+  const p=await customerPage();assert.equal(p.element('password-settings').hidden,true);
+  p.state.customer.can_change_password=true;await p.run('refreshMe()');
+  assert.equal(p.element('password-settings').hidden,false);
+  p.element('password-new').value='new-password-123';p.element('password-repeat').value='different';
+  await p.element('password-form').onsubmit({preventDefault(){}});
+  assert.match(p.element('password-status').textContent,/не совпадают/);
+  assert.equal(p.calls.filter(c=>c.url.endsWith('/auth/password')).length,0);
+});
+
+test('password success clears inputs and private connection data',async()=>{
+  const p=await customerPage();p.state.customer.can_change_password=true;await p.run('refreshMe()');
+  await p.run("openConnection('sub-a')");p.element('account-dialog').showModal();
+  p.respond('/shop/api/auth/password',{ok:true});
+  for(const id of ['password-new','password-repeat'])p.element(id).value='new-password-123';
+  p.element('password-current').value='old-password-123';
+  await p.element('password-form').onsubmit({preventDefault(){}});
+  assert.equal(p.element('account-dialog').open,true);
+  assert.equal(p.element('config-value').value,'');
+  for(const id of ['password-current','password-new','password-repeat'])assert.equal(p.element(id).value,'');
+  assert.match(p.element('toast').textContent,/Пароль изменён/);
+  const body=JSON.parse(p.calls.find(c=>c.url.endsWith('/auth/password')).opts.body);
+  assert.deepEqual(body,{current_password:'old-password-123',new_password:'new-password-123'});
+});
+
+test('logout clears secrets immediately and waits for password response before deleting cookie',async()=>{
+  const p=await customerPage();p.state.customer.can_change_password=true;await p.run('refreshMe()');
+  const reply=p.defer('/shop/api/auth/password');
+  for(const id of ['password-new','password-repeat'])p.element(id).value='new-password-123';
+  p.element('password-current').value='old-password-123';
+  const changing=p.element('password-form').onsubmit({preventDefault(){}});
+  const leaving=p.element('logout').onclick();
+  assert.equal(p.element('password-current').value,'');
+  assert.equal(p.calls.some(c=>c.url.endsWith('/auth/logout')),false);
+  reply({ok:true});await changing;await leaving;
+  assert.equal(p.calls.filter(c=>c.url.endsWith('/auth/logout')).length,1);
+  assert.equal(p.element('account-dialog').open,false);
+  assert.equal(p.element('identity').textContent,'');
+});
+
+test('closing account erases password fields and a failed change shows a safe error',async()=>{
+  const p=await customerPage();p.state.customer.can_change_password=true;await p.run('refreshMe()');
+  p.element('account-dialog').showModal();
+  for(const id of ['password-current','password-new','password-repeat'])p.element(id).value='same-password-123';
+  p.element('account-dialog').close();
+  for(const id of ['password-current','password-new','password-repeat'])assert.equal(p.element(id).value,'');
+  p.respond('/shop/api/auth/password',{detail:'Текущий пароль неверен'},403);
+  for(const id of ['password-current','password-new','password-repeat'])p.element(id).value='same-password-123';
+  await p.element('password-form').onsubmit({preventDefault(){}});
+  assert.match(p.element('password-status').textContent,/Текущий пароль неверен/);
+  assert.equal(p.element('password-submit').disabled,false);
+  for(const id of ['password-current','password-new','password-repeat'])assert.equal(p.element(id).value,'');
+});

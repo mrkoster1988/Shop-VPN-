@@ -23,9 +23,13 @@ def password_valid(password, encoded):
     actual = hashlib.pbkdf2_hmac('sha256', password.encode(), salt.encode(), 600000).hex()
     return hmac.compare_digest(actual, expected)
 
-def session(response, user_id):
+def session(response, user_id, conn=None):
     raw = secrets.token_urlsafe(32)
-    execute('INSERT INTO sessions VALUES (?,?,?)', (digest(raw), user_id, int(time.time()) + 604800))
+    values = (digest(raw), user_id, int(time.time()) + 604800)
+    if conn is None:
+        execute('INSERT INTO sessions VALUES (?,?,?)', values)
+    else:
+        conn.execute('INSERT INTO sessions VALUES (?,?,?)', values)
     response.set_cookie('session', raw, max_age=604800, httponly=True,
                         secure=c.SECURE_COOKIE, samesite='lax', path=c.COOKIE_PATH)
 

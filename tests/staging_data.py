@@ -56,11 +56,18 @@ def snapshot(database=None):
     try:
         conn.execute('BEGIN')
         if conn.execute('PRAGMA integrity_check').fetchall()!=[('ok',)] or conn.execute('PRAGMA foreign_key_check').fetchone():raise ValueError('Invalid staging database')
-        records={};counts={}
+        records={};business={};counts={}
         for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"):
             quoted='"'+name.replace('"','""')+'"';rows=conn.execute('SELECT * FROM '+quoted).fetchall();counts[name]=len(rows)
-            if name not in ('sessions','tickets'):records[name]=sorted(json.dumps(row,ensure_ascii=True) for row in rows)
-        return {'digest':hashlib.sha256(json.dumps(records,sort_keys=True).encode()).hexdigest(),'counts':counts,
+            if name not in ('sessions','tickets'):
+                records[name]=sorted(json.dumps(row,ensure_ascii=True) for row in rows)
+                if name=='users':
+                    columns=[item[1] for item in conn.execute('PRAGMA table_info(users)')]
+                    index=columns.index('password')
+                    rows=[tuple(None if i==index else value for i,value in enumerate(row)) for row in rows]
+                business[name]=sorted(json.dumps(row,ensure_ascii=True) for row in rows)
+        return {'digest':hashlib.sha256(json.dumps(records,sort_keys=True).encode()).hexdigest(),
+            'business_digest':hashlib.sha256(json.dumps(business,sort_keys=True).encode()).hexdigest(),'counts':counts,
             'db_uid':path.stat().st_uid,'db_gid':path.stat().st_gid,'db_mode':stat.S_IMODE(path.stat().st_mode),
             'directory_mode':stat.S_IMODE(path.parent.stat().st_mode)}
     finally:conn.close()
@@ -70,6 +77,10 @@ def main():
     command=sys.argv[1]
     if command=='seed':result=seed(json.load(sys.stdin))
     elif command=='snapshot':result=snapshot(sys.argv[2] if len(sys.argv)>2 else None)
+    elif command=='ticket':
+        from app.db import execute
+        from app.security import digest
+        execute('INSERT INTO tickets VALUES (?,?,?)',(digest(json.load(sys.stdin)['ticket']),1,int(time.time())+600));result={'written':True}
     elif command=='sentinel':
         from app.db import execute
         execute("INSERT INTO meta(key,value) VALUES ('docker_staging_sentinel',?)",(json.load(sys.stdin)['value'],));result={'written':True}

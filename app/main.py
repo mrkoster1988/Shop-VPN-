@@ -66,6 +66,8 @@ app = FastAPI(title='Pushok VPN', lifespan=lifespan, docs_url=None, redoc_url=No
 async def safe_validation(request, exc):
     if request.url.path.removeprefix(c.BASE_PATH).startswith('/api/admin/servers'):
         return JSONResponse({'detail':'Проверьте поля сервера и профиль подключения.'},status_code=422)
+    if request.url.path.removeprefix(c.BASE_PATH).startswith('/api/auth/'):
+        return JSONResponse({'detail':'Проверьте данные для входа или смены пароля.'},status_code=422)
     return await request_validation_exception_handler(request,exc)
 
 # Bounded per-process rate limits; run one process as required by SQLite worker design.
@@ -111,6 +113,11 @@ async def safety(request, call_next):
 class Credentials(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=10, max_length=128)
+
+class PasswordChange(BaseModel):
+    model_config = {'extra': 'forbid'}
+    current_password: str = Field(min_length=1, max_length=128, strict=True)
+    new_password: str = Field(min_length=10, max_length=128, strict=True)
 
 class TgAuth(BaseModel):
     init_data: str = Field(max_length=10000)
@@ -236,7 +243,37 @@ async def login(data: Credentials):
     if not user or not valid:
         raise HTTPException(401, 'Неверный email или пароль')
     response = JSONResponse({'ok': True})
-    session(response, user['id'])
+    with db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        fresh = conn.execute('SELECT password FROM users WHERE id=?', (user['id'],)).fetchone()
+        if not fresh or fresh['password'] != encoded:
+            raise HTTPException(401, 'Неверный email или пароль')
+        session(response, user['id'], conn)
+    return response
+
+@app.post('/api/auth/password')
+async def change_password(data: PasswordChange, request: Request, user=Depends(current_user)):
+    if not user['email'] or not user['password']:
+        raise HTTPException(409, 'Смена пароля доступна для аккаунта с email')
+    if not await asyncio.to_thread(password_valid, data.current_password, user['password']):
+        raise HTTPException(403, 'Текущий пароль неверен')
+    if data.current_password == data.new_password:
+        raise HTTPException(422, 'Новый пароль должен отличаться от текущего')
+    encoded = await asyncio.to_thread(password_hash, data.new_password)
+    response = JSONResponse({'ok': True})
+    with db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        active = conn.execute('SELECT 1 FROM sessions WHERE token=? AND user_id=? AND expires>?',
+            (digest(request.cookies.get('session', '')), user['id'], int(time.time()))).fetchone()
+        if not active:
+            raise HTTPException(401, 'Войдите в личный кабинет')
+        fresh = conn.execute('SELECT password FROM users WHERE id=?', (user['id'],)).fetchone()
+        if not fresh or fresh['password'] != user['password']:
+            raise HTTPException(409, 'Пароль уже изменён. Войдите заново.')
+        conn.execute('UPDATE users SET password=? WHERE id=?', (encoded, user['id']))
+        conn.execute('DELETE FROM sessions WHERE user_id=?', (user['id'],))
+        conn.execute('DELETE FROM tickets WHERE user_id=?', (user['id'],))
+        session(response, user['id'], conn)
     return response
 
 @app.post('/api/auth/telegram')
@@ -249,13 +286,13 @@ async def tg_login(data: TgAuth):
 
 @app.get('/login')
 async def ticket_login(ticket: str = ''):
+    response = RedirectResponse(c.BASE_PATH + '/', status_code=303)
     with db() as conn:
         result = conn.execute('DELETE FROM tickets WHERE token=? AND expires>? RETURNING user_id',
                               (digest(ticket), int(time.time()))).fetchone()
-    if not result:
-        raise HTTPException(401, 'Ссылка истекла. Запросите новую командой /account в боте.')
-    response = RedirectResponse(c.BASE_PATH + '/', status_code=303)
-    session(response, result['user_id'])
+        if not result:
+            raise HTTPException(401, 'Ссылка истекла. Запросите новую командой /account в боте.')
+        session(response, result['user_id'], conn)
     return response
 
 @app.post('/api/auth/logout')
@@ -269,7 +306,7 @@ async def logout(request: Request):
 async def me(user=Depends(current_user)):
     subs = all_rows('SELECT s.id,s.protocol,s.expires,s.state,s.device_limit,s.primary_key_state,s.access_source,(s.rotation_error IS NOT NULL) AS primary_retrying,coalesce(l.enabled,0) AS link_enabled,coalesce(l.follow_rotation,0) AS link_follows_rotation FROM subscriptions s LEFT JOIN subscription_links l ON l.subscription_id=s.id WHERE s.user_id=?', (user['id'],))
     orders = all_rows('SELECT id,protocol,plan,plan_name,days,amount,currency,method,status,created,payment_url,attempts,device_limit,kind,base_amount,discount,promo_code,promo_percent FROM orders WHERE user_id=? ORDER BY created DESC LIMIT 50', (user['id'],))
-    return {'id': user['id'], 'email': user['email'], 'telegram_id': user['telegram_id'], 'subscriptions': subs, 'orders': orders, 'referrals':referrals.summary(user)}
+    return {'id': user['id'], 'email': user['email'], 'telegram_id': user['telegram_id'], 'can_change_password': bool(user['email'] and user['password']), 'subscriptions': subs, 'orders': orders, 'referrals':referrals.summary(user)}
 
 @app.post('/api/referrals/code')
 async def referral_code(user=Depends(current_user)):

@@ -6,6 +6,7 @@ const statusLabel = {pending:'Ожидает оплаты',checkout:'Оплат�
 const money=(amount,currency)=>amount.toLocaleString('ru-RU')+' '+(currency==='XTR'?'★':'₽');
 let checkoutQuote=null,quoteRequest=0;
 let referralIntents=new Map();
+let passwordOperation=null, logoutPending=false;
 let catalog, me, protocol = 'xui', selectedPlan, checkoutTrial=null, register = false, toastTimer;
 let linkSubscription=null, linkRequest=0, linkState=null;
 let sessionEpoch = 0, meRequest = 0, connectionRequest = 0, connection = null, connectionTimer;
@@ -42,7 +43,13 @@ function clearConnection() {
   for (const id of ['config-summary','config-status','config-help','config-support']) $(id).textContent = '';
   $('connection-steps').replaceChildren();
 }
+function clearPassword() {
+  for(const id of ['password-current','password-new','password-repeat']) $(id).value='';
+  $('password-status').textContent='';
+}
+$('account-dialog').addEventListener('close',clearPassword);
 function clearPrivate() {
+  clearPassword(); $('password-settings').hidden=true; $('password-settings').open=false;
   me = null; selectedPlan = null; checkoutTrial=null;resetQuote(); primaryRotationIntents.clear();referralIntents.clear();$('referral-url').value='';$('referral-code').value='';$('referral-accept').checked=false;$('referral-status').textContent='';$('referral-info').textContent='';$('referral-history').replaceChildren();$('referrals-panel').hidden=true;
   $('link-dialog').close(); clearLink();
   $('devices-dialog').close(); clearDevices();
@@ -78,6 +85,7 @@ async function refreshMe() {
 }
 function renderAccount() {
   if (!me) return;
+  $('password-settings').hidden=!me.can_change_password;
   renderReferrals();
   $('identity').textContent = me.email || 'Telegram · ' + me.telegram_id;
   $('subscriptions').innerHTML = me.subscriptions.length ? me.subscriptions.map(s => {
@@ -119,10 +127,10 @@ function paymentResult(order) {
 $('protocols').onclick = event => { const b=event.target.closest('[data-protocol]'); if(b) { protocol=b.dataset.protocol; renderPlans(); } };
 $('plan-list').onclick = event => { const b=event.target.closest('[data-plan]'); if(b) beginCheckout(b.dataset.plan).catch(e=>toast(e.message)); };
 document.querySelectorAll('[data-close]').forEach(button => button.onclick=()=>$(button.dataset.close).close());
-$('account-btn').onclick = async () => { try { await refreshMe(); show(me?'account-dialog':'auth-dialog'); } catch(e) { toast(e.message); } };
+$('account-btn').onclick = async () => { if(logoutPending)return; try { await refreshMe(); show(me?'account-dialog':'auth-dialog'); } catch(e) { toast(e.message); } };
 $('auth-switch').onclick = () => { register=!register; $('auth-title').textContent=register?'Добро пожаловать.':'С возвращением.'; $('auth-submit').textContent=register?'Создать аккаунт →':'Войти →'; $('auth-switch').textContent=register?'Уже есть аккаунт? Войти':'Создать аккаунт'; $('auth-form').password.autocomplete=register?'new-password':'current-password'; };
 $('auth-form').onsubmit = async event => {
-  event.preventDefault(); const b=$('auth-submit'); b.disabled=true;
+  event.preventDefault(); if(logoutPending || passwordOperation)return; const b=$('auth-submit'); b.disabled=true;
   try { const form=new FormData(event.target); await api('/api/auth/'+(register?'register':'login'),Object.fromEntries(form)); sessionEpoch++; $('auth-form').reset(); $('auth-dialog').close(); await refreshMe(); if(selectedPlan) await beginCheckout(selectedPlan.id); else show('account-dialog'); }
   catch(e) { toast(e.message); } finally { b.disabled=false; }
 };
@@ -410,10 +418,39 @@ $('copy-config').onclick = async () => {
   catch { if (request===connectionRequest) { $('config-details').open=true; $('config-value').select(); toast('Настройки выделены. Скопируйте их вручную.'); } }
 };
 $('refresh').onclick = async () => { try { await refreshMe(); toast('Кабинет обновлён'); } catch(e) { toast(e.message); } };
+$('password-form').onsubmit = event => {
+  event.preventDefault();
+  if(passwordOperation || logoutPending || !me?.can_change_password)return;
+  if($('password-new').value!==$('password-repeat').value){$('password-status').textContent='Новые пароли не совпадают.';return;}
+  const data={current_password:$('password-current').value,new_password:$('password-new').value};
+  const epoch=sessionEpoch, actor=me.id;
+  $('password-submit').disabled=true; $('password-status').textContent='Меняем пароль…';
+  passwordOperation=(async()=>{
+    try {
+      await api('/api/auth/password',data);
+      if(epoch!==sessionEpoch || me?.id!==actor)return;
+      const reopen=$('account-dialog').open && !logoutPending;
+      sessionEpoch++; meRequest++; const nextEpoch=sessionEpoch; clearPrivate();
+      await refreshMe();
+      if(nextEpoch===sessionEpoch && me?.id===actor && !logoutPending){
+        if(reopen)show('account-dialog');
+        toast('Пароль изменён. Другие сеансы и ссылки входа отозваны.');
+      }
+    } catch(e) {
+      if(epoch===sessionEpoch && me?.id===actor){clearPassword();$('password-status').textContent=e.message+' Если ответ потерян, попробуйте войти с новым паролем.';}
+      else if(!logoutPending)toast('Обновите кабинет. При необходимости войдите с новым паролем.');
+    } finally {for(const id of ['password-current','password-new','password-repeat'])$(id).value='';$('password-submit').disabled=false;passwordOperation=null;}
+  })();
+  return passwordOperation;
+};
 $('logout').onclick = async () => {
+  if(logoutPending)return;
+  logoutPending=true; $('logout').disabled=true;
+  const pending=passwordOperation;
   sessionEpoch++; meRequest++; clearPrivate();
-  try { await api('/api/auth/logout',{}); catalog=await api('/api/catalog'); renderPlans(); }
+  try { if(pending)await pending; await api('/api/auth/logout',{}); catalog=await api('/api/catalog'); renderPlans(); }
   catch(e) { toast('Не удалось подтвердить выход. '+e.message); }
+  finally {logoutPending=false;$('logout').disabled=false;}
 };
 (async () => {
   try {

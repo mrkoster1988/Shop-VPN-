@@ -194,6 +194,22 @@ class Staging:
         diagnostic=self.json('status CLI',['docker','exec',cid,'python','scripts/status.py','--url',self.backend_url],ok=(0,1))
         check(diagnostic['scope']['external_requests'] is False and diagnostic['release']==version(self.args.source),'Diagnostic scope/version mismatch')
         self.event('backup_restore_and_local_status_verified')
+        _,headers=self.http('/api/auth/login',body={'email':'fixture1@example.invalid','password':self.fixture['password']})
+        cookies=SimpleCookie();cookies.load(headers['Set-Cookie']);second=cookies['session'].value;self.secrets.append(second)
+        ticket=secrets.token_urlsafe(32);new_password=secrets.token_urlsafe(32);self.secrets.extend([ticket,new_password])
+        self.data('ticket',{'ticket':ticket})
+        _,headers=self.http('/api/auth/password',cookie=token,body={'current_password':self.fixture['password'],'new_password':new_password})
+        cookies=SimpleCookie();cookies.load(headers['Set-Cookie']);fresh=cookies['session'].value;self.secrets.append(fresh)
+        check(fresh not in (token,second) and bool(cookies['session']['secure']) and bool(cookies['session']['httponly']) and cookies['session']['path']=='/shop/','Password cookie rotation failed')
+        for old in (token,second):self.http('/api/me',cookie=old,expected=401)
+        self.http('/login?ticket='+ticket,expected=401)
+        self.http('/api/auth/login',body={'email':'fixture1@example.invalid','password':self.fixture['password']},expected=401)
+        self.http('/api/auth/login',body={'email':'fixture1@example.invalid','password':new_password})
+        config,_=self.http('/api/subscriptions/'+self.fixture['subscription']+'/config',cookie=fresh)
+        check(json.loads(config)['config']==self.fixture['config'],'Password change affected VPN profile')
+        changed=self.snapshot()
+        check(changed['business_digest']==managed['business_digest'] and changed['digest']!=managed['digest'],'Password change affected unrelated data')
+        self.event('https_password_rotation_revocation_and_business_data_verified')
         return {'status':'passed','scenario':('0.021 -> 0.024 -> ' if managed_origin else '0.021 -> ')+version(self.args.source),'events':self.events,'data_digest':managed['digest'],
                 'real_docker':True,'intermediate_fixture_engine':'candidate','real_loopback_https':True,'real_provider_payment':False,'real_vpn_traffic':False}
     def cleanup(self):
