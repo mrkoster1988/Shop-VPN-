@@ -3,6 +3,7 @@ const basePath = document.querySelector('meta[name="shop-base"]').content;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let diagnosticsRequest=0;
+let adsFinanceRequest=0,adsFinancePage=1,adsExpenseIntents=new Map();
 let adsBookingIntents=new Map(),adsBookingRequest=0,adsBookingPage=1;
 let adsStopRequest=0,adsStopPage=1;
 let adsSitesCache=[],adsPrivateSites=[],adsSitesRequest=0,adsSiteEditor=null,adsSiteMutation=0,adsPlacementIntents=new Map();
@@ -53,6 +54,10 @@ $('admin-login').onsubmit = async event => {
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => {
+  adsFinanceRequest++;adsFinancePage=1;adsExpenseIntents.clear();
+  for(const id of ['ads-finance-summary','ads-finance-obligations','ads-finance-error','ads-expense-list','ads-expense-status','ads-finance-page'])$(id).replaceChildren();
+  for(const id of ['ads-finance-start','ads-finance-end','ads-expense-amount','ads-expense-date','ads-expense-reference','ads-expense-note'])$(id).value='';
+  $('ads-expense-category').value='server';$('ads-expense-save').disabled=false;$('ads-finance-prev').disabled=true;$('ads-finance-next').disabled=true;
   adsBookingRequest++;adsBookingPage=1;adsBookingIntents.clear();
   for(const id of ['ads-bookings-list','ads-bookings-page','ads-bookings-error'])$(id).replaceChildren();
   $('ads-bookings-filter').value='reserved';$('ads-bookings-prev').disabled=true;$('ads-bookings-next').disabled=true;
@@ -575,4 +580,54 @@ $('ads-bookings-next').onclick=()=>{if(!$('ads-bookings-next').disabled){adsBook
 $('ads-bookings-list').onsubmit=event=>{
   event.preventDefault();const booking=event.target.closest('[data-ads-booking]');if(booking)return saveAdsBooking(booking);
   const placement=event.target.closest('[data-ads-placement]');if(placement)return saveAdsPlacement(placement);
+};
+
+function expenseDate(value){const n=Date.parse(value);return Number.isFinite(n)?Math.floor(n/1000):null;}
+function expenseInput(){return {amount:Number($('ads-expense-amount').value),category:$('ads-expense-category').value,incurred_at:expenseDate($('ads-expense-date').value),reference:$('ads-expense-reference').value.trim(),note:$('ads-expense-note').value.trim()};}
+async function refreshAdsFinance(){
+  const epoch=authEpoch,request=++adsFinanceRequest,page=adsFinancePage;
+  const start=$('ads-finance-start').value,end=$('ads-finance-end').value;
+  $('ads-finance-error').textContent='';
+  try{
+    if(Boolean(start)!==Boolean(end))throw new Error('Укажите обе границы периода');
+    const query=new URLSearchParams({page:String(page)});
+    if(start){const a=expenseDate(start),b=expenseDate(end);if(a===null || b===null || a>=b)throw new Error('Проверьте границы периода');query.set('start',String(a));query.set('end',String(b));}
+    const result=await api('ads/finance?'+query.toString());
+    if(epoch!==authEpoch || request!==adsFinanceRequest)return;
+    $('ads-finance-summary').textContent='Период: '+bookingTime(result.period.start)+' — '+bookingTime(result.period.end)+' (конец не включается, время браузера). Поступления: '+result.cash.received+' ₽; возвраты: '+result.cash.refunded+' ₽; учтённые расходы: '+result.expenses.amount+' ₽; остаток после учтённых расходов: '+result.cash_after_recorded_expenses+' ₽. Чистая прибыль не рассчитывается.';
+    const labels={not_started:'Не запущены',active:'Активны по ручному журналу',paused:'На паузе',early_stopped:'Остановлены с неоказанным остатком',completed:'Полный срок и остановка подтверждены'};
+    $('ads-finance-obligations').innerHTML=Object.entries(result.current_paid_requests).map(([key,r])=>'<p>'+esc(labels[key] || key)+': '+r.requests+' заявок · сумма заявок '+r.contract_amount+' ₽ · неоказанный остаток '+r.remaining_seconds+' сек.</p>').join('')+'<p>Суммы заявок не являются суммой к возврату или заработанной выручкой. Здесь только заявки без учтённого полного возврата, независимо от выбранного периода.</p>';
+    const categories={server:'Сервер',commission:'Комиссия',marketing:'Привлечение',other:'Прочее'};
+    $('ads-expense-list').innerHTML=result.expenses.entries.map(r=>'<article class="subscription"><b>'+r.amount+' ₽ · '+esc(categories[r.category] || r.category)+'</b><p>'+esc(bookingTime(r.incurred_at))+' · '+esc(r.reference)+'</p><p>'+esc(r.note)+'</p>'+(r.state==='void'?'<p>Исключено из расчёта: '+esc(r.void_reason)+'</p>':'<form data-ads-expense="'+esc(r.id)+'" data-version="'+r.version+'"><label>Причина исключения ошибочной записи<textarea name="note" maxlength="500" required></textarea></label><button>Исключить ошибочную запись</button></form>')+'</article>').join('') || '<p>Расходов в периоде нет.</p>';
+    $('ads-finance-page').textContent='Страница '+page+' · записей '+result.expenses.total;
+    $('ads-finance-prev').disabled=page===1;$('ads-finance-next').disabled=page*result.expenses.page_size>=result.expenses.total;
+  }catch(e){if(epoch!==authEpoch || request!==adsFinanceRequest)return;for(const id of ['ads-finance-summary','ads-finance-obligations','ads-expense-list','ads-finance-page'])$(id).replaceChildren();$('ads-finance-prev').disabled=true;$('ads-finance-next').disabled=true;$('ads-finance-error').textContent=e.message;}
+}
+$('ads-finance-period').onsubmit=event=>{event.preventDefault();adsFinancePage=1;return refreshAdsFinance();};
+$('ads-finance-prev').onclick=()=>{if(adsFinancePage>1){adsFinancePage--;return refreshAdsFinance();}};
+$('ads-finance-next').onclick=()=>{if(!$('ads-finance-next').disabled){adsFinancePage++;return refreshAdsFinance();}};
+async function saveAdsExpense(path,data,button){
+  if(button.disabled)return;
+  const epoch=authEpoch,request=adsFinanceRequest,key=JSON.stringify([path,data]);
+  if(!adsExpenseIntents.has(key))adsExpenseIntents.set(key,crypto.randomUUID());
+  button.disabled=true;$('ads-expense-status').textContent='';
+  try{
+    await api(path,{method:'POST',data:{...data,operation_id:adsExpenseIntents.get(key)}});
+    if(epoch!==authEpoch)return;
+    adsExpenseIntents.delete(key);
+    if(path==='ads/expenses' && JSON.stringify(expenseInput())===JSON.stringify(data)){
+      for(const id of ['ads-expense-amount','ads-expense-date','ads-expense-reference','ads-expense-note'])$(id).value='';
+    }
+    if(request===adsFinanceRequest)await refreshAdsFinance();
+    if(epoch===authEpoch)$('ads-expense-status').textContent='Запись учёта сохранена. Сводка относится к выбранному периоду; движения денег нет.';
+  }catch(e){if(epoch===authEpoch && request===adsFinanceRequest)$('ads-expense-status').textContent=e.message;}
+  finally{if(epoch===authEpoch)button.disabled=false;}
+}
+$('ads-expense-form').onsubmit=event=>{
+  event.preventDefault();const data=expenseInput();if(data.incurred_at===null){$('ads-expense-status').textContent='Проверьте дату расхода';return;}
+  return saveAdsExpense('ads/expenses',data,$('ads-expense-save'));
+};
+$('ads-expense-list').onsubmit=event=>{
+  const form=event.target.closest('[data-ads-expense]');if(!form)return;event.preventDefault();const fields=new FormData(form);
+  return saveAdsExpense('ads/expenses/'+encodeURIComponent(form.dataset.adsExpense)+'/void',{version:Number(form.dataset.version),note:String(fields.get('note') || '').trim()},form.querySelector('button'));
 };

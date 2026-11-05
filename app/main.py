@@ -24,7 +24,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from pydantic import BaseModel, Field, field_validator, ValidationError
 from starlette.applications import Starlette
 from starlette.routing import Mount
-from . import ads_bookings as bookings
+from . import ads_bookings as bookings, ads_finance as finance
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
@@ -266,6 +266,16 @@ async def admin_ads_payment(rid:UUID,action:Literal['receipt','refund'],data:ads
 async def admin_ads_payment_history(rid:UUID):
     ads.get(str(rid))
     with ads.db() as conn:return ads.payment(conn,str(rid),private=True)
+
+@app.get('/api/admin/ads/finance',dependencies=[Depends(admin)])
+async def admin_ads_finance(start:int|None=Query(default=None,ge=0,le=finance.MAX_TIME),end:int|None=Query(default=None,ge=1,le=finance.MAX_TIME),page:int=Query(default=1,ge=1,le=100000)):
+    return finance.report(start,end,page)
+
+@app.post('/api/admin/ads/expenses',dependencies=[Depends(admin)])
+async def admin_ads_expense(data:finance.Expense):return finance.change('create',data)
+
+@app.post('/api/admin/ads/expenses/{eid}/void',dependencies=[Depends(admin)])
+async def admin_ads_expense_void(eid:UUID,data:finance.Void):return finance.change('void',data,str(eid))
 
 @app.get('/api/admin/ads/bookings',dependencies=[Depends(admin)])
 async def admin_ads_bookings(view:Literal['reserved','expired','all']='reserved',page:int=Query(default=1,ge=1,le=100000)):

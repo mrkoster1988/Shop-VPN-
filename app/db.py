@@ -80,6 +80,19 @@ def init_db():
           operation_id TEXT PRIMARY KEY, request_id TEXT NOT NULL REFERENCES ads_requests(id),
           action TEXT NOT NULL CHECK(action IN ('reserve','cancel','reschedule')), fingerprint TEXT NOT NULL,
           note TEXT NOT NULL, details TEXT NOT NULL, created INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS ads_expenses (
+          id TEXT PRIMARY KEY, amount INTEGER NOT NULL CHECK(amount>0),
+          category TEXT NOT NULL CHECK(category IN ('server','commission','marketing','other')),
+          incurred_at INTEGER NOT NULL, reference TEXT NOT NULL, note TEXT NOT NULL,
+          state TEXT NOT NULL CHECK(state IN ('recorded','void')), version INTEGER NOT NULL,
+          created INTEGER NOT NULL, updated INTEGER NOT NULL);
+        CREATE UNIQUE INDEX IF NOT EXISTS ads_expense_reference ON ads_expenses(reference) WHERE state='recorded';
+        CREATE INDEX IF NOT EXISTS ads_expense_period ON ads_expenses(incurred_at,id);
+        CREATE TABLE IF NOT EXISTS ads_expense_actions (
+          operation_id TEXT PRIMARY KEY, expense_id TEXT NOT NULL REFERENCES ads_expenses(id),
+          action TEXT NOT NULL CHECK(action IN ('create','void')), fingerprint TEXT NOT NULL,
+          note TEXT NOT NULL, created INTEGER NOT NULL);
+        CREATE UNIQUE INDEX IF NOT EXISTS ads_expense_void ON ads_expense_actions(expense_id) WHERE action='void';
         CREATE TABLE IF NOT EXISTS plans (
           id TEXT PRIMARY KEY, name TEXT NOT NULL, days INTEGER NOT NULL CHECK(days > 0),
           price INTEGER NOT NULL CHECK(price > 0), stars INTEGER NOT NULL CHECK(stars > 0),

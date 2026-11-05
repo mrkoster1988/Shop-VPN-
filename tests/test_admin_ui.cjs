@@ -443,3 +443,61 @@ test('успешный перенос обновляет календарь од
   assert.ok(p.requests[1].includes('/ads/bookings'));p.replyAt(1,{sites:[],requests:[],total:0,page_size:20});await pending;
   assert.equal(p.requests.filter(x=>x.includes('/booking/')).length,1);assert.equal(p.run('adsBookingIntents.size'),0);
 });
+
+function financeFixture(changes={}){
+  return {period:{start:1000,end:2000},cash:{received:300,refunded:0,net_received:300},expenses:{amount:50,recorded_count:1,voided_count:0,entries:[],total:0,page:1,page_size:20},cash_after_recorded_expenses:250,is_net_profit:false,current_paid_requests:{not_started:{requests:1,contract_amount:300,remaining_seconds:3600},early_stopped:{requests:1,contract_amount:300,remaining_seconds:1200}},...changes};
+}
+
+test('финансовая сводка не называет остаток прибылью и экранирует частные записи',async()=>{
+  const p=adminPage();const pending=p.run('refreshAdsFinance()');
+  p.replyAt(0,financeFixture({expenses:{amount:0,entries:[{id:'e1',amount:50,category:'other',incurred_at:1000,reference:'<img>',note:'<script>',state:'void',void_reason:'<исправление>'}],total:1,page_size:20}}));await pending;
+  assert.match(p.element('ads-finance-summary').textContent,/Чистая прибыль не рассчитывается/);
+  assert.match(p.element('ads-finance-obligations').innerHTML,/неоказанным остатком/);
+  const html=p.element('ads-expense-list').innerHTML;assert.match(html,/&lt;script&gt;/);assert.match(html,/&lt;исправление&gt;/);assert.ok(!html.includes('<script>'));
+});
+
+test('выход очищает финансовые поля и отсекает запоздалую сводку',async()=>{
+  const p=adminPage();p.run("adsExpenseIntents.set('private-note','id');$('ads-expense-note').value='private-note'");
+  const pending=p.run('refreshAdsFinance()');p.run("$('exit').onclick()");p.replyAt(0,financeFixture());await pending;
+  assert.equal(p.element('ads-finance-summary').textContent,'');assert.equal(p.element('ads-expense-note').value,'');assert.equal(p.run('adsExpenseIntents.size'),0);
+});
+
+test('новая страница расходов не заменяется старым ответом',async()=>{
+  const p=adminPage();const first=p.run('refreshAdsFinance()');p.run('adsFinancePage=2');const second=p.run('refreshAdsFinance()');
+  p.replyAt(1,financeFixture({expenses:{amount:0,entries:[],total:30,page_size:20}}));await second;
+  p.replyAt(0,financeFixture());await first;assert.match(p.element('ads-finance-page').textContent,/Страница 2/);
+});
+
+test('ошибка чтения убирает устаревшие расходы и денежные суммы',async()=>{
+  const p=adminPage();p.element('ads-expense-list').innerHTML='private-old-note';p.element('ads-finance-summary').textContent='old-money';
+  const pending=p.run('refreshAdsFinance()');p.replyAt(0,{detail:'Нет связи'},502);await pending;
+  assert.equal(p.element('ads-expense-list').innerHTML,'');assert.equal(p.element('ads-finance-summary').textContent,'');assert.equal(p.element('ads-finance-error').textContent,'Нет связи');
+});
+
+function fillExpense(p){p.element('ads-expense-amount').value='50';p.element('ads-expense-category').value='server';p.element('ads-expense-date').value='2026-11-01T12:00';p.element('ads-expense-reference').value='cost/abc';p.element('ads-expense-note').value='Проверено';}
+
+test('потеря ответа расхода сохраняет UUID без повторного списания',async()=>{
+  const p=adminPage();fillExpense(p);
+  const first=p.run("$('ads-expense-form').onsubmit({preventDefault(){}})");p.replyAt(0,{detail:'Ответ потерян'},502);await first;
+  const second=p.run("$('ads-expense-form').onsubmit({preventDefault(){}})");p.replyAt(1,{detail:'Ответ потерян'},502);await second;
+  assert.equal(p.bodies[0].operation_id,p.bodies[1].operation_id);assert.equal(p.bodies[0].amount,50);assert.ok(p.requests.every(x=>x.endsWith('/ads/expenses')));
+});
+
+test('исключение расхода передаёт версию и причину и обновляет сводку',async()=>{
+  const p=adminPage({FormData:AdsPaymentFields});p.run('var expenseVoidButton={disabled:false};');
+  const pending=p.run("$('ads-expense-list').onsubmit({preventDefault(){},target:{closest(){return {dataset:{adsExpense:'e1',version:'1'},fields:{note:'Ошибка ввода'},querySelector(){return expenseVoidButton;}};}}})");
+  assert.ok(p.requests[0].endsWith('/expenses/e1/void'));assert.equal(p.bodies[0].version,1);assert.equal(p.bodies[0].amount,undefined);
+  p.replyAt(0,{state:'void'});await new Promise(setImmediate);p.replyAt(1,financeFixture());await pending;
+  assert.equal(p.run('adsExpenseIntents.size'),0);assert.match(p.element('ads-expense-status').textContent,/движения денег нет/);
+});
+
+test('одна граница периода не отправляет неоднозначный запрос',async()=>{
+  const p=adminPage();p.element('ads-finance-start').value='2026-11-01T12:00';await p.run('refreshAdsFinance()');
+  assert.equal(p.requests.length,0);assert.match(p.element('ads-finance-error').textContent,/обе границы/);
+});
+
+test('ответ сохранения не стирает новые изменения формы расхода',async()=>{
+  const p=adminPage();fillExpense(p);const pending=p.run("$('ads-expense-form').onsubmit({preventDefault(){}})");
+  p.element('ads-expense-note').value='Новая ещё не сохранённая запись';p.replyAt(0,{id:'e1'});await new Promise(setImmediate);
+  p.replyAt(1,financeFixture());await pending;assert.equal(p.element('ads-expense-note').value,'Новая ещё не сохранённая запись');
+});
