@@ -7,7 +7,7 @@ function adminPage(options={}) {
   const elements = new Map();
   function element(id) {
     if (!elements.has(id)) elements.set(id, {
-      innerHTML:'', textContent:'', value:'', open:false, disabled:false,
+      innerHTML:'', textContent:'', value:'', open:false, disabled:false, checked:false,
       listeners:{}, reset() {},
       replaceChildren() { this.innerHTML = ''; this.textContent = ''; },
       addEventListener(name, handler) { this.listeners[name] = handler; },
@@ -226,7 +226,7 @@ test('форма ручного учёта показывает поступле
   const confirmed=p.run("adsPaymentForm({id:'ad-a',state:'approved',version:2,amount:300,payment:{status:'confirmed',version:1,entries:[{kind:'receipt',amount:300,reference:'<img>',note:'<script>'}]}})");
   assert.match(confirmed,/data-kind="refund"/);assert.ok(!confirmed.includes('<script>'));assert.match(confirmed,/&lt;img&gt;/);
   const refunded=p.run("adsPaymentForm({id:'ad-a',state:'approved',version:2,amount:300,payment:{status:'refunded',version:2}})");
-  assert.ok(!refunded.includes('<form'));assert.match(refunded,/Размещение не запущено/);
+  assert.ok(!refunded.includes('<form'));assert.match(refunded,/Полный возврат учтён вручную/);
 });
 
 test('повтор ручного учёта после ошибки сохраняет UUID операции и версии',async()=>{
@@ -253,4 +253,51 @@ test('успешный ручной учёт обновляет очередь �
   p.replyAt(0,{status:'confirmed'});await new Promise(setImmediate);
   p.replyAt(1,adsPolicyFixture);p.replyAt(2,{requests:[],total:0,page:1,page_size:20});await request;
   assert.equal(p.run('adsPaymentIntents.size'),0);assert.equal(p.requests.filter(x=>x.includes('/payments/')).length,1);
+});
+
+test('размещение предлагает только свободную проверенную площадку и фиксирует ручную проверку',()=>{
+  const p=adminPage();p.run("adsSitesCache=[{id:'free',name:'<Свободная>',version:3,enabled:true,verified:true,occupied:false},{id:'busy',name:'Занята',enabled:true,verified:true,occupied:true}]");
+  const html=p.run("adsPlacementForm({id:'ad-a',state:'approved',version:2,payment:{status:'confirmed',version:1}})");
+  assert.match(html,/value="free"/);assert.ok(!html.includes('value="busy"'));assert.match(html,/&lt;Свободная&gt;/);assert.match(html,/name="checked"/);
+  const unpaid=p.run("adsPlacementForm({id:'ad-a',state:'approved',payment:{status:'unpaid'}})");assert.ok(!unpaid.includes('<form'));
+});
+
+test('просроченное активное размещение требует остановки и скрывает возврат',()=>{
+  const p=adminPage();const row="{id:'ad-a',state:'approved',version:2,payment:{status:'confirmed',version:1},placement:{state:'active',version:1,site_name:'Площадка',remaining_seconds:0,attention_due:true,actions:[{action:'start',note:'<script>'}]}}";
+  const html=p.run('adsPlacementForm('+row+')');assert.match(html,/требуется подтвердить фактическую остановку/);assert.match(html,/value="finish"/);assert.ok(!html.includes('<script>'));
+  const money=p.run('adsPaymentForm('+row+')');assert.ok(!money.includes('<form'));
+});
+
+const placementFormSource=`({dataset:{adsPlacement:'ad-a',requestVersion:'2',paymentVersion:'1',placementVersion:'1'},fields:{action:'pause',note:'Показ остановлен',checked:'on'},querySelector(){return placementButton;}})`;
+test('потерянный ответ размещения повторяется с тем же UUID',async()=>{
+  const p=adminPage({FormData:AdsPaymentFields});p.run('var placementButton={disabled:false};');
+  const first=p.run('saveAdsPlacement('+placementFormSource+')');p.replyAt(0,{detail:'Ответ потерян'},502);await first;
+  const second=p.run('saveAdsPlacement('+placementFormSource+')');p.replyAt(1,{detail:'Ответ потерян'},502);await second;
+  assert.equal(p.bodies[0].operation_id,p.bodies[1].operation_id);assert.equal(p.bodies[0].placement_version,1);assert.equal(p.bodies[0].checked,true);
+  assert.equal(p.run('adsPlacementIntents.size'),1);
+});
+
+test('выход очищает площадки и игнорирует позднее подтверждение размещения',async()=>{
+  const p=adminPage({FormData:AdsPaymentFields});p.run("var placementButton={disabled:false};adsPrivateSites=[{note:'private-check'}];$('ads-site-note').value='private-check';");
+  const pending=p.run('saveAdsPlacement('+placementFormSource+')');p.run("$('exit').onclick()");p.replyAt(0,{state:'paused'});await pending;
+  assert.equal(p.run('adsPlacementIntents.size'),0);assert.equal(p.run('adsPrivateSites.length'),0);assert.equal(p.element('ads-site-note').value,'');assert.equal(p.element('ads-admin-error').textContent,'');
+});
+
+test('запоздалый список площадок не восстанавливает приватные основания после выхода',async()=>{
+  const p=adminPage();const pending=p.run('refreshAdsSites()');p.run("$('exit').onclick()");p.replyAt(0,{sites:[{id:'site',name:'Сайт',note:'private-note'}]});await pending;
+  assert.equal(p.element('ads-sites-list').innerHTML,'');assert.equal(p.run('adsPrivateSites.length'),0);
+});
+
+test('ошибка сохранения площадки сохраняет её UUID и не создаёт другой объект',async()=>{
+  const p=adminPage();p.element('ads-site-name').value='Площадка';p.element('ads-site-note').value='Проверено';
+  const first=p.run("$('ads-site-form').onsubmit({preventDefault(){}})");p.replyAt(0,{detail:'Ответ потерян'},502);await first;
+  const second=p.run("$('ads-site-form').onsubmit({preventDefault(){}})");p.replyAt(1,{detail:'Ответ потерян'},502);await second;
+  assert.equal(p.requests[0],p.requests[1]);assert.equal(p.bodies[0].version,0);assert.equal(p.bodies[0].verified,false);assert.equal(p.bodies[0].enabled,false);
+});
+
+test('список площадок экранирует основания и выбор редактора подставляет текущую версию',async()=>{
+  const p=adminPage();const pending=p.run('refreshAdsSites()');p.replyAt(0,{sites:[{id:'s1',name:'<Имя>',note:'<script>',enabled:true,verified:false,occupied:true,version:4}]});await pending;
+  assert.match(p.element('ads-sites-list').innerHTML,/&lt;script&gt;/);assert.ok(!p.element('ads-sites-list').innerHTML.includes('<script>'));
+  p.run("$('ads-sites-list').onclick({target:{closest(){return {dataset:{adsSite:'s1'}}}}})");
+  assert.equal(p.run('adsSiteEditor.version'),4);assert.equal(p.element('ads-site-name').value,'<Имя>');assert.equal(p.element('ads-site-verified').checked,false);
 });

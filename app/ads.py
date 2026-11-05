@@ -107,7 +107,8 @@ def payment(conn,rid,private=False):
     return result
 
 def public(row,conn,private=False):
-    return {k:row[k] for k in ('id','channel','comment','amount','hours','policy_version','state','reason','version','created','updated')} | {'currency':'RUB','payment':payment(conn,row['id'],private=private)}
+    from . import ads_placements as placements
+    return {k:row[k] for k in ('id','channel','comment','amount','hours','policy_version','state','reason','version','created','updated')} | {'currency':'RUB','payment':payment(conn,row['id'],private=private),'placement':placements.summary(conn,row['id'],private=private)}
 
 def create(user,data):
     now=int(time.time());uid=user['id']
@@ -121,9 +122,9 @@ def create(user,data):
         p=policy(conn)
         if not p['accepting']:raise HTTPException(409,'Приём заявок рекламы сейчас закрыт.')
         if p['version']!=data.policy_version:raise HTTPException(409,'Условия изменились. Проверьте новый тариф.')
-        if conn.execute("SELECT count(*) FROM ads_requests WHERE user_id=? AND state IN ('pending','approved')",(uid,)).fetchone()[0]>=5:
+        if conn.execute("SELECT count(*) FROM ads_requests WHERE user_id=? AND state IN ('pending','approved') AND NOT EXISTS (SELECT 1 FROM ads_placements p WHERE p.request_id=ads_requests.id AND p.state='finished')",(uid,)).fetchone()[0]>=5:
             raise HTTPException(409,'Сначала завершите текущие заявки: доступно не более пяти открытых.')
-        if conn.execute("SELECT 1 FROM ads_requests WHERE user_id=? AND channel=? AND state IN ('pending','approved')",(uid,data.channel)).fetchone():
+        if conn.execute("SELECT 1 FROM ads_requests WHERE user_id=? AND channel=? AND state IN ('pending','approved') AND NOT EXISTS (SELECT 1 FROM ads_placements p WHERE p.request_id=ads_requests.id AND p.state='finished')",(uid,data.channel)).fetchone():
             raise HTTPException(409,'Для этого канала уже есть открытая заявка.')
         rid=str(uuid.uuid4())
         conn.execute("INSERT INTO ads_requests(id,user_id,request_id,channel,comment,amount,hours,policy_version,state,created,updated) VALUES (?,?,?,?,?,?,?,?,'pending',?,?)",
@@ -149,7 +150,11 @@ def listing(uid=None,state=None,page=1):
         conn.execute('BEGIN')
         total=conn.execute('SELECT count(*) FROM ads_requests'+where,args).fetchone()[0]
         rows=conn.execute('SELECT * FROM ads_requests'+where+' ORDER BY created DESC,id DESC LIMIT 20 OFFSET ?',args+[(page-1)*20]).fetchall()
-        return {'requests':[public(row,conn,private=uid is None) | ({'user_id':row['user_id']} if uid is None else {}) for row in rows],'total':total,'page':page,'page_size':20}
+        result={'requests':[public(row,conn,private=uid is None) | ({'user_id':row['user_id']} if uid is None else {}) for row in rows],'total':total,'page':page,'page_size':20}
+        if uid is None:
+            from . import ads_placements as placements
+            result['sites']=placements.sites(conn)
+        return result
 
 def transition(rid,data,uid=None):
     with db() as conn:
@@ -160,6 +165,8 @@ def transition(rid,data,uid=None):
         target='canceled' if uid is not None else data.state
         allowed=('pending','approved') if uid is not None else ('pending',)
         if row['state'] not in allowed:raise HTTPException(409,'Действие недоступно для текущего состояния.')
+        from . import ads_placements as placements
+        if uid is not None and placements.occupied(conn,rid):raise HTTPException(409,'Сначала владелец должен подтвердить остановку размещения.')
         if uid is not None and payment(conn,rid)['status']=='confirmed':
             raise HTTPException(409,'Для оплаченной заявки сначала требуется проверенный возврат. Обратитесь к владельцу.')
         reason='' if uid is not None else data.reason
@@ -188,6 +195,8 @@ def record_payment(rid,kind,data):
         if row['state']!='approved':raise HTTPException(409,'Учёт оплаты доступен только для одобренной заявки.')
         expected='unpaid' if kind=='receipt' else 'confirmed'
         if current['status']!=expected:raise HTTPException(409,'Операция недоступна для текущего состояния оплаты.')
+        from . import ads_placements as placements
+        if kind=='refund' and placements.occupied(conn,rid):raise HTTPException(409,'Сначала подтвердите фактическую остановку размещения.')
         if data.amount!=row['amount']:raise HTTPException(409,'Нужна точная сумма из заявки. Частичные операции пока не поддерживаются.')
         if conn.execute('SELECT 1 FROM ads_payment_entries WHERE reference=?',(data.reference,)).fetchone():
             raise HTTPException(409,'Эта банковская операция уже учтена.')

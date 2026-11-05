@@ -630,3 +630,18 @@ test('учтённый полный возврат разрешает отмен
   await p.element('ads-open').onclick();const html=p.element('ads-list').innerHTML;
   assert.match(html,/Полный возврат/);assert.match(html,/data-ads-cancel/);assert.ok(!p.calls.some(x=>x.url.includes('/payments/')));
 });
+
+test('рекламодатель видит ручной запуск и остаток времени без обещания автоматической остановки',async()=>{
+  const p=await customerPage();adsReplies(p);
+  p.respond('/shop/api/ads/requests?page=1',{requests:[{id:'ad-a',channel:'channel_name',state:'approved',version:2,amount:300,hours:24,payment:{status:'confirmed'},placement:{state:'active',site_name:'<Площадка>',remaining_seconds:0,attention_due:true}}],total:1,page:1,page_size:20});
+  await p.element('ads-open').onclick();const html=p.element('ads-list').innerHTML;
+  assert.match(html,/Запуск подтверждён владельцем/);assert.match(html,/ожидается подтверждение остановки/);assert.match(html,/&lt;Площадка&gt;/);assert.ok(!html.includes('Размещение не запущено'));assert.ok(!html.includes('data-ads-cancel'));
+});
+
+test('пауза и раннее завершение показывают неоказанный остаток',async()=>{
+  for(const state of ['paused','finished']){
+    const p=await customerPage();adsReplies(p);
+    p.respond('/shop/api/ads/requests?page=1',{requests:[{id:'ad-a',channel:'channel_name',state:'approved',version:2,amount:300,hours:24,payment:{status:'confirmed'},placement:{state,site_name:'Площадка',remaining_seconds:1200}}],total:1,page:1,page_size:20});
+    await p.element('ads-open').onclick();assert.match(p.element('ads-list').innerHTML,/осталось 1200 сек/);
+  }
+});

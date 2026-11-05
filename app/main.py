@@ -24,7 +24,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from pydantic import BaseModel, Field, field_validator, ValidationError
 from starlette.applications import Starlette
 from starlette.routing import Mount
-from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads
+from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
 
@@ -265,6 +265,18 @@ async def admin_ads_payment(rid:UUID,action:Literal['receipt','refund'],data:ads
 async def admin_ads_payment_history(rid:UUID):
     ads.get(str(rid))
     with ads.db() as conn:return ads.payment(conn,str(rid),private=True)
+
+@app.get('/api/admin/ads/sites',dependencies=[Depends(admin)])
+async def admin_ads_sites():
+    with ads.db() as conn:return {'sites':placements.sites(conn,private=True)}
+
+@app.put('/api/admin/ads/sites/{sid}',dependencies=[Depends(admin)])
+async def admin_ads_site(sid:UUID,data:placements.Site):
+    return placements.save_site(str(sid),data)
+
+@app.post('/api/admin/ads/requests/{rid}/placement/{action}',dependencies=[Depends(admin)])
+async def admin_ads_placement(rid:UUID,action:Literal['start','pause','resume','finish'],data:placements.Command):
+    return placements.change(str(rid),action,data)
 
 @app.post('/api/auth/register')
 async def register(data: Credentials):

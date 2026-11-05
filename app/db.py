@@ -37,7 +37,8 @@ def init_db():
           policy_version INTEGER NOT NULL, state TEXT NOT NULL CHECK(state IN ('pending','approved','rejected','canceled')),
           reason TEXT NOT NULL DEFAULT '', version INTEGER NOT NULL DEFAULT 1,
           created INTEGER NOT NULL, updated INTEGER NOT NULL, UNIQUE(user_id,request_id));
-        CREATE UNIQUE INDEX IF NOT EXISTS ads_open_channel ON ads_requests(user_id,channel) WHERE state IN ('pending','approved');
+        DROP INDEX IF EXISTS ads_open_channel;
+        CREATE INDEX IF NOT EXISTS ads_channel_lookup ON ads_requests(user_id,channel,state);
         CREATE INDEX IF NOT EXISTS ads_request_queue ON ads_requests(state,created,id);
         CREATE TABLE IF NOT EXISTS ads_events (
           id INTEGER PRIMARY KEY, request_id TEXT REFERENCES ads_requests(id),
@@ -49,6 +50,20 @@ def init_db():
           amount INTEGER NOT NULL CHECK(amount>0), reference TEXT NOT NULL UNIQUE,
           note TEXT NOT NULL, fingerprint TEXT NOT NULL, created INTEGER NOT NULL,
           UNIQUE(request_id,kind));
+        CREATE TABLE IF NOT EXISTS ads_sites (
+          id TEXT PRIMARY KEY, name TEXT NOT NULL, enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+          verified INTEGER NOT NULL CHECK(verified IN (0,1)), note TEXT NOT NULL,
+          version INTEGER NOT NULL, updated INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS ads_placements (
+          request_id TEXT PRIMARY KEY REFERENCES ads_requests(id), site_id TEXT NOT NULL REFERENCES ads_sites(id),
+          site_name TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('active','paused','finished')),
+          version INTEGER NOT NULL, allocated_seconds INTEGER NOT NULL CHECK(allocated_seconds>0),
+          used_seconds INTEGER NOT NULL CHECK(used_seconds>=0), segment_started INTEGER,
+          started INTEGER NOT NULL, finished INTEGER, updated INTEGER NOT NULL);
+        CREATE UNIQUE INDEX IF NOT EXISTS ads_exclusive_site ON ads_placements(site_id) WHERE state IN ('active','paused');
+        CREATE TABLE IF NOT EXISTS ads_placement_actions (
+          operation_id TEXT PRIMARY KEY, request_id TEXT NOT NULL REFERENCES ads_requests(id),
+          action TEXT NOT NULL, fingerprint TEXT NOT NULL, note TEXT NOT NULL, created INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS plans (
           id TEXT PRIMARY KEY, name TEXT NOT NULL, days INTEGER NOT NULL CHECK(days > 0),
           price INTEGER NOT NULL CHECK(price > 0), stars INTEGER NOT NULL CHECK(stars > 0),
