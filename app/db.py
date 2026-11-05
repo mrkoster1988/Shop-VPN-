@@ -64,6 +64,22 @@ def init_db():
         CREATE TABLE IF NOT EXISTS ads_placement_actions (
           operation_id TEXT PRIMARY KEY, request_id TEXT NOT NULL REFERENCES ads_requests(id),
           action TEXT NOT NULL, fingerprint TEXT NOT NULL, note TEXT NOT NULL, created INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS ads_bookings (
+          request_id TEXT PRIMARY KEY REFERENCES ads_requests(id), site_id TEXT NOT NULL REFERENCES ads_sites(id),
+          site_name TEXT NOT NULL, starts_at INTEGER NOT NULL, ends_at INTEGER NOT NULL CHECK(ends_at>starts_at),
+          state TEXT NOT NULL CHECK(state IN ('reserved','consumed','canceled')), version INTEGER NOT NULL,
+          created INTEGER NOT NULL, updated INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS ads_booking_slots ON ads_bookings(site_id,state,starts_at,ends_at);
+        CREATE TRIGGER IF NOT EXISTS ads_booking_insert BEFORE INSERT ON ads_bookings
+          WHEN NEW.state='reserved' AND EXISTS(SELECT 1 FROM ads_bookings b WHERE b.site_id=NEW.site_id AND b.state='reserved' AND b.request_id!=NEW.request_id AND b.starts_at<NEW.ends_at AND b.ends_at>NEW.starts_at)
+          BEGIN SELECT RAISE(ABORT,'overlapping_ads_booking'); END;
+        CREATE TRIGGER IF NOT EXISTS ads_booking_update BEFORE UPDATE OF site_id,starts_at,ends_at,state ON ads_bookings
+          WHEN NEW.state='reserved' AND EXISTS(SELECT 1 FROM ads_bookings b WHERE b.site_id=NEW.site_id AND b.state='reserved' AND b.request_id!=NEW.request_id AND b.starts_at<NEW.ends_at AND b.ends_at>NEW.starts_at)
+          BEGIN SELECT RAISE(ABORT,'overlapping_ads_booking'); END;
+        CREATE TABLE IF NOT EXISTS ads_booking_actions (
+          operation_id TEXT PRIMARY KEY, request_id TEXT NOT NULL REFERENCES ads_requests(id),
+          action TEXT NOT NULL CHECK(action IN ('reserve','cancel')), fingerprint TEXT NOT NULL,
+          note TEXT NOT NULL, details TEXT NOT NULL, created INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS plans (
           id TEXT PRIMARY KEY, name TEXT NOT NULL, days INTEGER NOT NULL CHECK(days > 0),
           price INTEGER NOT NULL CHECK(price > 0), stars INTEGER NOT NULL CHECK(stars > 0),

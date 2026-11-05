@@ -568,6 +568,11 @@ function adsPlacementLabel(p){
   const labels={active:'Запуск подтверждён владельцем',paused:'Пауза подтверждена владельцем',finished:'Остановка подтверждена владельцем'};
   return (labels[p.state] || p.state)+' · '+p.site_name+' · осталось '+p.remaining_seconds+' сек.'+(p.attention_due?' Срок истёк, ожидается подтверждение остановки.':'');
 }
+function adsBookingLabel(b){
+  if(!b)return 'Плановой брони нет.';
+  const labels={reserved:'Забронировано владельцем',canceled:'Бронь отменена',consumed:'Бронь использована при запуске'};
+  return (labels[b.state] || b.state)+' · '+b.site_name+' · '+new Date(b.starts_at*1000).toLocaleString('ru-RU')+' — '+new Date(b.ends_at*1000).toLocaleString('ru-RU')+' (время браузера)'+(b.expired?' · ожидается перенос или отмена':'');
+}
 async function refreshAds() {
   const request=++adsRequest,epoch=sessionEpoch,page=adsPage;
   const [policy,listing]=await Promise.all([api('/api/ads/policy'),api('/api/ads/requests?page='+page)]);
@@ -575,7 +580,7 @@ async function refreshAds() {
   adsPolicy=policy;
   $('ads-offer').textContent=(policy.accepting?'Приём заявок открыт. ':'Приём новых заявок закрыт. ')+policy.amount+' ₽ за '+policy.hours+' ч. '+policy.instructions;
   $('ads-form').hidden=!policy.accepting;
-  $('ads-list').innerHTML=listing.requests.map(r=>`<article class="subscription"><b>${esc('@'+r.channel)}</b><p>${esc(adsLabels[r.state] || r.state)}</p><p>${r.amount} ₽ / ${r.hours} ч · условия сохранены при подаче</p><p>${esc(r.comment)}</p><p>${esc(r.reason)}</p><code>${esc(r.id)}</code><p>${esc(adsPaymentLabel(r.payment))}</p><p>${esc(adsPlacementLabel(r.placement))}</p>${['pending','approved'].includes(r.state) && r.payment?.status!=='confirmed' && !['active','paused'].includes(r.placement?.state)?`<br><button class="text-link" data-ads-cancel="${esc(r.id)}" data-version="${r.version}">Отменить заявку</button>`:''}</article>`).join('') || '<p>Заявок пока нет.</p>';
+  $('ads-list').innerHTML=listing.requests.map(r=>`<article class="subscription"><b>${esc('@'+r.channel)}</b><p>${esc(adsLabels[r.state] || r.state)}</p><p>${r.amount} ₽ / ${r.hours} ч · условия сохранены при подаче</p><p>${esc(r.comment)}</p><p>${esc(r.reason)}</p><code>${esc(r.id)}</code><p>${esc(adsPaymentLabel(r.payment))}</p><p>${esc(adsPlacementLabel(r.placement))}</p><p>${esc(adsBookingLabel(r.booking))}</p>${['pending','approved'].includes(r.state) && r.payment?.status!=='confirmed' && r.booking?.state!=='reserved' && !['active','paused'].includes(r.placement?.state)?`<br><button class="text-link" data-ads-cancel="${esc(r.id)}" data-version="${r.version}">Отменить заявку</button>`:''}</article>`).join('') || '<p>Заявок пока нет.</p>';
   $('ads-page').textContent='Страница '+page+' · всего '+listing.total;
   $('ads-prev').disabled=page===1;$('ads-next').disabled=page*listing.page_size>=listing.total;
 }

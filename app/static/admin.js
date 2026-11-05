@@ -3,6 +3,7 @@ const basePath = document.querySelector('meta[name="shop-base"]').content;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let diagnosticsRequest=0;
+let adsBookingIntents=new Map(),adsBookingRequest=0,adsBookingPage=1;
 let adsStopRequest=0,adsStopPage=1;
 let adsSitesCache=[],adsPrivateSites=[],adsSitesRequest=0,adsSiteEditor=null,adsSiteMutation=0,adsPlacementIntents=new Map();
 let adsPolicy=null,adsPage=1,adsRequest=0,adsPaymentIntents=new Map();
@@ -52,6 +53,9 @@ $('admin-login').onsubmit = async event => {
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => {
+  adsBookingRequest++;adsBookingPage=1;adsBookingIntents.clear();
+  for(const id of ['ads-bookings-list','ads-bookings-page','ads-bookings-error'])$(id).replaceChildren();
+  $('ads-bookings-filter').value='reserved';$('ads-bookings-prev').disabled=true;$('ads-bookings-next').disabled=true;
   adsStopRequest++;adsStopPage=1;
   for(const id of ['ads-stop-list','ads-stop-counts','ads-stop-error','ads-stop-page'])$(id).replaceChildren();
   $('ads-stop-filter').value='due';$('ads-stop-prev').disabled=true;$('ads-stop-next').disabled=true;
@@ -374,7 +378,7 @@ function adsPaymentForm(r){
   const label=p.status==='confirmed'?'Поступление учтено вручную':p.status==='refunded'?'Полный возврат учтён вручную':'Поступление не учтено';
   const history=(p.entries || []).map(e=>`<p>${e.kind==='receipt'?'Поступление':'Возврат'}: ${e.amount} ₽ · ${esc(e.reference)} · ${esc(e.note)}</p>`).join('');
   const kind=p.status==='confirmed'?'refund':'receipt';
-  return `<p>${label}. Это учёт владельца, без автоматической сверки с банком.</p>${history}${r.state==='approved' && p.status!=='refunded' && !['active','paused'].includes(r.placement?.state)?`<form data-ads-payment="${esc(r.id)}" data-kind="${kind}" data-version="${r.version}" data-payment-version="${p.version}"><h4>${kind==='receipt'?'Учесть поступление':'Учесть полный возврат'}</h4><label>Сумма, ₽<input name="amount" type="number" min="1" max="1000000" value="${r.amount}" required></label><label>ID банковской операции (без ФИО и реквизитов)<input name="reference" minlength="3" maxlength="120" required autocomplete="off"></label><label>Основание проверки (видно только владельцу)<textarea name="note" maxlength="500" required></textarea></label><label><input name="checked" type="checkbox" required> Я проверил фактическое ${kind==='receipt'?'поступление':'возвращение'} полной суммы в банке или платёжном сервисе</label><button>Сохранить проверенную операцию</button></form>`:''}`;
+  return `<p>${label}. Это учёт владельца, без автоматической сверки с банком.</p>${history}${r.state==='approved' && p.status!=='refunded' && r.booking?.state!=='reserved' && !['active','paused'].includes(r.placement?.state)?`<form data-ads-payment="${esc(r.id)}" data-kind="${kind}" data-version="${r.version}" data-payment-version="${p.version}"><h4>${kind==='receipt'?'Учесть поступление':'Учесть полный возврат'}</h4><label>Сумма, ₽<input name="amount" type="number" min="1" max="1000000" value="${r.amount}" required></label><label>ID банковской операции (без ФИО и реквизитов)<input name="reference" minlength="3" maxlength="120" required autocomplete="off"></label><label>Основание проверки (видно только владельцу)<textarea name="note" maxlength="500" required></textarea></label><label><input name="checked" type="checkbox" required> Я проверил фактическое ${kind==='receipt'?'поступление':'возвращение'} полной суммы в банке или платёжном сервисе</label><button>Сохранить проверенную операцию</button></form>`:''}`;
 }
 async function refreshAdsAdmin() {
   const request=++adsRequest,epoch=authEpoch,page=adsPage;
@@ -382,7 +386,7 @@ async function refreshAdsAdmin() {
   if(request!==adsRequest || epoch!==authEpoch)return;
   adsSitesCache=listing.sites || [];
   adsPolicy=policy;$('ads-accepting').checked=policy.accepting;$('ads-price').value=policy.amount;$('ads-hours').value=policy.hours;$('ads-instructions').value=policy.instructions;
-  $('ads-admin-list').innerHTML=listing.requests.map(r=>`<article class="subscription"><b>${esc('@'+r.channel)}</b><p>${esc(adsLabels[r.state] || r.state)} · клиент ${r.user_id}</p><p>${r.amount} ₽ / ${r.hours} ч</p><p>${esc(r.comment)}</p><p>${esc(r.reason)}</p><code>${esc(r.id)}</code>${r.state==='pending'?`<form data-ads-id="${esc(r.id)}" data-version="${r.version}"><label>Решение<select name="state"><option value="approved">Одобрить канал</option><option value="rejected">Отклонить</option></select></label><label>Причина для клиента<textarea name="reason" maxlength="500"></textarea></label><button>Сохранить решение</button></form>`:''}${adsPaymentForm(r)}${adsPlacementForm(r)}</article>`).join('') || '<p>Заявок нет.</p>';
+  $('ads-admin-list').innerHTML=listing.requests.map(r=>`<article class="subscription"><b>${esc('@'+r.channel)}</b><p>${esc(adsLabels[r.state] || r.state)} · клиент ${r.user_id}</p><p>${r.amount} ₽ / ${r.hours} ч</p><p>${esc(r.comment)}</p><p>${esc(r.reason)}</p><code>${esc(r.id)}</code>${r.state==='pending'?`<form data-ads-id="${esc(r.id)}" data-version="${r.version}"><label>Решение<select name="state"><option value="approved">Одобрить канал</option><option value="rejected">Отклонить</option></select></label><label>Причина для клиента<textarea name="reason" maxlength="500"></textarea></label><button>Сохранить решение</button></form>`:''}${adsPaymentForm(r)}${adsBookingForm(r)}${adsPlacementForm(r)}</article>`).join('') || '<p>Заявок нет.</p>';
   $('ads-admin-page').textContent='Страница '+page+' · всего '+listing.total;$('ads-admin-prev').disabled=page===1;$('ads-admin-next').disabled=page*listing.page_size>=listing.total;
 }
 $('ads-policy-form').onsubmit=async event=>{
@@ -393,6 +397,7 @@ $('ads-policy-form').onsubmit=async event=>{
   finally{if(epoch===authEpoch)$('ads-policy-save').disabled=false;}
 };
 $('ads-admin-list').onsubmit=async event=>{
+  const bookingForm=event.target.closest('[data-ads-booking]');if(bookingForm){event.preventDefault();return saveAdsBooking(bookingForm);}
   const placementForm=event.target.closest('[data-ads-placement]');if(placementForm){event.preventDefault();return saveAdsPlacement(placementForm);}
   const paymentForm=event.target.closest('[data-ads-payment]');if(paymentForm){event.preventDefault();return saveAdsPayment(paymentForm);}
   const form=event.target.closest('[data-ads-id]');if(!form)return;event.preventDefault();
@@ -431,29 +436,32 @@ function adsPlacementForm(r){
   const history=(p?.actions || []).map(a=>`<p>${esc(({start:'Запуск',pause:'Пауза',resume:'Продолжение',finish:'Остановка'})[a.action] || a.action)} · ${esc(a.note)}</p>`).join('');
   const status=p?`<p>${labels[p.state] || esc(p.state)} · ${esc(p.site_name)} · осталось ${p.remaining_seconds} сек.${p.attention_due?' Срок истёк: требуется подтвердить фактическую остановку.':''}</p>`:'<p>Размещение не запущено.</p>';
   if(r.state!=='approved' || r.payment?.status!=='confirmed' || p?.state==='finished')return status+history;
-  const options=adsSitesCache.filter(s=>s.enabled && s.verified && !s.occupied).map(s=>`<option value="${esc(s.id)}" data-version="${s.version}">${esc(s.name)}</option>`).join('');
+  if(!p && r.booking?.state==='reserved' && !r.booking.can_start)return status+history+'<p>Окно старта брони ещё не наступило или уже истекло. Обновите данные; истёкшую бронь можно отменить.</p>';
+  const options=adsSitesCache.filter(s=>s.enabled && s.verified && !s.occupied && (r.booking?.state!=='reserved' || s.id===r.booking.site_id)).map(s=>`<option value="${esc(s.id)}" data-version="${s.version}">${esc(s.name)}</option>`).join('');
   const actions=p?(p.state==='active'?'<option value="pause">Подтвердить паузу</option><option value="finish">Подтвердить остановку</option>':`${p.remaining_seconds>0?'<option value="resume">Подтвердить продолжение</option>':''}<option value="finish">Подтвердить остановку</option>`):'<option value="start">Подтвердить фактический запуск</option>';
   if(!p && !options)return status+history+'<p>Нет свободной включённой проверенной площадки.</p>';
-  return status+history+`<form data-ads-placement="${esc(r.id)}" data-request-version="${r.version}" data-payment-version="${r.payment.version}" data-placement-version="${p?.version || 0}"><label>Действие<select name="action">${actions}</select></label>${!p?`<label>Площадка<select name="site_id" required>${options}</select></label>`:''}<label>Основание проверки (только владельцу)<textarea name="note" maxlength="500" required></textarea></label><label><input type="checkbox" name="checked" required> Я проверил фактический показ либо остановку в Telegram; сохранение только фиксирует результат</label><button>Сохранить подтверждение</button></form>`;
+  return status+history+`<form data-ads-placement="${esc(r.id)}" data-request-version="${r.version}" data-payment-version="${r.payment.version}" data-placement-version="${p?.version || 0}" data-booking-version="${!p && r.booking?.state==='reserved'?r.booking.version:''}"><label>Действие<select name="action">${actions}</select></label>${!p?`<label>Площадка<select name="site_id" required>${options}</select></label>`:''}<label>Основание проверки (только владельцу)<textarea name="note" maxlength="500" required></textarea></label><label><input type="checkbox" name="checked" required> Я проверил фактический показ либо остановку в Telegram; сохранение только фиксирует результат</label><button>Сохранить подтверждение</button></form>`;
 }
 async function saveAdsPlacement(form){
   const button=form.querySelector('button');if(button.disabled)return;
-  const fields=new FormData(form),epoch=authEpoch,request=adsRequest,queueRequest=adsStopRequest,fromQueue=form.dataset.adsQueue==='true',action=String(fields.get('action'));
+  const fields=new FormData(form),epoch=authEpoch,request=adsRequest,queueRequest=adsStopRequest,calendarRequest=adsBookingRequest,fromCalendar=form.dataset.adsCalendar==='true',fromQueue=form.dataset.adsQueue==='true',action=String(fields.get('action'));
   const data={request_version:Number(form.dataset.requestVersion),payment_version:Number(form.dataset.paymentVersion),placement_version:Number(form.dataset.placementVersion),note:String(fields.get('note') || '').trim(),checked:fields.has('checked')};
   if(action==='start'){
     const site=adsSitesCache.find(s=>s.id===fields.get('site_id'));
     if(!site){$('ads-admin-error').textContent='Обновите список площадок';return;}
     data.site_id=site.id;data.site_version=site.version;
+    if(form.dataset.bookingVersion)data.booking_version=Number(form.dataset.bookingVersion);
   }
   const path='ads/requests/'+encodeURIComponent(form.dataset.adsPlacement)+'/placement/'+action;
   const key=JSON.stringify([path,data]);if(!adsPlacementIntents.has(key))adsPlacementIntents.set(key,crypto.randomUUID());
-  button.disabled=true;$(fromQueue?'ads-stop-error':'ads-admin-error').textContent='';
+  button.disabled=true;$(fromCalendar?'ads-bookings-error':fromQueue?'ads-stop-error':'ads-admin-error').textContent='';
   try{
     await api(path,{method:'POST',data:{...data,operation_id:adsPlacementIntents.get(key)}});if(epoch!==authEpoch)return;
     adsPlacementIntents.delete(key);
-    if(fromQueue){if(queueRequest===adsStopRequest)await refreshStopQueue();}
+    if(fromCalendar){if(calendarRequest===adsBookingRequest)await refreshBookingCalendar();}
+    else if(fromQueue){if(queueRequest===adsStopRequest)await refreshStopQueue();}
     else if(request===adsRequest)await refreshAdsAdmin();
-  }catch(e){if(epoch===authEpoch && (fromQueue?queueRequest===adsStopRequest:request===adsRequest))$(fromQueue?'ads-stop-error':'ads-admin-error').textContent=e.message;}
+  }catch(e){if(epoch===authEpoch && (fromCalendar?calendarRequest===adsBookingRequest:fromQueue?queueRequest===adsStopRequest:request===adsRequest))$(fromCalendar?'ads-bookings-error':fromQueue?'ads-stop-error':'ads-admin-error').textContent=e.message;}
   finally{if(epoch===authEpoch)button.disabled=false;}
 }
 function clearAdsSite(){
@@ -508,4 +516,62 @@ $('ads-stop-prev').onclick=()=>{if(adsStopPage>1){adsStopPage--;return refreshSt
 $('ads-stop-next').onclick=()=>{if(!$('ads-stop-next').disabled){adsStopPage++;return refreshStopQueue();}};
 $('ads-stop-list').onsubmit=event=>{
   const form=event.target.closest('[data-ads-placement]');if(!form)return;event.preventDefault();return saveAdsPlacement(form);
+};
+
+function bookingTime(value){return new Date(value*1000).toLocaleString('ru-RU');}
+function adsBookingForm(r){
+  const b=r.booking;
+  const labels={reserved:'Бронь ожидает запуска',canceled:'Бронь отменена',consumed:'Бронь использована при запуске'};
+  const status=b?'<p>'+esc(labels[b.state] || b.state)+' · '+esc(b.site_name)+' · '+esc(bookingTime(b.starts_at))+' — '+esc(bookingTime(b.ends_at))+' (время браузера)'+(b.expired?' · окно старта истекло':'')+'</p>':'<p>Плановой брони нет.</p>';
+  const history=(b?.actions || []).map(a=>'<p>'+esc(a.action==='reserve'?'Резерв':'Отмена')+' · '+esc(a.note)+'</p>').join('');
+  if(r.placement || r.state!=='approved' || r.payment?.status!=='confirmed')return status+history;
+  const cancel=b?.state==='reserved';
+  const options=adsSitesCache.filter(s=>s.enabled && s.verified && !s.occupied).map(s=>'<option value="'+esc(s.id)+'">'+esc(s.name)+'</option>').join('');
+  if(!cancel && !options)return status+history+'<p>Нет свободной проверенной площадки для брони.</p>';
+  return status+history+'<form data-ads-booking="'+esc(r.id)+'" data-action="'+(cancel?'cancel':'reserve')+'" data-request-version="'+r.version+'" data-payment-version="'+r.payment.version+'" data-booking-version="'+(b?.version || 0)+'">'+(cancel?'':'<label>Площадка<select name="site_id" required>'+options+'</select></label><label>Начало, местное время браузера<input type="datetime-local" name="starts_at" required></label>')+'<label>Основание (только владельцу)<textarea name="note" maxlength="500" required></textarea></label><p>Бронь не запускает узел. Срок берётся из тарифа заявки; при позднем старте повторно проверяется полный период.</p><button>'+(cancel?'Отменить бронь':'Забронировать период')+'</button></form>';
+}
+async function saveAdsBooking(form){
+  const button=form.querySelector('button');if(button.disabled)return;
+  const epoch=authEpoch,request=adsRequest,calendarRequest=adsBookingRequest,fromCalendar=form.dataset.adsCalendar==='true',fields=new FormData(form);
+  const errorId=fromCalendar?'ads-bookings-error':'ads-admin-error';
+  const data={request_version:Number(form.dataset.requestVersion),payment_version:Number(form.dataset.paymentVersion),booking_version:Number(form.dataset.bookingVersion),note:String(fields.get('note') || '').trim()};
+  if(form.dataset.action==='reserve'){
+    const site=adsSitesCache.find(s=>s.id===fields.get('site_id')),date=Date.parse(String(fields.get('starts_at') || ''));
+    if(!site || !Number.isFinite(date)){$(errorId).textContent='Выберите площадку и корректное время';return;}
+    data.site_id=site.id;data.site_version=site.version;data.starts_at=Math.floor(date/1000);
+  }
+  const path='ads/requests/'+encodeURIComponent(form.dataset.adsBooking)+'/booking/'+form.dataset.action;
+  const key=JSON.stringify([path,data]);if(!adsBookingIntents.has(key))adsBookingIntents.set(key,crypto.randomUUID());
+  button.disabled=true;$(errorId).textContent='';
+  try{
+    await api(path,{method:'POST',data:{...data,operation_id:adsBookingIntents.get(key)}});if(epoch!==authEpoch)return;
+    adsBookingIntents.delete(key);
+    if(fromCalendar){if(calendarRequest===adsBookingRequest)await refreshBookingCalendar();}
+    else if(request===adsRequest)await refreshAdsAdmin();
+  }catch(e){if(epoch===authEpoch && (fromCalendar?calendarRequest===adsBookingRequest:request===adsRequest))$(errorId).textContent=e.message;}
+  finally{if(epoch===authEpoch)button.disabled=false;}
+}
+async function refreshBookingCalendar(){
+  const epoch=authEpoch,request=++adsBookingRequest,page=adsBookingPage,view=$('ads-bookings-filter').value || 'reserved';
+  $('ads-bookings-error').textContent='';
+  try{
+    const result=await api('ads/bookings?view='+encodeURIComponent(view)+'&page='+page);
+    if(epoch!==authEpoch || request!==adsBookingRequest)return;
+    adsSitesCache=result.sites;
+    $('ads-bookings-list').innerHTML=result.requests.map(r=>'<article class="subscription"><h3>'+esc('@'+r.channel)+'</h3><code>'+esc(r.id)+'</code>'+adsBookingForm(r).replace('<form data-ads-booking','<form data-ads-calendar="true" data-ads-booking')+adsPlacementForm(r).replace('<form data-ads-placement','<form data-ads-calendar="true" data-ads-placement')+'</article>').join('') || '<p>Броней в выбранном списке нет.</p>';
+    $('ads-bookings-page').textContent='Страница '+page+' · всего '+result.total;
+    $('ads-bookings-prev').disabled=page===1;$('ads-bookings-next').disabled=page*result.page_size>=result.total;
+  }catch(e){
+    if(epoch!==authEpoch || request!==adsBookingRequest)return;
+    $('ads-bookings-list').replaceChildren();$('ads-bookings-page').textContent='';
+    $('ads-bookings-prev').disabled=true;$('ads-bookings-next').disabled=true;$('ads-bookings-error').textContent=e.message;
+  }
+}
+$('ads-bookings-refresh').onclick=()=>refreshBookingCalendar();
+$('ads-bookings-filter').onchange=()=>{adsBookingPage=1;return refreshBookingCalendar();};
+$('ads-bookings-prev').onclick=()=>{if(adsBookingPage>1){adsBookingPage--;return refreshBookingCalendar();}};
+$('ads-bookings-next').onclick=()=>{if(!$('ads-bookings-next').disabled){adsBookingPage++;return refreshBookingCalendar();}};
+$('ads-bookings-list').onsubmit=event=>{
+  event.preventDefault();const booking=event.target.closest('[data-ads-booking]');if(booking)return saveAdsBooking(booking);
+  const placement=event.target.closest('[data-ads-placement]');if(placement)return saveAdsPlacement(placement);
 };

@@ -30,6 +30,7 @@ class Command(BaseModel):
     placement_version:int=Field(ge=0,strict=True)
     site_id:uuid.UUID|None=None
     site_version:int|None=Field(default=None,ge=1,strict=True)
+    booking_version:int|None=Field(default=None,ge=1,strict=True)
     note:str=Field(min_length=1,max_length=500)
     checked:bool=Field(strict=True)
     @field_validator('note')
@@ -87,7 +88,10 @@ def occupied(conn,rid):
 
 def change(rid,action,data):
     if action not in ('start','pause','resume','finish'):raise HTTPException(422,'Неизвестное действие размещения')
-    fingerprint=hashlib.sha256(json.dumps(data.model_dump(mode='json'),sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+    raw=data.model_dump(mode='json')
+    # Прежние подтверждения без брони сохраняют исходный отпечаток после обновления.
+    if raw.get('booking_version') is None:raw.pop('booking_version',None)
+    fingerprint=hashlib.sha256(json.dumps(raw,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
         old=conn.execute('SELECT * FROM ads_placement_actions WHERE operation_id=?',(str(data.operation_id),)).fetchone()
@@ -110,9 +114,13 @@ def change(rid,action,data):
                 raise HTTPException(409,'Выберите включённую проверенную площадку и её текущую версию.')
             if conn.execute("SELECT 1 FROM ads_placements WHERE site_id=? AND state IN ('active','paused')",(site['id'],)).fetchone():
                 raise HTTPException(409,'Площадка занята другим размещением, включая паузу.')
+            from . import ads_bookings as bookings
+            booking=bookings.check_start(conn,rid,site['id'],now,request['hours']*3600,data.booking_version)
+            if booking:bookings.consume(conn,rid,now)
             conn.execute("INSERT INTO ads_placements(request_id,site_id,site_name,state,version,allocated_seconds,used_seconds,segment_started,started,updated) VALUES (?,?,?,'active',1,?,0,?,?,?)",
                          (rid,site['id'],site['name'],request['hours']*3600,now,now,now))
         else:
+            if data.booking_version is not None:raise HTTPException(422,'Версия брони передаётся только при запуске.')
             if data.site_id is not None or data.site_version is not None:raise HTTPException(422,'При продолжении площадка не заменяется.')
             if not p or p['state']=='finished':raise HTTPException(409,'Размещение не запущено или уже завершено.')
             used=summary(conn,rid)['used_seconds']
@@ -123,6 +131,8 @@ def change(rid,action,data):
                 if p['state']!='paused' or used>=p['allocated_seconds']:raise HTTPException(409,'Нет доступного времени для продолжения.')
                 site=conn.execute('SELECT * FROM ads_sites WHERE id=?',(p['site_id'],)).fetchone()
                 if not site['enabled'] or not site['verified']:raise HTTPException(409,'Площадка выключена или не проверена.')
+                from . import ads_bookings as bookings
+                bookings.check_interval(conn,p['site_id'],now,now+p['allocated_seconds']-used,rid)
                 state='active';segment=now
             else:
                 state='finished';segment=None

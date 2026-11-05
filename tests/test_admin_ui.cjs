@@ -351,3 +351,67 @@ test('ошибка подтверждения из очереди сохраня
   assert.equal(p.bodies[0].operation_id,p.bodies[1].operation_id);assert.equal(p.element('ads-stop-error').textContent,'Ответ потерян');
   assert.equal(p.element('ads-admin-error').textContent,'');
 });
+
+
+test('форма брони берёт версию и предлагает только свободные проверенные площадки',()=>{
+  const p=adminPage();p.run("adsSitesCache=[{id:'free',name:'<Имя>',version:1,enabled:true,verified:true,occupied:false},{id:'busy',name:'Занята',enabled:true,verified:true,occupied:true}]");
+  const html=p.run("adsBookingForm({id:'ad-a',state:'approved',version:2,payment:{status:'confirmed',version:1}})");
+  assert.match(html,/datetime-local/);assert.match(html,/&lt;Имя&gt;/);assert.ok(!html.includes('value="busy"'));assert.match(html,/data-booking-version="0"/);
+});
+
+test('будущая бронь скрывает запуск и возврат до отмены или окна старта',()=>{
+  const p=adminPage();const row="{id:'ad-a',state:'approved',version:2,payment:{status:'confirmed',version:1},booking:{state:'reserved',version:1,site_id:'s1',site_name:'Площадка',starts_at:10000,ends_at:13600,can_start:false}}";
+  assert.ok(!p.run('adsPlacementForm('+row+')').includes('data-ads-placement'));
+  assert.ok(!p.run('adsPaymentForm('+row+')').includes('data-ads-payment'));
+  assert.match(p.run('adsBookingForm('+row+')'),/data-action="cancel"/);
+});
+
+test('потеря ответа бронирования сохраняет UUID и серверные версии',async()=>{
+  const p=adminPage({FormData:AdsPaymentFields});p.run("var bookingButton={disabled:false};adsSitesCache=[{id:'s1',version:4}];");
+  const source="saveAdsBooking({dataset:{adsBooking:'ad-a',action:'reserve',requestVersion:'2',paymentVersion:'1',bookingVersion:'0'},fields:{site_id:'s1',starts_at:'2027-01-01T12:00',note:'План'},querySelector(){return bookingButton;}})";
+  const first=p.run(source);p.replyAt(0,{detail:'Нет ответа'},502);await first;
+  const second=p.run(source);p.replyAt(1,{detail:'Нет ответа'},502);await second;
+  assert.equal(p.bodies[0].operation_id,p.bodies[1].operation_id);assert.equal(p.bodies[0].site_version,4);assert.equal(p.bodies[0].booking_version,0);
+  assert.ok(Number.isInteger(p.bodies[0].starts_at));assert.equal(p.bodies[0].hours,undefined);
+});
+
+test('выход очищает намерение брони и отсекает поздний календарь',async()=>{
+  const p=adminPage();p.run("adsBookingIntents.set('private-note','id')");
+  const pending=p.run('refreshBookingCalendar()');p.run("$('exit').onclick()");p.replyAt(0,{sites:[],requests:[],total:0,page_size:20});await pending;
+  assert.equal(p.run('adsBookingIntents.size'),0);assert.equal(p.element('ads-bookings-list').innerHTML,'');assert.equal(p.element('ads-bookings-error').textContent,'');
+});
+
+test('новая страница календаря не заменяется старым ответом',async()=>{
+  const p=adminPage();const first=p.run('refreshBookingCalendar()');p.run('adsBookingPage=2');const second=p.run('refreshBookingCalendar()');
+  p.replyAt(1,{sites:[],requests:[],total:30,page_size:20});await second;
+  p.replyAt(0,{sites:[],requests:[],total:30,page_size:20});await first;
+  assert.match(p.element('ads-bookings-page').textContent,/Страница 2/);
+});
+
+test('ошибка чтения календаря убирает прежние формы',async()=>{
+  const p=adminPage();p.element('ads-bookings-list').innerHTML='stale-private-note';const pending=p.run('refreshBookingCalendar()');
+  p.replyAt(0,{detail:'Нет связи'},502);await pending;assert.equal(p.element('ads-bookings-list').innerHTML,'');assert.equal(p.element('ads-bookings-error').textContent,'Нет связи');
+});
+
+test('запуск по брони передаёт её версию и обновляет календарь',async()=>{
+  const p=adminPage({FormData:AdsPaymentFields});p.run("var bookingStartButton={disabled:false};adsSitesCache=[{id:'s1',version:2}];");
+  const pending=p.run("saveAdsPlacement({dataset:{adsCalendar:'true',adsPlacement:'ad-a',requestVersion:'2',paymentVersion:'1',placementVersion:'0',bookingVersion:'3'},fields:{action:'start',site_id:'s1',note:'Проверено',checked:'on'},querySelector(){return bookingStartButton;}})");
+  assert.equal(p.bodies[0].booking_version,3);p.replyAt(0,{state:'active'});await new Promise(setImmediate);
+  assert.match(p.requests[1],/ads\/bookings/);p.replyAt(1,{sites:[],requests:[],total:0,page_size:20});await pending;
+});
+
+test('календарь экранирует закрытое основание и имя площадки',async()=>{
+  const p=adminPage();const pending=p.run('refreshBookingCalendar()');
+  p.replyAt(0,{sites:[],requests:[{id:'ad-a',channel:'<img>',state:'approved',version:2,payment:{status:'confirmed',version:1},booking:{state:'reserved',version:1,site_name:'<Сайт>',starts_at:10000,ends_at:13600,can_start:false,actions:[{action:'reserve',note:'<script>'}]}}],total:1,page_size:20});
+  await pending;const html=p.element('ads-bookings-list').innerHTML;
+  assert.match(html,/&lt;script&gt;/);assert.match(html,/&lt;img&gt;/);assert.ok(!html.includes('<script>'));
+});
+
+
+test('отмена из календаря передаёт только версионные данные и обновляет список',async()=>{
+  const p=adminPage({FormData:AdsPaymentFields});p.run('var cancelBookingButton={disabled:false};');
+  const pending=p.run("saveAdsBooking({dataset:{adsCalendar:'true',adsBooking:'ad-a',action:'cancel',requestVersion:'2',paymentVersion:'1',bookingVersion:'1'},fields:{note:'Перенос'},querySelector(){return cancelBookingButton;}})");
+  assert.ok(p.requests[0].endsWith('/booking/cancel'));assert.equal(p.bodies[0].site_id,undefined);assert.equal(p.bodies[0].booking_version,1);
+  p.replyAt(0,{state:'canceled'});await new Promise(setImmediate);p.replyAt(1,{sites:[],requests:[],total:0,page_size:20});await pending;
+  assert.equal(p.run('adsBookingIntents.size'),0);
+});

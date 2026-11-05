@@ -645,3 +645,11 @@ test('пауза и раннее завершение показывают не�
     await p.element('ads-open').onclick();assert.match(p.element('ads-list').innerHTML,/осталось 1200 сек/);
   }
 });
+
+
+test('рекламодатель видит период своей брони как план, а не запущенный показ',async()=>{
+  const p=await customerPage();adsReplies(p);
+  p.respond('/shop/api/ads/requests?page=1',{requests:[{id:'ad-a',channel:'channel_name',state:'approved',version:2,amount:300,hours:1,payment:{status:'confirmed'},booking:{state:'reserved',site_name:'<Площадка>',starts_at:10000,ends_at:13600,expired:false}}],total:1,page:1,page_size:20});
+  await p.element('ads-open').onclick();const html=p.element('ads-list').innerHTML;
+  assert.match(html,/Забронировано владельцем/);assert.match(html,/Размещение не запущено/);assert.match(html,/&lt;Площадка&gt;/);assert.ok(!html.includes('data-ads-booking'));
+});

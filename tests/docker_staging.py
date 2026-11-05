@@ -179,7 +179,7 @@ class Staging:
         self.controller(self.args.source,'rollback','rolled_back');self.compare(managed,cleared=managed_origin)
         self.event('managed_prepare_and_rollback_verified' if managed_origin else 'direct_prepare_and_rollback_verified')
         self.controller(self.args.source,'prepare','ready');self.controller(self.args.source,'activate','committed');self.compare(managed,cleared=True)
-        check({'ads_policy','ads_requests','ads_events','ads_payment_entries','ads_sites','ads_placements','ads_placement_actions'}<=set(self.snapshot()['tables']),'Missing advertising migration tables')
+        check({'ads_policy','ads_requests','ads_events','ads_payment_entries','ads_sites','ads_placements','ads_placement_actions','ads_bookings','ads_booking_actions'}<=set(self.snapshot()['tables']),'Missing advertising migration tables')
         self.event('target_activated_data_preserved')
         login,headers=self.http('/api/auth/login',body={'email':'fixture1@example.invalid','password':self.fixture['password']})
         cookies=SimpleCookie();cookies.load(headers['Set-Cookie']);token=cookies['session'].value;self.secrets.append(token)
@@ -237,8 +237,22 @@ class Staging:
         self.http('/api/admin/ads/sites/'+site_id,body={'version':0,'name':'Тестовая площадка','enabled':True,'verified':True,'note':'Синтетическая проверка без Telegram'},method='PUT')
         placement_path='/api/admin/ads/requests/'+ad['id']+'/placement/'
         placement={'operation_id':str(uuid.uuid4()),'request_version':2,'payment_version':1,'placement_version':0,'site_id':site_id,'site_version':1,'note':'Синтетическое подтверждение без узла','checked':True}
+        booking_path='/api/admin/ads/requests/'+ad['id']+'/booking/'
+        booking={'operation_id':str(uuid.uuid4()),'request_version':2,'payment_version':1,'booking_version':0,'site_id':site_id,'site_version':1,'starts_at':int(time.time())+3600,'note':'Синтетическая бронь'}
+        self.http(booking_path+'reserve',body=booking)
+        self.http(booking_path+'reserve',body=booking)
+        self.http(payment_path+'refund',body={**receipt,'operation_id':str(uuid.uuid4()),'payment_version':1,'reference':'fixture/refund-booked'},expected=409)
+        self.http(placement_path+'start',body={**placement,'booking_version':1},expected=409)
+        self.http(booking_path+'cancel',body={'operation_id':str(uuid.uuid4()),'request_version':2,'payment_version':1,'booking_version':1,'note':'Перенос на стенде'})
+        booking_start=int(time.time())+2
+        self.http(booking_path+'reserve',body={**booking,'operation_id':str(uuid.uuid4()),'booking_version':2,'starts_at':booking_start})
+        body,_=self.http('/api/admin/ads/bookings?view=reserved&page=1')
+        check(json.loads(body)['total']==1,'Reservation calendar mismatch')
+        while time.time()<booking_start:time.sleep(0.1)
+        placement['booking_version']=3
         self.http(placement_path+'start',body=placement)
         self.http(placement_path+'start',body=placement)
+        self.event('https_reservation_cancel_rebook_and_manual_consumption_verified')
         self.http(payment_path+'refund',body={**receipt,'operation_id':str(uuid.uuid4()),'payment_version':1,'reference':'fixture/refund-blocked'},expected=409)
         before_queue=self.snapshot()
         body,_=self.http('/api/admin/ads/stop-queue?view=upcoming&page=1')
@@ -246,7 +260,7 @@ class Staging:
         check(queue['counts']=={'due':0,'upcoming':1,'paused':0} and queue['requests'][0]['id']==ad['id'],'Upcoming stop queue mismatch')
         check(self.snapshot()['digest']==before_queue['digest'],'Stop queue changed stored data')
         for version_number,action in enumerate(('pause','resume','finish'),start=1):
-            self.http(placement_path+action,body={**{k:v for k,v in placement.items() if k not in ('site_id','site_version')},'operation_id':str(uuid.uuid4()),'placement_version':version_number})
+            self.http(placement_path+action,body={**{k:v for k,v in placement.items() if k not in ('site_id','site_version','booking_version')},'operation_id':str(uuid.uuid4()),'placement_version':version_number})
             body,_=self.http('/api/admin/ads/stop-queue?view=all&page=1')
             queue=json.loads(body)
             check(queue['total']==(0 if action=='finish' else 1),'Stop queue lifecycle count mismatch')
@@ -263,7 +277,7 @@ class Staging:
         self.json('create advertising backup',base+['create','--env-stdin','--output','/tmp/ads.pvb'],input=(self.root/'.env').read_bytes(),env=env)
         self.json('restore advertising backup',base+['restore','/tmp/ads.pvb','--target','/tmp/ads-restore'],env=env)
         restored_ads=self.data('snapshot',database='/tmp/ads-restore/shop.db')
-        check(restored_ads['digest']==advertised['digest'] and restored_ads['counts']['ads_requests']==1 and restored_ads['counts']['ads_events']==10 and restored_ads['counts']['ads_sites']==1 and restored_ads['counts']['ads_placements']==1 and restored_ads['counts']['ads_placement_actions']==4 and restored_ads['counts']['ads_payment_entries']==2 and restored_ads['counts']['sessions']==0,'Advertising backup mismatch')
+        check(restored_ads['digest']==advertised['digest'] and restored_ads['counts']['ads_requests']==1 and restored_ads['counts']['ads_events']==14 and restored_ads['counts']['ads_bookings']==1 and restored_ads['counts']['ads_booking_actions']==3 and restored_ads['counts']['ads_sites']==1 and restored_ads['counts']['ads_placements']==1 and restored_ads['counts']['ads_placement_actions']==4 and restored_ads['counts']['ads_payment_entries']==2 and restored_ads['counts']['sessions']==0,'Advertising backup mismatch')
         self.event('https_advertising_manual_placement_lifecycle_payment_and_backup_verified')
         return {'status':'passed','scenario':('0.021 -> 0.024 -> ' if managed_origin else '0.021 -> ')+version(self.args.source),'events':self.events,'data_digest':managed['digest'],
                 'real_docker':True,'intermediate_fixture_engine':'candidate','real_loopback_https':True,'real_provider_payment':False,'real_vpn_traffic':False}

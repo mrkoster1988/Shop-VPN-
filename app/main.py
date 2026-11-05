@@ -24,6 +24,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from pydantic import BaseModel, Field, field_validator, ValidationError
 from starlette.applications import Starlette
 from starlette.routing import Mount
+from . import ads_bookings as bookings
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
@@ -265,6 +266,16 @@ async def admin_ads_payment(rid:UUID,action:Literal['receipt','refund'],data:ads
 async def admin_ads_payment_history(rid:UUID):
     ads.get(str(rid))
     with ads.db() as conn:return ads.payment(conn,str(rid),private=True)
+
+@app.get('/api/admin/ads/bookings',dependencies=[Depends(admin)])
+async def admin_ads_bookings(view:Literal['reserved','expired','all']='reserved',page:int=Query(default=1,ge=1,le=100000)):
+    return bookings.listing(view,page)
+
+@app.post('/api/admin/ads/requests/{rid}/booking/reserve',dependencies=[Depends(admin)])
+async def admin_ads_reserve(rid:UUID,data:bookings.Reserve):return bookings.change(str(rid),'reserve',data)
+
+@app.post('/api/admin/ads/requests/{rid}/booking/cancel',dependencies=[Depends(admin)])
+async def admin_ads_cancel_booking(rid:UUID,data:bookings.BaseCommand):return bookings.change(str(rid),'cancel',data)
 
 @app.get('/api/admin/ads/stop-queue',dependencies=[Depends(admin)])
 async def admin_ads_stop_queue(view:Literal['due','upcoming','paused','all']='due',page:int=Query(default=1,ge=1,le=100000)):

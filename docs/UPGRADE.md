@@ -1,10 +1,10 @@
-# Управляемое обновление — v0.035
+# Управляемое обновление — v0.036
 
-Поддержаны переходы **v0.021 / v0.022 / v0.023 / v0.024 / v0.025 / v0.026 / v0.027 / v0.028 / v0.029 / v0.030 / v0.031 / v0.032 / v0.033 / v0.034 → v0.035** для установок нашего
+Поддержаны переходы **v0.021 / v0.022 / v0.023 / v0.024 / v0.025 / v0.026 / v0.027 / v0.028 / v0.029 / v0.030 / v0.031 / v0.032 / v0.033 / v0.034 / v0.035 → v0.036** для установок нашего
 установщика. Узнаются обычные установки с `shop_data` и установки после завершённого
 managed-upgrade с отдельным внешним томом и подтверждённой историей активации.
 Более старые версии, произвольные Compose-файлы и вручную изменённые привязки требуют
-отдельного плана; флага обхода проверок нет. Версия v0.035 повторно не обновляется на себя.
+отдельного плана; флага обхода проверок нет. Версия v0.036 повторно не обновляется на себя.
 
 Магазин будет недоступен между остановкой старой версии и отдельной активацией/откатом.
 Новый образ собирается до остановки. Старая база остаётся в своём томе; новый снимок
@@ -14,15 +14,15 @@ managed-upgrade с отдельным внешним томом и подтве�
 ## Команды
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.035/install.sh | bash -s -- --upgrade plan --dir /opt/pushok-vpn
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.035/install.sh | bash -s -- --upgrade prepare --dir /opt/pushok-vpn
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.035/install.sh | bash -s -- --upgrade status --dir /opt/pushok-vpn
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.036/install.sh | bash -s -- --upgrade plan --dir /opt/pushok-vpn
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.036/install.sh | bash -s -- --upgrade prepare --dir /opt/pushok-vpn
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.036/install.sh | bash -s -- --upgrade status --dir /opt/pushok-vpn
 ```
 
-Bootstrap скачивает фиксированный v0.035 и для новой установки, и для `--upgrade`.
+Bootstrap скачивает фиксированный v0.036 и для новой установки, и для `--upgrade`.
 В отличие от bootstrap v0.023, он не подставляет старый целевой релиз v0.022.
 
-Из полного каталога исходников v0.035 можно выполнить те же команды:
+Из полного каталога исходников v0.036 можно выполнить те же команды:
 
 ```bash
 python3 scripts/upgrade.py plan --dir /opt/pushok-vpn
@@ -47,7 +47,7 @@ sudo python3 scripts/upgrade.py status --dir /opt/pushok-vpn
 
 | Вид установки | Текущий том | Каталог базы внутри контейнера |
 |---|---|---|
-| Обычная установка v0.021–v0.034 | `<project>_shop_data` | `/app/data` |
+| Обычная установка v0.021–v0.035 | `<project>_shop_data` | `/app/data` |
 | Завершённый managed-upgrade | Том из managed_upgrade, совпадающий с историей активации | `/app/data/restored` |
 
 Для managed-upgrade проверяются идентификатор операции, сохранённые исходники,
@@ -90,7 +90,7 @@ committed-журнал сохраняется туда до замены тек�
 ## Активация
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.035/install.sh | bash -s -- --upgrade activate --dir /opt/pushok-vpn
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.036/install.sh | bash -s -- --upgrade activate --dir /opt/pushok-vpn
 ```
 
 Активация восстанавливает исходные настройки фоновых задач/обслуживания и пересоздаёт
@@ -106,7 +106,7 @@ activation_failed: новые API/worker/бот могли уже записат
 ## Откат до активации
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.035/install.sh | bash -s -- --upgrade rollback --dir /opt/pushok-vpn
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.036/install.sh | bash -s -- --upgrade rollback --dir /opt/pushok-vpn
 ```
 
 До activate откат возвращает **не исходную когда-то установку**, а текущую перед

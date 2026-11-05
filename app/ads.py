@@ -107,8 +107,8 @@ def payment(conn,rid,private=False):
     return result
 
 def public(row,conn,private=False):
-    from . import ads_placements as placements
-    return {k:row[k] for k in ('id','channel','comment','amount','hours','policy_version','state','reason','version','created','updated')} | {'currency':'RUB','payment':payment(conn,row['id'],private=private),'placement':placements.summary(conn,row['id'],private=private)}
+    from . import ads_placements as placements, ads_bookings as bookings
+    return {k:row[k] for k in ('id','channel','comment','amount','hours','policy_version','state','reason','version','created','updated')} | {'currency':'RUB','payment':payment(conn,row['id'],private=private),'placement':placements.summary(conn,row['id'],private=private),'booking':bookings.summary(conn,row['id'],private=private)}
 
 def create(user,data):
     now=int(time.time());uid=user['id']
@@ -166,6 +166,8 @@ def transition(rid,data,uid=None):
         allowed=('pending','approved') if uid is not None else ('pending',)
         if row['state'] not in allowed:raise HTTPException(409,'Действие недоступно для текущего состояния.')
         from . import ads_placements as placements
+        from . import ads_bookings as bookings
+        if uid is not None and bookings.reserved(conn,rid):raise HTTPException(409,'Сначала владелец должен отменить бронь.')
         if uid is not None and placements.occupied(conn,rid):raise HTTPException(409,'Сначала владелец должен подтвердить остановку размещения.')
         if uid is not None and payment(conn,rid)['status']=='confirmed':
             raise HTTPException(409,'Для оплаченной заявки сначала требуется проверенный возврат. Обратитесь к владельцу.')
@@ -196,6 +198,8 @@ def record_payment(rid,kind,data):
         expected='unpaid' if kind=='receipt' else 'confirmed'
         if current['status']!=expected:raise HTTPException(409,'Операция недоступна для текущего состояния оплаты.')
         from . import ads_placements as placements
+        from . import ads_bookings as bookings
+        if kind=='refund' and bookings.reserved(conn,rid):raise HTTPException(409,'Сначала отмените неиспользованную бронь.')
         if kind=='refund' and placements.occupied(conn,rid):raise HTTPException(409,'Сначала подтвердите фактическую остановку размещения.')
         if data.amount!=row['amount']:raise HTTPException(409,'Нужна точная сумма из заявки. Частичные операции пока не поддерживаются.')
         if conn.execute('SELECT 1 FROM ads_payment_entries WHERE reference=?',(data.reference,)).fetchone():
