@@ -203,7 +203,13 @@ class Staging:
         self.json('create backup',base+['create','--env-stdin','--output','/tmp/final.pvb'],input=(self.root/'.env').read_bytes(),env=env)
         self.json('verify backup',base+['verify','/tmp/final.pvb'],env=env)
         self.json('restore backup',base+['restore','/tmp/final.pvb','--target','/tmp/final-restore'],env=env)
-        restored=self.data('snapshot',database='/tmp/final-restore/shop.db');check(restored['digest']==managed['digest'] and restored['counts']['sessions']==0,'Backup restore mismatch')
+        restored=self.data('snapshot',database='/tmp/final-restore/shop.db')
+        old=managed.get('table_digests',{});new=restored.get('table_digests',{})
+        changed=[name for name in set(old)&set(new) if old[name]!=new[name]]
+        missing=sorted(set(old)-set(new));added=sorted(set(new)-set(old))
+        check(not changed and not missing and not added and restored['counts']['sessions']==0,
+              'Backup restore mismatch: changed='+','.join(sorted(changed))+
+              '; missing='+','.join(missing)+'; added='+','.join(added))
         self.run('refuse overwrite',base+['restore','/tmp/final.pvb','--target','/tmp/final-restore'],env=env,ok=(1,))
         diagnostic=self.json('status CLI',['docker','exec',cid,'python','scripts/status.py','--url',self.backend_url],ok=(0,1))
         check(diagnostic['scope']['external_requests'] is False and diagnostic['release']==version(self.args.source),'Diagnostic scope/version mismatch')
