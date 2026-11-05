@@ -37,8 +37,8 @@ def test_trial_disabled_and_admin_auth_by_default(trial_env):
     client,_,_=trial_env;telegram(client)
     offer=client.get('/api/catalog').json()['trial'];assert not offer['enabled'] and not offer['eligible']
     assert claim(client).status_code==409 and one('SELECT count(*) AS n FROM orders')['n']==0
-    assert client.get('/api/admin/trial').status_code==403
-    assert client.put('/api/admin/trial',json={'enabled':True,'days':1,'max_claims':10,'version':1}).status_code==403
+    assert client.get('/api/admin/trial').status_code==401
+    assert client.put('/api/admin/trial',json={'enabled':True,'days':1,'max_claims':10,'version':1}).status_code==401
 
 @pytest.mark.parametrize('protocol',['xui','wg'])
 def test_single_trial_is_real_queued_issuance_without_invoice(trial_env,protocol):
