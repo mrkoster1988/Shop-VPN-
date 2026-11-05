@@ -181,7 +181,7 @@ test('diagnostics escapes unknown codes and shows cached rather than live eviden
 
 test('logout rejects and clears a pending diagnostics report',async()=>{
   const p=adminPage();const request=p.run('refreshDiagnostics()');p.run("$('exit').onclick()");
-  p.reply(diagnosticReport());await request;
+  p.replyAt(0,diagnosticReport());await request;
   assert.equal(p.element('diagnostics-report').innerHTML,'');assert.equal(p.element('diagnostics-json').value,'');assert.equal(p.element('diagnostics-error').textContent,'');
 });
 
