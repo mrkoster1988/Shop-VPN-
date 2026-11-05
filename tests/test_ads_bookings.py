@@ -192,9 +192,11 @@ def test_booking_migration_backup_and_history_preserve_reserved_slot(client,monk
     from app import config as c
     from test_backup import b
     import os
+    real_time=bookings.time.time
     row,s,_=setup(client,monkeypatch);reserve(client,row,s);cancel(client,row);reserve(client,row,s,booking_version=2,starts_at=20000)
     before=all_rows('SELECT * FROM ads_bookings');actions=all_rows('SELECT * FROM ads_booking_actions')
     init_db();assert all_rows('SELECT * FROM ads_bookings')==before
+    monkeypatch.setattr(bookings.time,'time',real_time)
     archive=tmp_path/'bookings.pvb';b.create(c.DB,('ENCRYPTION_KEY='+os.environ['ENCRYPTION_KEY']+'\n').encode(),archive,'long-backup-password');b.restore(archive,'long-backup-password',tmp_path/'restored')
     with sqlite3.connect(tmp_path/'restored/shop.db') as conn:
         conn.row_factory=sqlite3.Row
