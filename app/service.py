@@ -6,7 +6,7 @@ import time
 import uuid
 from decimal import Decimal, InvalidOperation
 import httpx
-from . import config as c, providers, servers, referrals
+from . import config as c, providers, servers, referrals, shop_settings
 from .db import db, one, all_rows, execute
 from .security import digest
 
@@ -311,9 +311,9 @@ async def bot_loop():
                             await send(tg_id, 'Pushok VPN 🐾\nВыберите тариф, оплатите и получите подключение.\nСсылка входа в браузере одноразовая и действует 5 минут.',
                                        reply_markup={'inline_keyboard': buttons})
                         elif text in ('/support', '/paysupport'):
-                            await send(tg_id, os.getenv('SUPPORT_TEXT', 'Напишите администратору магазина.'))
+                            await send(tg_id, shop_settings.public()['support'])
                         elif text == '/terms':
-                            await send(tg_id, os.getenv('TERMS_TEXT', 'Условия продажи ещё не заполнены.'))
+                            await send(tg_id, shop_settings.public()['terms'] or 'Условия продажи ещё не заполнены владельцем магазина.')
                         else:
                             await send(tg_id, 'Команды: /buy — купить VPN, /account — личный кабинет, /support — поддержка')
                     offset = update['update_id'] + 1

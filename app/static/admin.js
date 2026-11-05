@@ -8,7 +8,7 @@ let adsBookingIntents=new Map(),adsBookingRequest=0,adsBookingPage=1;
 let adsStopRequest=0,adsStopPage=1;
 let adsSitesCache=[],adsPrivateSites=[],adsSitesRequest=0,adsSiteEditor=null,adsSiteMutation=0,adsPlacementIntents=new Map();
 let adsPolicy=null,adsPage=1,adsRequest=0,adsPaymentIntents=new Map();
-let token = '', role = '', authEpoch = 0, usersPage = 1, usersQuery = '', usersRequest = 0;
+let token = '', role = '', authEpoch = 0, usersPage = 1, usersQuery = '', usersRequest = 0, shopSettingsVersion = 0;
 let selectedUser = null, profilePage = 1, profileRequest = 0;
 let serverCache = [], editingServer = null;
 let ordersPage = 1, ordersRequest = 0, ordersFilters = {q:'', status:'', method:'', protocol:''};
@@ -38,6 +38,24 @@ function planForm(plan) {
     <button type="submit" class="small">Сохранить тариф</button>
   </form>`;
 }
+async function refreshShopSettings(){
+ const section=$('shop-settings');if(role!=='owner'){section.hidden=true;return}section.hidden=false;
+ try{
+  const data=await api('shop-settings');shopSettingsVersion=data.version;
+  $('shop-support-text').value=data.support_text;$('shop-terms-text').value=data.terms_text;
+  $('shop-settings-status').textContent='Настройки загружены. Версия '+data.version+'.';
+ }catch(error){$('shop-settings-status').textContent=error.message}
+}
+$('shop-settings-form').onsubmit=async event=>{
+ event.preventDefault();const button=$('shop-settings-save');button.disabled=true;
+ try{
+  const data=await api('shop-settings',{method:'PUT',data:{
+   support_text:$('shop-support-text').value,terms_text:$('shop-terms-text').value,version:shopSettingsVersion
+  }});
+  shopSettingsVersion=data.version;$('shop-settings-status').textContent='Настройки сохранены. Новые значения уже доступны покупателям и Telegram-боту.';
+ }catch(error){$('shop-settings-status').textContent=error.message}
+ finally{button.disabled=false}
+};
 async function refreshStaff(){
  const section=$('staff-management');if(role!=='owner'){section.hidden=true;return}section.hidden=false;
  try{
@@ -95,7 +113,7 @@ async function refresh({plans = role==='owner'} = {}) {
   else if(role==='finance') await Promise.all([refreshAdsAdmin(),refreshOrders()]);
   else if(role==='panel_operator') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers()]);
   else if(role==='support') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshSupportAdmin()]);
-  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin()]);}
+  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings()]);}
 }
 $('admin-login').onsubmit = async event => {
   event.preventDefault(); const button=event.target.querySelector('button'); button.disabled=true; authEpoch++;

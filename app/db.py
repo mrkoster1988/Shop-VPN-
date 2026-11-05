@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from contextlib import contextmanager
 from . import config as c
@@ -226,6 +227,9 @@ def init_db():
         CREATE INDEX IF NOT EXISTS admin_audit_created ON admin_audit(created,id);
         CREATE TABLE IF NOT EXISTS audit (
           id INTEGER PRIMARY KEY, created INTEGER NOT NULL, action TEXT NOT NULL, order_id TEXT);
+        CREATE TABLE IF NOT EXISTS store_settings (
+          id INTEGER PRIMARY KEY CHECK(id=1), support_text TEXT NOT NULL, terms_text TEXT NOT NULL,
+          version INTEGER NOT NULL DEFAULT 1, updated INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
         CREATE INDEX IF NOT EXISTS orders_user ON orders(user_id, created);
         CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires);
@@ -269,6 +273,8 @@ def init_db():
         for position, plan in enumerate(c.PLANS):
             conn.execute('INSERT OR IGNORE INTO plans(id,name,days,price,stars,position) VALUES (?,?,?,?,?,?)',
                          (plan['id'], plan['name'], plan['days'], plan['price'], plan['stars'], position))
+        conn.execute('INSERT OR IGNORE INTO store_settings(id,support_text,terms_text,version,updated) VALUES (1,?,?,1,0)',
+                     (os.getenv('SUPPORT_TEXT','Напишите администратору магазина.'),os.getenv('TERMS_TEXT','')))
         conn.execute('UPDATE orders SET plan_name=(SELECT name FROM plans WHERE plans.id=orders.plan) WHERE plan_name IS NULL')
 
 def one(sql, args=()):

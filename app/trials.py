@@ -6,7 +6,7 @@ import uuid
 from fastapi import HTTPException
 from pydantic import BaseModel,Field
 from typing import Literal
-from . import config as c,servers
+from . import config as c,servers,shop_settings
 from .db import db,one
 
 class PolicyUpdate(BaseModel):
@@ -24,7 +24,7 @@ class Claim(BaseModel):
 
 
 def configured():
-    return bool(c.BOT_TOKEN and c.BOT_USERNAME and os.getenv('TERMS_TEXT','').strip())
+    return bool(c.BOT_TOKEN and c.BOT_USERNAME and shop_settings.terms_configured())
 
 
 def policy():
@@ -88,5 +88,5 @@ def claim(user,data):
         conn.execute("INSERT INTO orders(id,user_id,protocol,plan,plan_name,days,amount,currency,method,status,created,plan_version,device_limit,kind,base_amount) VALUES (?,?,?,'trial','Пробный доступ',?,0,'XTR','trial','paid',?,?,0,'trial',0)",
             (oid,user['id'],data.protocol,p['days'],now,p['version']))
         conn.execute('INSERT INTO trial_claims(user_id,order_id,protocol,created,policy_version,terms_snapshot) VALUES (?,?,?,?,?,?)',
-            (user['id'],oid,data.protocol,now,p['version'],os.environ['TERMS_TEXT']))
+            (user['id'],oid,data.protocol,now,p['version'],shop_settings.terms()))
     return oid

@@ -3,9 +3,9 @@ import os
 import time
 import sqlite3
 from contextlib import closing
-from . import config as c
+from . import config as c, shop_settings
 
-VERSION='v0.038'
+VERSION='v0.044'
 QUEUE_SPECS={
     'issuance':('orders',"status='paid'"),
     'payment_poll':('orders',"status='pending' AND method='yookassa' AND payment_id IS NOT NULL"),
@@ -64,7 +64,7 @@ def report(worker):
     mode=c.PAYMENT_MODE if c.PAYMENT_MODE in ('manual','yookassa') else 'invalid'
     payment_configured=mode=='manual' or (mode=='yookassa' and bool(os.getenv('YOOKASSA_SHOP_ID') and os.getenv('YOOKASSA_SECRET')))
     if not payment_configured:warn('payment_settings_incomplete')
-    telegram=bool(c.BOT_TOKEN);stars_ready=bool(telegram and c.BOT_USERNAME and os.getenv('TERMS_TEXT','').strip())
+    telegram=bool(c.BOT_TOKEN);stars_ready=bool(telegram and c.BOT_USERNAME and shop_settings.terms_configured())
     if telegram and not stars_ready:warn('telegram_sales_settings_incomplete')
     return {'format':1,'release':VERSION,'generated_at':now,'status':'needs_attention' if warnings else 'local_checks_ok',
         'warnings':warnings,'worker':{'state':worker_state,'last_success':last,'last_started':started,'last_failure':failed},

@@ -26,6 +26,7 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 from . import ads_bookings as bookings, ads_finance as finance
 from . import support as support_cases
+from . import shop_settings
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
@@ -254,6 +255,18 @@ async def staff_logout(request: Request, response: Response):
         with db() as conn: conn.execute('DELETE FROM staff_sessions WHERE token_hash=?',(digest(raw),))
     response.delete_cookie('staff_session',path=c.COOKIE_PATH)
     return {'ok':True}
+@app.get('/api/admin/shop-settings',dependencies=[Depends(admin)])
+async def shop_settings_get(request: Request):
+    if request.state.admin_actor['role']!='owner':
+        raise HTTPException(403,'Настройки магазина доступны только владельцу')
+    return shop_settings.get()
+
+@app.put('/api/admin/shop-settings',dependencies=[Depends(admin)])
+async def shop_settings_update(data: shop_settings.SettingsUpdate, request: Request):
+    if request.state.admin_actor['role']!='owner':
+        raise HTTPException(403,'Изменять настройки магазина может только владелец')
+    return shop_settings.update(data)
+
 @app.get('/api/admin/staff',dependencies=[Depends(admin)])
 async def staff_list():
     return staff.list_staff()
@@ -280,12 +293,13 @@ async def catalog(request: Request):
         customer = None
         tg = False
     plans = [{**p, 'price': p['stars'] if tg else p['price']} for p in all_rows('SELECT id,name,days,price,stars,version,device_limit FROM plans WHERE enabled=1 ORDER BY position,id')]
+    public_settings=shop_settings.public()
     return {'plans': plans, 'currency': 'XTR' if tg else 'RUB',  'protocols': [{'id': 'xui', 'name': 'VLESS · 3x-ui', 'available': providers.available('xui', customer['id'] if customer else None)},
                                            {'id': 'wg', 'name': 'WireGuard', 'available': providers.available('wg', customer['id'] if customer else None)}],
             'trial':trials.offer(customer), 'payment_mode': 'stars' if tg else c.PAYMENT_MODE, 'bot_username': c.BOT_USERNAME,
-            'support': os.getenv('SUPPORT_TEXT', 'Напишите администратору магазина.'),
+            'support': public_settings['support'],
             'receipts': not tg and os.getenv('YOOKASSA_RECEIPTS') == 'true',
-            'terms': os.getenv('TERMS_TEXT', 'Условия продажи ещё не заполнены владельцем магазина.')}
+            'terms': public_settings['terms']}
 
 @app.get('/api/support/tickets')
 async def support_user_list(page:int=Query(default=1,ge=1,le=100000),page_size:int=Query(default=20,ge=1,le=50),user=Depends(current_user)):
@@ -549,7 +563,7 @@ async def purchase(data: Purchase, user=Depends(current_user)):
     if not providers.available(data.protocol, user['id']):
         raise HTTPException(503, 'Этот способ подключения ещё не настроен')
     method = 'stars' if user['telegram_id'] else c.PAYMENT_MODE
-    if method == 'stars' and (not c.BOT_TOKEN or not os.getenv('TERMS_TEXT')):
+    if method == 'stars' and (not c.BOT_TOKEN or not shop_settings.terms_configured()):
         raise HTTPException(503, 'Владелец ещё не настроил оплату и условия продажи в Telegram')
     if method == 'stars' and not data.accept_terms:
         raise HTTPException(422, 'Подтвердите согласие с условиями продажи')
