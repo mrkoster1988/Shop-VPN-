@@ -23,28 +23,67 @@ class Legacy:
 
     async def inbound(self, client):
         obj = result(await client.get(self.base + f'/panel/api/inbounds/get/{self.inbound_id}'))
-        if not isinstance(obj, dict) or obj.get('protocol') != 'vless':
+        if (not isinstance(obj, dict) or obj.get('protocol') != 'vless'
+                or ('id' in obj and (type(obj['id']) is not int or obj['id'] != self.inbound_id))):
             raise PanelError('VLESSInboundUnavailable')
         return obj
 
     async def check(self, client):
         result(await client.post(self.base + '/login', data={key:self.profile[key] for key in ('username','password')}))
-        return await self.inbound(client)
+        inbound = await self.inbound(client)
+        self.records(inbound)
+        return inbound
+
+    def records(self, inbound):
+        settings = inbound.get('settings')
+        if isinstance(settings, str):
+            try:
+                settings = json.loads(settings)
+            except (ValueError, TypeError):
+                raise PanelError('UnsupportedLegacySchema') from None
+        if (not isinstance(settings, dict) or not isinstance(settings.get('clients'), list)
+                or any(not isinstance(row, dict) or not isinstance(row.get('id'), str)
+                       or not row['id'] for row in settings['clients'])):
+            raise PanelError('UnsupportedLegacySchema')
+        return settings['clients']
+
+    def find(self, records, identity):
+        matches = [row for row in records if row['id'] == identity]
+        if len(matches) > 1:
+            raise PanelError('AmbiguousLegacyClient')
+        return matches[0] if matches else None
+
+    def identity_available(self, records, payload):
+        for row in records:
+            if row['id'] != payload['id'] and any(
+                    payload.get(key) and row.get(key) == payload[key] for key in ('email', 'subId')):
+                raise PanelError('LegacyClientIdentityCollision')
 
     async def apply(self, client, sub, enabled):
         inbound = await self.check(client)
-        settings = inbound['settings']
-        settings = json.loads(settings) if isinstance(settings, str) else settings
-        existing = next((x for x in settings.get('clients', []) if x.get('id') == sub['id']), None)
+        records = self.records(inbound)
+        existing = self.find(records, sub['id'])
         if not enabled and not existing:
             return ''
         payload = dict(existing) if existing else {
             'id': sub['id'], 'email': 'pushok_' + sub['id'], 'flow': self.profile['flow'],
             'limitIp': 0, 'totalGB': 0, 'subId': sub['id'].replace('-', '')}
+        self.identity_available(records, payload)
         payload.update(enable=enabled, expiryTime=sub['expires'] * 1000)
         endpoint = f"updateClient/{sub['id']}" if existing else 'addClient'
         result(await client.post(self.base + '/panel/api/inbounds/' + endpoint,
             data={'id': self.inbound_id, 'settings': json.dumps({'clients': [payload]})}))
+        confirmed_records = self.records(await self.inbound(client))
+        confirmed = self.find(confirmed_records, sub['id'])
+        # Some panels remove disabled clients. Absence confirms revocation, never issuance.
+        if confirmed is None and not enabled:
+            return ''
+        if (confirmed is None or confirmed.get('enable') is not enabled
+                or type(confirmed.get('expiryTime')) is not int
+                or confirmed['expiryTime'] != sub['expires'] * 1000
+                or any(confirmed.get(key) != payload.get(key) for key in ('email', 'subId'))):
+            raise PanelError('LegacyClientWriteNotConfirmed')
+        self.identity_available(confirmed_records, payload)
         return self.profile['link_template'].replace('{uuid}', sub['id'])
 
 
