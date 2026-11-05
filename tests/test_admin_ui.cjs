@@ -243,7 +243,7 @@ test('выход администратора очищает платёжное 
   const request=p.run('saveAdsPayment('+paymentFormSource+')');p.run("$('exit').onclick()");
   p.replyAt(0,{status:'confirmed'});await request;
   assert.equal(p.run('adsPaymentIntents.size'),0);assert.equal(p.element('ads-admin-list').innerHTML,'');
-  assert.equal(p.element('ads-admin-error').textContent,'');assert.equal(p.requests.length,1);
+  assert.equal(p.element('ads-admin-error').textContent,'');assert.equal(p.requests.length,2);assert.equal(p.requests[1],'/shop/api/admin/auth/logout');
 });
 
 test('успешный ручной учёт обновляет очередь без повторного сохранения',async()=>{
