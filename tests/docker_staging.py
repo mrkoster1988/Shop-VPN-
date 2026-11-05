@@ -101,9 +101,15 @@ class Staging:
         result=json.loads(output.getvalue());check(result['phase']==expected,'Unexpected controller phase');return result
     def compare(self,expected,*,cleared):
         current=self.snapshot()
-        changed=[name for name in set(expected.get('table_digests',{}))|set(current.get('table_digests',{}))
-                 if expected.get('table_digests',{}).get(name)!=current.get('table_digests',{}).get(name)]
-        check(current['digest']==expected['digest'],'Application data changed across snapshot/upgrade: '+','.join(sorted(changed)))
+        old=expected.get('table_digests',{});new=current.get('table_digests',{})
+        changed=[name for name in set(old)&set(new) if old[name]!=new[name]]
+        missing=sorted(set(old)-set(new))
+        allowed_new={'admin_audit','password_reset_tokens','staff_sessions','staff_users',
+                     'store_settings','support_cases','support_messages'}
+        added=sorted(set(new)-set(old))
+        check(not changed and not missing and set(added)<=allowed_new,
+              'Application data changed across snapshot/upgrade: changed='+','.join(sorted(changed))+
+              '; missing='+','.join(missing)+'; added='+','.join(added))
         check(current['counts']['sessions']==(0 if cleared else 1) and current['counts']['tickets']==(0 if cleared else 1),'Session cleanup mismatch')
         if cleared:check(current['db_uid']==10001 and current['db_gid']==10001 and current['db_mode']==0o600 and current['directory_mode']==0o700,'Restored file permissions mismatch')
         return current
@@ -182,6 +188,9 @@ class Staging:
         self.controller(self.args.source,'rollback','rolled_back');self.compare(managed,cleared=managed_origin)
         self.event('managed_prepare_and_rollback_verified' if managed_origin else 'direct_prepare_and_rollback_verified')
         self.controller(self.args.source,'prepare','ready');self.controller(self.args.source,'activate','committed');self.compare(managed,cleared=True)
+        settings=self.data('settings')
+        check(settings=={'support_text':'Disposable CI fixture','terms_configured':False},
+              'Store settings were not initialized from the installation environment')
         check({'ads_policy','ads_requests','ads_events','ads_payment_entries','ads_sites','ads_placements','ads_placement_actions','ads_bookings','ads_booking_actions','ads_expenses','ads_expense_actions'}<=set(self.snapshot()['tables']),'Missing advertising migration tables')
         self.event('target_activated_data_preserved')
         login,headers=self.http('/api/auth/login',body={'email':'fixture1@example.invalid','password':self.fixture['password']})
