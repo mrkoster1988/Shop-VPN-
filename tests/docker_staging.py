@@ -100,7 +100,10 @@ class Staging:
             raise StageError('upgrade '+command+' '+json.dumps(phase)+' '+self.scrub(detail)) from None
         result=json.loads(output.getvalue());check(result['phase']==expected,'Unexpected controller phase');return result
     def compare(self,expected,*,cleared):
-        current=self.snapshot();check(current['digest']==expected['digest'],'Application data changed across snapshot/upgrade')
+        current=self.snapshot()
+        changed=[name for name in set(expected.get('table_digests',{}))|set(current.get('table_digests',{}))
+                 if expected.get('table_digests',{}).get(name)!=current.get('table_digests',{}).get(name)]
+        check(current['digest']==expected['digest'],'Application data changed across snapshot/upgrade: '+','.join(sorted(changed)))
         check(current['counts']['sessions']==(0 if cleared else 1) and current['counts']['tickets']==(0 if cleared else 1),'Session cleanup mismatch')
         if cleared:check(current['db_uid']==10001 and current['db_gid']==10001 and current['db_mode']==0o600 and current['directory_mode']==0o700,'Restored file permissions mismatch')
         return current

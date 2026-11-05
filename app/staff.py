@@ -14,6 +14,7 @@ def clean_email(v):
 def legacy_owner(request):
     token=request.headers.get("authorization","")
     if not c.ADMIN_TOKEN or not hmac.compare_digest(token,"Bearer "+c.ADMIN_TOKEN): return None
+    if not c.DB.is_file(): raise HTTPException(503,"База данных магазина временно недоступна")
     with db() as conn: count=conn.execute("SELECT count(*) FROM staff_users WHERE enabled=1").fetchone()[0]
     return {"id":None,"email":"Первоначальная настройка","role":"owner"} if count==0 else None
 def authorize(request: Request):

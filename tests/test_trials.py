@@ -7,7 +7,7 @@ from app.db import one,execute,init_db
 
 @pytest.fixture
 def trial_env(client,monkeypatch):
-    monkeypatch.setattr(c,'BOT_TOKEN','123:trial-token');monkeypatch.setattr(c,'BOT_USERNAME','trial_test_bot');monkeypatch.setenv('TERMS_TEXT','Trial terms snapshot')
+    monkeypatch.setattr(c,'BOT_TOKEN','123:trial-token');monkeypatch.setattr(c,'BOT_USERNAME','trial_test_bot');execute('UPDATE store_settings SET terms_text=? WHERE id=1',('Trial terms snapshot',))
     calls=[];messages=[]
     async def provision(sub):calls.append(dict(sub));return 'vless://'+sub['id']+'@vpn.example:443'
     async def no_payment(*args,**kwargs):raise AssertionError('Trial must not request payment')
@@ -69,7 +69,7 @@ def test_trial_has_no_extra_profiles_rotation_or_subscription_url(trial_env):
 
 def test_policy_edit_does_not_reset_claim_or_change_saved_conditions(trial_env,monkeypatch):
     client,calls,_=trial_env;telegram(client);policy(client,enabled=True,days=1);first=claim(client).json()
-    monkeypatch.setenv('TERMS_TEXT','Different new terms');assert policy(client,enabled=False,days=3).status_code==200
+    execute('UPDATE store_settings SET terms_text=? WHERE id=1',('Different new terms',));assert policy(client,enabled=False,days=3).status_code==200
     assert claim(client,policy_version=999,accept_terms=False).json()['id']==first['id']
     asyncio.run(service.fulfill(first['id']));assert one('SELECT days FROM orders')['days']==1
     assert one('SELECT terms_snapshot FROM trial_claims')['terms_snapshot']=='Trial terms snapshot'

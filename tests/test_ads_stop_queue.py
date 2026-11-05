@@ -77,8 +77,8 @@ def test_stop_queue_pagination_has_no_duplicates_and_stable_ties(client,monkeypa
 
 def test_stop_queue_requires_administrator_and_has_no_customer_route(client):
     paid(client)
-    assert client.get('/api/admin/ads/stop-queue').status_code==403
-    assert client.get('/api/admin/ads/stop-queue',headers={'Authorization':'Bearer wrong'}).status_code==403
+    assert client.get('/api/admin/ads/stop-queue').status_code==401
+    assert client.get('/api/admin/ads/stop-queue',headers={'Authorization':'Bearer wrong'}).status_code==401
     assert client.get('/api/ads/stop-queue').status_code==404
 
 

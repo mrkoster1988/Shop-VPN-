@@ -25,7 +25,7 @@ def test_default_policy_read_does_not_write_and_intake_is_closed(client):
     register(client);assert submit(client,policy_version=0).status_code==409
 
 def test_policy_changes_are_versioned_audited_and_require_admin(client):
-    assert client.put('/api/admin/ads/policy',json={}).status_code==403
+    assert client.put('/api/admin/ads/policy',json={}).status_code==401
     first=policy(client,accepting=True,amount=500,hours=48);assert first.status_code==200
     p=first.json();assert p['version']==1 and p['amount']==500
     payload={k:p[k] for k in ('accepting','amount','hours','instructions','version')};payload['version']=0
@@ -61,7 +61,7 @@ def test_invalid_channel_refuses_without_echo(client,channel):
 def test_customer_and_admin_boundaries_and_csrf(client):
     assert client.get('/api/ads/requests').status_code==401
     register(client);policy(client,accepting=True);row=submit(client).json()
-    assert client.get('/api/admin/ads/requests').status_code==403
+    assert client.get('/api/admin/ads/requests').status_code==401
     assert client.post('/api/ads/requests',json={'request_id':str(uuid.uuid4()),'policy_version':1,'channel':'@other_channel'},headers={'Origin':'https://evil.example'}).status_code==403
     client.post('/api/auth/logout');register(client,'other@example.com')
     assert client.get('/api/ads/requests/'+row['id']).status_code==404

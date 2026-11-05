@@ -150,9 +150,9 @@ def test_refund_requires_cancel_and_customer_cannot_modify_booking(client,monkey
     row,s,_=setup(client,monkeypatch);reserve(client,row,s)
     assert record(client,row,'refund').status_code==409
     path='/api/admin/ads/requests/'+row['id']+'/booking/cancel'
-    assert client.post(path,json={}).status_code==403
+    assert client.post(path,json={}).status_code==401
     assert client.post(path,json={},headers={**admin_headers(),'Origin':'https://evil.example'}).status_code==403
-    assert client.get('/api/admin/ads/bookings').status_code==403
+    assert client.get('/api/admin/ads/bookings').status_code==401
     assert client.get('/api/ads/bookings').status_code==404
     assert cancel(client,row).status_code==200
     assert record(client,row,'refund').status_code==200

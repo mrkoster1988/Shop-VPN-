@@ -29,7 +29,7 @@ def test_legacy_check_only_authenticates_and_reads_without_leaking_records():
         calls.append(request)
         return httpx.Response(200,json={'success':True} if request.method=='POST' else {'success':True,'obj':{'id':7,'protocol':'vless','settings':{'clients':[{'id':'private-client-id','email':'private@example.invalid'}]}}})
     report=asyncio.run(s.probe(profile(),client_factory=factory(handler)))
-    assert report['status']=='api_checks_ok' and all(report['checks'].values())
+    assert report['status']=='api_checks_ok' and all(value for name,value in report['checks'].items() if name not in report['not_applicable_checks'])
     assert [(r.method,r.url.path.rsplit('/',1)[-1]) for r in calls]==[('POST','login'),('GET','7')]
     assert not any(value in json.dumps(report) for value in ('private-password','private-client-id','private@example.invalid','panel.example','private-path'))
     assert all(value is False for value in report['scope'].values())

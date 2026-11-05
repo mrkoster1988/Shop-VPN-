@@ -69,7 +69,9 @@ def snapshot(database=None):
                     index=columns.index('password')
                     rows=[tuple(None if i==index else value for i,value in enumerate(row)) for row in rows]
                 business[name]=sorted(json.dumps(row,ensure_ascii=True) for row in rows)
-        return {'digest':hashlib.sha256(json.dumps(records,sort_keys=True).encode()).hexdigest(),
+        table_digests={name:hashlib.sha256(json.dumps(rows,sort_keys=True).encode()).hexdigest()
+            for name,rows in records.items()}
+        return {'table_digests':table_digests,'digest':hashlib.sha256(json.dumps(records,sort_keys=True).encode()).hexdigest(),
             'business_digest':hashlib.sha256(json.dumps(business,sort_keys=True).encode()).hexdigest(),'counts':counts,'tables':tables,
             'db_uid':path.stat().st_uid,'db_gid':path.stat().st_gid,'db_mode':stat.S_IMODE(path.stat().st_mode),
             'directory_mode':stat.S_IMODE(path.parent.stat().st_mode)}

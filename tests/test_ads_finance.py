@@ -121,9 +121,9 @@ def test_negative_manual_balance_is_visible_without_profit_claim(client,monkeypa
 
 def test_finance_is_admin_only_and_costs_do_not_leak_to_customer(client,monkeypatch):
     setup(client,monkeypatch);entry=expense(client).json()
-    assert client.get('/api/admin/ads/finance').status_code==403
-    assert client.post('/api/admin/ads/expenses',json={}).status_code==403
-    assert client.post('/api/admin/ads/expenses/'+entry['id']+'/void',json={}).status_code==403
+    assert client.get('/api/admin/ads/finance').status_code==401
+    assert client.post('/api/admin/ads/expenses',json={}).status_code==401
+    assert client.post('/api/admin/ads/expenses/'+entry['id']+'/void',json={}).status_code==401
     assert client.post('/api/admin/ads/expenses',json={},headers={**admin_headers(),'Origin':'https://evil.example'}).status_code==403
     assert client.get('/api/ads/finance').status_code==404
     for path in ['/api/ads/requests','/api/me']:

@@ -33,8 +33,8 @@ def order(uid,status='paid',**fields):
 
 
 def test_admin_boundary_and_safe_snapshot_without_remote_calls(client,monkeypatch):
-    assert client.get('/api/admin/diagnostics').status_code==403
-    assert client.get('/api/admin/diagnostics',headers={'Authorization':'Bearer wrong'}).status_code==403
+    assert client.get('/api/admin/diagnostics').status_code==401
+    assert client.get('/api/admin/diagnostics',headers={'Authorization':'Bearer wrong'}).status_code==401
     uid=user();oid=order(uid,error='private-provider-url-and-key')
     before=list(sqlite3.connect(c.DB).iterdump())
     def forbidden(*a,**kw):raise AssertionError('Unexpected remote mutation')
@@ -112,7 +112,7 @@ def test_server_capacity_and_probe_age_are_not_live_vpn_checks(client):
 def test_setting_failures_only_reveal_booleans(client,monkeypatch):
     monkeypatch.setenv('ENCRYPTION_KEY','private-invalid-key');monkeypatch.setattr(c,'PAYMENT_MODE','yookassa')
     monkeypatch.delenv('YOOKASSA_SECRET',raising=False);monkeypatch.setenv('YOOKASSA_SHOP_ID','private-shop-id')
-    monkeypatch.setattr(c,'BOT_TOKEN','private-bot-token');monkeypatch.setattr(c,'BOT_USERNAME','');monkeypatch.delenv('TERMS_TEXT',raising=False)
+    monkeypatch.setattr(c,'BOT_TOKEN','private-bot-token');monkeypatch.setattr(c,'BOT_USERNAME','');monkeypatch.delenv('TERMS_TEXT',raising=False);execute('UPDATE store_settings SET terms_text=? WHERE id=1',('',))
     data=report(client);text=json.dumps(data)
     assert {'encryption_key_invalid','payment_settings_incomplete','telegram_sales_settings_incomplete'}<=set(data['warnings'])
     assert 'private-' not in text

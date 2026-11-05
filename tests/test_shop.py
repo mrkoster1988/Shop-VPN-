@@ -21,6 +21,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(providers,'available',lambda _,user_id=None:True)
     service.lock=asyncio.Lock()
     hits.clear()
+    monkeypatch.setenv('TERMS_TEXT','Тестовые условия продажи')
     with TestClient(app) as test:
         for protocol, profile in [('xui',{'url':'https://panel.example','username':'test','password':'private','inbound_id':1,'link_template':'vless://{uuid}@vpn.example','flow':''}),
                                   ('wg',{'url':'https://agent.example','token':'a'*32})]:
@@ -181,7 +182,7 @@ def test_frontend(client):
 
 def test_stars_verified_checkout_and_replay(client,monkeypatch):
     monkeypatch.setattr(c,'BOT_TOKEN','telegram-token')
-    monkeypatch.setenv('TERMS_TEXT','Test merchant terms')
+    execute('UPDATE store_settings SET terms_text=? WHERE id=1', ('Test merchant terms',))
     user=service.telegram_account(777)
     url=service.ticket(user['id']); client.get(url)
     async def invoice(order): return 'https://t.me/$testinvoice'
@@ -402,7 +403,7 @@ def test_hidden_tariffs_keep_pending_orders_payable(client):
 
 def test_telegram_uses_edited_stars_price(client, monkeypatch):
     monkeypatch.setattr(c, 'BOT_TOKEN', 'telegram-token')
-    monkeypatch.setenv('TERMS_TEXT', 'Merchant terms')
+    execute('UPDATE store_settings SET terms_text=? WHERE id=1', ('Merchant terms',))
     assert save_plan(client, plan_edit(client, stars=271, days=15)).status_code == 200
     user = service.telegram_account(123456)
     client.get(service.ticket(user['id']))
@@ -515,7 +516,7 @@ def test_custom_tariff_can_be_purchased_and_fulfilled(client, monkeypatch):
 def test_custom_tariff_stars_uses_its_own_price(client, monkeypatch):
     assert new_plan(client, enabled=True).status_code == 201
     monkeypatch.setattr(c, 'BOT_TOKEN', 'telegram-token')
-    monkeypatch.setenv('TERMS_TEXT', 'Merchant terms')
+    execute('UPDATE store_settings SET terms_text=? WHERE id=1', ('Merchant terms',))
     user = service.telegram_account(87654)
     client.get(service.ticket(user['id']))
     assert client.get('/api/catalog').json()['plans'][-1]['price'] == 75
