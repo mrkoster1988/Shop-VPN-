@@ -13,3 +13,4 @@ backups/
 *.db
 *.db-wal
 *.db-shm
+upgrades/

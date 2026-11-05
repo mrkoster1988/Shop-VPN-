@@ -21,7 +21,8 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from dotenv.parser import parse_stream
 
-VERSION='v0.021'
+VERSION='v0.022'
+COMPATIBLE_RELEASES={'v0.021',VERSION}
 MAGIC=b'PUSHOKB1'
 MAX_DB=128*1024*1024
 MAX_ENV=1024*1024
@@ -132,7 +133,7 @@ def unpack(raw):
         manifest=json.loads(files.pop('manifest.json'))
         if not isinstance(manifest['created'],str) or len(manifest['created'])>64:raise BackupError('Некорректное время создания копии')
         datetime.fromisoformat(manifest['created'])
-        if type(manifest['format']) is not int or manifest['format']!=1 or manifest['release']!=VERSION:raise BackupError('Восстанавливайте копию инструментом того же релиза')
+        if type(manifest['format']) is not int or manifest['format']!=1 or manifest['release'] not in COMPATIBLE_RELEASES:raise BackupError('Восстанавливайте копию инструментом того же релиза')
         if set(manifest['files'])!=set(files):raise BackupError('Некорректный манифест копии')
         for name,value in files.items():
             record=manifest['files'][name]

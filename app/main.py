@@ -49,7 +49,7 @@ async def lifespan(app):
     except Exception:
         raise RuntimeError('Server registry import failed; check legacy provider settings') from None
     tasks = []
-    if os.getenv('BACKGROUND_TASKS', 'true') == 'true':
+    if os.getenv('BACKGROUND_TASKS', 'true') == 'true' and os.getenv('MAINTENANCE_MODE')!='true':
         tasks.append(asyncio.create_task(service.worker()))
         if c.BOT_TOKEN:
             tasks.append(asyncio.create_task(service.bot_loop()))
@@ -73,6 +73,11 @@ hits = defaultdict(deque)
 @app.middleware('http')
 async def safety(request, call_next):
     path = request.url.path.removeprefix(c.BASE_PATH)
+    if os.getenv('MAINTENANCE_MODE')=='true' and path!='/health':
+        headers={'Retry-After':'60','Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'}
+        if path.startswith(('/api/','/sub/','/login')):
+            return JSONResponse({'detail':'Магазин временно на обслуживании. Повторите позже.'},status_code=503,headers=headers)
+        return HTMLResponse('<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Магазин на обслуживании</title><body><main><h1>Скоро вернёмся</h1><p>Магазин временно на обслуживании. Пожалуйста, зайдите немного позже.</p></main></body></html>',status_code=503,headers=headers)
     if request.method in ('POST', 'PUT', 'DELETE', 'PATCH'):
         origin = request.headers.get('origin')
         if origin and origin != urlsplit(c.PUBLIC_URL)._replace(path='', query='', fragment='').geturl():

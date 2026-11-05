@@ -19,7 +19,7 @@ import time
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 
-VERSION = 'v0.021'
+VERSION = 'v0.022'
 
 
 def run(args, **kwargs):
@@ -248,6 +248,7 @@ def main(argv=None):
     marker=root/'installer.json'
     if marker.exists():
         settings=json.loads(marker.read_text())
+        if settings.get('managed_upgrade'):raise ValueError('Установка обновлена через upgrade.py; используйте status/activate/rollback, не повторный установщик')
         if settings.get('version')!=VERSION:raise ValueError('Другая версия уже установлена. Автоматическое обновление с миграцией не выполняется.')
         for key in ('url','mode','port','support','nginx_config'):
             supplied=getattr(args,key,None)
@@ -292,7 +293,7 @@ def main(argv=None):
             if staging.exists():
                 if staging.is_symlink():raise ValueError('Некорректный staging-каталог')
                 shutil.rmtree(staging)
-            shutil.copytree(args.source,staging,ignore=shutil.ignore_patterns('.git','.env','.env.*','data','.venv','__pycache__','.pytest_cache','*.zip','backups','*.pvb','*.db','*.db-wal','*.db-shm'))
+            shutil.copytree(args.source,staging,ignore=shutil.ignore_patterns('.git','.env','.env.*','data','.venv','__pycache__','.pytest_cache','*.zip','backups','upgrades','*.pvb','*.db','*.db-wal','*.db-shm'))
             staging.rename(root/'source')
         if not (root/'source/scripts/install.py').is_file():raise ValueError('Неполные исходники; восстановите резервную копию')
         if not (root/'.env').exists():
