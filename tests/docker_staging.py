@@ -22,7 +22,7 @@ import tempfile
 import threading
 import time
 from urllib.error import HTTPError
-from urllib.request import Request,urlopen
+from urllib.request import Request,urlopen,install_opener,build_opener,ProxyHandler,HTTPSHandler
 import uuid
 
 class StageError(RuntimeError):pass
@@ -150,6 +150,8 @@ class Staging:
         cert=temp/'certificate.pem';key=temp/'key.pem'
         self.run('fixture certificate',['openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(key),'-out',str(cert),'-days','1','-subj','/CN=127.0.0.1','-addext','subjectAltName=IP:127.0.0.1'])
         os.environ['SSL_CERT_FILE']=str(cert);os.environ['NO_PROXY']='127.0.0.1,localhost,::1'
+        # Each disposable scenario has a new CA; do not reuse urllib's previous HTTPS context.
+        install_opener(build_opener(ProxyHandler({}),HTTPSHandler(context=ssl.create_default_context(cafile=str(cert)))))
         self.start_proxy(port,cert,key)
         self.run('build baseline',self.compose+['build','shop'])
         self.fixture={name:str(uuid.uuid4()) for name in ('subscription','trial_subscription','credential','redemption','device','pending_device')}
