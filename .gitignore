@@ -7,3 +7,9 @@ wg-data/
 __pycache__/
 .pytest_cache/
 *.zip
+
+backups/
+*.pvb
+*.db
+*.db-wal
+*.db-shm

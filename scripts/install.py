@@ -19,7 +19,7 @@ import time
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 
-VERSION = 'v0.020'
+VERSION = 'v0.021'
 
 
 def run(args, **kwargs):
@@ -292,7 +292,7 @@ def main(argv=None):
             if staging.exists():
                 if staging.is_symlink():raise ValueError('Некорректный staging-каталог')
                 shutil.rmtree(staging)
-            shutil.copytree(args.source,staging,ignore=shutil.ignore_patterns('.git','.env','.env.*','data','.venv','__pycache__','.pytest_cache','*.zip'))
+            shutil.copytree(args.source,staging,ignore=shutil.ignore_patterns('.git','.env','.env.*','data','.venv','__pycache__','.pytest_cache','*.zip','backups','*.pvb','*.db','*.db-wal','*.db-shm'))
             staging.rename(root/'source')
         if not (root/'source/scripts/install.py').is_file():raise ValueError('Неполные исходники; восстановите резервную копию')
         if not (root/'.env').exists():

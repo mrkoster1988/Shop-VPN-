@@ -4,6 +4,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && useradd --uid 10001 --create-home shop
 COPY app ./app
+COPY scripts/backup.py ./scripts/backup.py
 RUN mkdir /app/data && chown shop:shop /app/data
 USER shop
 EXPOSE 8000
