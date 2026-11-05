@@ -574,3 +574,44 @@ test('публичный партнёрский код сохраняется д
   p.state.customer={id:2,email:'new@example.com',subscriptions:[],orders:[]};await p.run('refreshMe()');await p.run("beginCheckout('month')");
   assert.equal(p.element('promo-code').value,'PARTNER15');
 });
+
+function adsReplies(p,changes={}) {
+  p.respond('/shop/api/ads/policy',{accepting:true,amount:300,hours:24,version:1,instructions:'На рассмотрение',...changes});
+  p.respond('/shop/api/ads/requests?page=1',{requests:[],total:0,page:1,page_size:20});
+}
+
+test('кабинет рекламодателя показывает закрытый приём без формы и оплаты',async()=>{
+  const p=await customerPage();adsReplies(p,{accepting:false});await p.element('ads-open').onclick();
+  assert.equal(p.element('ads-form').hidden,true);assert.match(p.element('ads-offer').textContent,/закрыт/);
+  assert.ok(!p.calls.some(c=>c.url.endsWith('/api/orders')));
+});
+
+test('после потери ответа рекламная заявка повторяется с тем же идентификатором',async()=>{
+  const p=await customerPage();adsReplies(p);await p.element('ads-open').onclick();
+  p.element('ads-channel').value='@channel_name';p.element('ads-comment').value='Предложение';
+  p.respond('/shop/api/ads/requests',{detail:'Соединение потеряно'},502);
+  await p.element('ads-form').onsubmit({preventDefault(){}});await p.element('ads-form').onsubmit({preventDefault(){}});
+  const calls=p.calls.filter(c=>c.url==='/shop/api/ads/requests');assert.equal(calls.length,2);
+  assert.equal(JSON.parse(calls[0].opts.body).request_id,JSON.parse(calls[1].opts.body).request_id);
+  assert.equal(JSON.parse(calls[0].opts.body).amount,undefined);
+});
+
+test('закрытый рекламный кабинет не получает запоздалые данные',async()=>{
+  const p=await customerPage();adsReplies(p);const reply=p.defer('/shop/api/ads/requests?page=1');const pending=p.element('ads-open').onclick();
+  p.element('ads-dialog').close();reply({requests:[{id:'private-id',channel:'private_channel'}],total:1,page:1,page_size:20});await pending;
+  assert.equal(p.element('ads-list').innerHTML,'');assert.equal(p.run('adsPolicy'),null);
+});
+
+test('комментарии и причины модерации экранируются, одобрение не выдаётся за размещение',async()=>{
+  const p=await customerPage();adsReplies(p);
+  p.respond('/shop/api/ads/requests?page=1',{requests:[{id:'ad-a',channel:'channel_name',comment:'<img src=x>',reason:'<script>unsafe</script>',state:'approved',version:2,amount:300,hours:24}],total:1,page:1,page_size:20});
+  await p.element('ads-open').onclick();const html=p.element('ads-list').innerHTML;
+  assert.ok(html.includes('&lt;img')&&!html.includes('<script>'));assert.match(html,/оплата и запуск ещё не выполнены/);
+});
+
+test('выход во время отправки рекламы очищает форму и не возвращает заявку',async()=>{
+  const p=await customerPage();adsReplies(p);await p.element('ads-open').onclick();
+  p.element('ads-channel').value='@channel_name';p.element('ads-comment').value='Личный комментарий';const reply=p.defer('/shop/api/ads/requests');
+  const pending=p.element('ads-form').onsubmit({preventDefault(){}});await p.element('logout').onclick();reply({id:'ad-a'});await pending;
+  assert.equal(p.element('ads-dialog').open,false);assert.equal(p.element('ads-comment').value,'');assert.equal(p.element('ads-list').innerHTML,'');assert.equal(p.run('adsIntent.size'),0);
+});

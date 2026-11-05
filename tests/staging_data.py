@@ -56,9 +56,12 @@ def snapshot(database=None):
     try:
         conn.execute('BEGIN')
         if conn.execute('PRAGMA integrity_check').fetchall()!=[('ok',)] or conn.execute('PRAGMA foreign_key_check').fetchone():raise ValueError('Invalid staging database')
-        records={};business={};counts={}
+        records={};business={};counts={};tables=[]
         for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"):
+            tables.append(name)
             quoted='"'+name.replace('"','""')+'"';rows=conn.execute('SELECT * FROM '+quoted).fetchall();counts[name]=len(rows)
+            # Новые пустые таблицы рекламы не меняют данные старой схемы; их наличие проверяется отдельно.
+            if name in ('ads_policy','ads_requests','ads_events') and not rows:continue
             if name not in ('sessions','tickets'):
                 records[name]=sorted(json.dumps(row,ensure_ascii=True) for row in rows)
                 if name=='users':
@@ -67,7 +70,7 @@ def snapshot(database=None):
                     rows=[tuple(None if i==index else value for i,value in enumerate(row)) for row in rows]
                 business[name]=sorted(json.dumps(row,ensure_ascii=True) for row in rows)
         return {'digest':hashlib.sha256(json.dumps(records,sort_keys=True).encode()).hexdigest(),
-            'business_digest':hashlib.sha256(json.dumps(business,sort_keys=True).encode()).hexdigest(),'counts':counts,
+            'business_digest':hashlib.sha256(json.dumps(business,sort_keys=True).encode()).hexdigest(),'counts':counts,'tables':tables,
             'db_uid':path.stat().st_uid,'db_gid':path.stat().st_gid,'db_mode':stat.S_IMODE(path.stat().st_mode),
             'directory_mode':stat.S_IMODE(path.parent.stat().st_mode)}
     finally:conn.close()

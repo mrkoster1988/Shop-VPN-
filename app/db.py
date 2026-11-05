@@ -27,6 +27,21 @@ def init_db():
           token TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), expires INTEGER);
         CREATE TABLE IF NOT EXISTS tickets (
           token TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), expires INTEGER);
+        CREATE TABLE IF NOT EXISTS ads_policy (
+          id INTEGER PRIMARY KEY CHECK(id=1), accepting INTEGER NOT NULL CHECK(accepting IN (0,1)),
+          amount INTEGER NOT NULL CHECK(amount>0), hours INTEGER NOT NULL CHECK(hours>0),
+          instructions TEXT NOT NULL, version INTEGER NOT NULL, updated INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS ads_requests (
+          id TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id), request_id TEXT NOT NULL,
+          channel TEXT NOT NULL, comment TEXT NOT NULL, amount INTEGER NOT NULL, hours INTEGER NOT NULL,
+          policy_version INTEGER NOT NULL, state TEXT NOT NULL CHECK(state IN ('pending','approved','rejected','canceled')),
+          reason TEXT NOT NULL DEFAULT '', version INTEGER NOT NULL DEFAULT 1,
+          created INTEGER NOT NULL, updated INTEGER NOT NULL, UNIQUE(user_id,request_id));
+        CREATE UNIQUE INDEX IF NOT EXISTS ads_open_channel ON ads_requests(user_id,channel) WHERE state IN ('pending','approved');
+        CREATE INDEX IF NOT EXISTS ads_request_queue ON ads_requests(state,created,id);
+        CREATE TABLE IF NOT EXISTS ads_events (
+          id INTEGER PRIMARY KEY, request_id TEXT REFERENCES ads_requests(id),
+          actor TEXT NOT NULL, action TEXT NOT NULL, created INTEGER NOT NULL, details TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS plans (
           id TEXT PRIMARY KEY, name TEXT NOT NULL, days INTEGER NOT NULL CHECK(days > 0),
           price INTEGER NOT NULL CHECK(price > 0), stars INTEGER NOT NULL CHECK(stars > 0),

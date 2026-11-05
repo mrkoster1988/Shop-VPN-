@@ -24,7 +24,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from pydantic import BaseModel, Field, field_validator, ValidationError
 from starlette.applications import Starlette
 from starlette.routing import Mount
-from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress
+from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
 
@@ -66,6 +66,8 @@ app = FastAPI(title='Pushok VPN', lifespan=lifespan, docs_url=None, redoc_url=No
 async def safe_validation(request, exc):
     if request.url.path.removeprefix(c.BASE_PATH).startswith('/api/admin/servers'):
         return JSONResponse({'detail':'Проверьте поля сервера и профиль подключения.'},status_code=422)
+    if request.url.path.removeprefix(c.BASE_PATH).startswith(('/api/ads/','/api/admin/ads/')):
+        return JSONResponse({'detail':'Проверьте поля рекламной заявки или настроек.'},status_code=422)
     if request.url.path.removeprefix(c.BASE_PATH).startswith('/api/auth/'):
         return JSONResponse({'detail':'Проверьте данные для входа или смены пароля.'},status_code=422)
     return await request_validation_exception_handler(request,exc)
@@ -222,6 +224,38 @@ async def catalog(request: Request):
             'support': os.getenv('SUPPORT_TEXT', 'Напишите администратору магазина.'),
             'receipts': not tg and os.getenv('YOOKASSA_RECEIPTS') == 'true',
             'terms': os.getenv('TERMS_TEXT', 'Условия продажи ещё не заполнены владельцем магазина.')}
+
+@app.get('/api/ads/policy')
+async def ads_policy():return ads.policy()
+
+@app.get('/api/ads/requests')
+async def ads_requests(page:int=Query(default=1,ge=1,le=100000),user=Depends(current_user)):
+    return ads.listing(user['id'],page=page)
+
+@app.post('/api/ads/requests')
+async def ads_create(data:ads.RequestCreate,user=Depends(current_user)):
+    return ads.create(user,data)
+
+@app.get('/api/ads/requests/{rid}')
+async def ads_get(rid:UUID,user=Depends(current_user)):
+    return ads.get(str(rid),user['id'])
+
+@app.post('/api/ads/requests/{rid}/cancel')
+async def ads_cancel(rid:UUID,data:ads.Cancel,user=Depends(current_user)):
+    return ads.transition(str(rid),data,user['id'])
+
+@app.get('/api/admin/ads/policy',dependencies=[Depends(admin)])
+async def admin_ads_policy():return ads.policy()
+
+@app.put('/api/admin/ads/policy',dependencies=[Depends(admin)])
+async def admin_ads_policy_update(data:ads.Policy):return ads.update_policy(data)
+
+@app.get('/api/admin/ads/requests',dependencies=[Depends(admin)])
+async def admin_ads_requests(page:int=Query(default=1,ge=1,le=100000),state:Literal['pending','approved','rejected','canceled']|None=None):
+    return ads.listing(state=state,page=page)
+
+@app.put('/api/admin/ads/requests/{rid}',dependencies=[Depends(admin)])
+async def admin_ads_decision(rid:UUID,data:ads.Decision):return ads.transition(str(rid),data)
 
 @app.post('/api/auth/register')
 async def register(data: Credentials):

@@ -3,6 +3,7 @@ const basePath = document.querySelector('meta[name="shop-base"]').content;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let diagnosticsRequest=0;
+let adsPolicy=null,adsPage=1,adsRequest=0;
 let token = '', authEpoch = 0, usersPage = 1, usersQuery = '', usersRequest = 0;
 let selectedUser = null, profilePage = 1, profileRequest = 0;
 let serverCache = [], editingServer = null;
@@ -37,7 +38,7 @@ async function refresh({plans = true} = {}) {
   const [data, catalog] = await Promise.all([api('overview'), plans ? api('plans') : Promise.resolve(null)]);
   $('stats').innerHTML = `<div>Пользователи<strong>${data.users}</strong></div><div>Подписки<strong>${data.active}</strong></div><div>Подтверждено<strong>${data.revenue} ₽ / ${data.stars} ★</strong></div>`;
   if (catalog) $('plan-editors').innerHTML = catalog.plans.map(planForm).join('');
-  await Promise.all([refreshDiagnostics(),refreshOrders(), refreshUsers(), plans ? refreshServers() : Promise.resolve(), plans ? refreshTrialPolicy() : Promise.resolve(), plans ? refreshCoupons() : Promise.resolve(), plans ? refreshReferralPolicy() : Promise.resolve()]);
+  await Promise.all([refreshAdsAdmin(),refreshDiagnostics(),refreshOrders(), refreshUsers(), plans ? refreshServers() : Promise.resolve(), plans ? refreshTrialPolicy() : Promise.resolve(), plans ? refreshCoupons() : Promise.resolve(), plans ? refreshReferralPolicy() : Promise.resolve()]);
 }
 $('admin-login').onsubmit = async event => {
   event.preventDefault();
@@ -49,6 +50,10 @@ $('admin-login').onsubmit = async event => {
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => {
+  adsRequest++;adsPolicy=null;adsPage=1;
+  for(const id of ['ads-admin-list','ads-admin-error','ads-admin-page'])$(id).replaceChildren();
+  for(const id of ['ads-price','ads-hours','ads-instructions'])$(id).value='';
+  $('ads-accepting').checked=false;$('ads-policy-save').disabled=false;$('ads-filter').value='';$('ads-admin-prev').disabled=true;$('ads-admin-next').disabled=true;
   diagnosticsRequest++;$('diagnostics-report').replaceChildren();$('diagnostics-error').textContent='';$('diagnostics-json').value='';
   authEpoch++; token = ''; usersRequest++; usersPage = 1; usersQuery = '';
   ordersRequest++; ordersPage = 1; ordersFilters = {q:'', status:'', method:'', protocol:''};
@@ -354,3 +359,36 @@ async function refreshDiagnostics() {
   finally {if(request===diagnosticsRequest && epoch===authEpoch)$('diagnostics-refresh').disabled=false;}
 }
 $('diagnostics-refresh').onclick=()=>refreshDiagnostics();
+
+
+const adsLabels={pending:'На модерации',approved:'Одобрено · не оплачено и не размещено',rejected:'Отклонено',canceled:'Отменено'};
+async function refreshAdsAdmin() {
+  const request=++adsRequest,epoch=authEpoch,page=adsPage;
+  const [policy,listing]=await Promise.all([api('ads/policy'),api('ads/requests?page='+page+($('ads-filter').value?'&state='+encodeURIComponent($('ads-filter').value):''))]);
+  if(request!==adsRequest || epoch!==authEpoch)return;
+  adsPolicy=policy;$('ads-accepting').checked=policy.accepting;$('ads-price').value=policy.amount;$('ads-hours').value=policy.hours;$('ads-instructions').value=policy.instructions;
+  $('ads-admin-list').innerHTML=listing.requests.map(r=>`<article class="subscription"><b>${esc('@'+r.channel)}</b><p>${esc(adsLabels[r.state] || r.state)} · клиент ${r.user_id}</p><p>${r.amount} ₽ / ${r.hours} ч</p><p>${esc(r.comment)}</p><p>${esc(r.reason)}</p><code>${esc(r.id)}</code>${r.state==='pending'?`<form data-ads-id="${esc(r.id)}" data-version="${r.version}"><label>Решение<select name="state"><option value="approved">Одобрить канал</option><option value="rejected">Отклонить</option></select></label><label>Причина для клиента<textarea name="reason" maxlength="500"></textarea></label><button>Сохранить решение</button></form>`:''}</article>`).join('') || '<p>Заявок нет.</p>';
+  $('ads-admin-page').textContent='Страница '+page+' · всего '+listing.total;$('ads-admin-prev').disabled=page===1;$('ads-admin-next').disabled=page*listing.page_size>=listing.total;
+}
+$('ads-policy-form').onsubmit=async event=>{
+  event.preventDefault();if(!adsPolicy)return;
+  const epoch=authEpoch,request=adsRequest;$('ads-policy-save').disabled=true;
+  try{await api('ads/policy',{method:'PUT',data:{version:adsPolicy.version,accepting:$('ads-accepting').checked,amount:Number($('ads-price').value),hours:Number($('ads-hours').value),instructions:$('ads-instructions').value}});if(epoch===authEpoch && request===adsRequest)await refreshAdsAdmin();}
+  catch(e){if(epoch===authEpoch && request===adsRequest)$('ads-admin-error').textContent=e.message;}
+  finally{if(epoch===authEpoch)$('ads-policy-save').disabled=false;}
+};
+$('ads-admin-list').onsubmit=async event=>{
+  const form=event.target.closest('[data-ads-id]');if(!form)return;event.preventDefault();
+  const data=new FormData(form),epoch=authEpoch,request=adsRequest;const button=form.querySelector('button');button.disabled=true;
+  try{await api('ads/requests/'+encodeURIComponent(form.dataset.adsId),{method:'PUT',data:{version:Number(form.dataset.version),state:data.get('state'),reason:data.get('reason')}});if(epoch===authEpoch && request===adsRequest)await refreshAdsAdmin();}
+  catch(e){if(epoch===authEpoch && request===adsRequest)$('ads-admin-error').textContent=e.message;}
+  finally{button.disabled=false;}
+};
+async function reloadAdsAdmin() {
+  const epoch=authEpoch;
+  try{await refreshAdsAdmin();}catch(e){if(epoch===authEpoch)$('ads-admin-error').textContent=e.message;}
+}
+$('ads-admin-refresh').onclick=()=>reloadAdsAdmin();
+$('ads-filter').onchange=()=>{adsPage=1;return reloadAdsAdmin();};
+$('ads-admin-prev').onclick=()=>{if(adsPage>1){adsPage--;return reloadAdsAdmin();}};
+$('ads-admin-next').onclick=()=>{if(!$('ads-admin-next').disabled){adsPage++;return reloadAdsAdmin();}};

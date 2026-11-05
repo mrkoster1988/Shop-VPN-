@@ -6,6 +6,7 @@ const statusLabel = {pending:'Ожидает оплаты',checkout:'Оплат�
 const money=(amount,currency)=>amount.toLocaleString('ru-RU')+' '+(currency==='XTR'?'★':'₽');
 let checkoutQuote=null,quoteRequest=0,promoIntent='';
 let referralIntents=new Map();
+let adsPolicy=null,adsPage=1,adsRequest=0,adsMutation=0,adsIntent=new Map();
 let passwordOperation=null, logoutPending=false;
 let paymentOrder=null,paymentRequest=0,paymentBusy=false;
 let catalog, me, protocol = 'xui', selectedPlan, checkoutTrial=null, register = false, toastTimer;
@@ -52,7 +53,14 @@ $('account-dialog').addEventListener('close',clearPassword);
 function clearPayment() {
   paymentOrder=null;paymentRequest++;paymentBusy=false;$('payment-result').replaceChildren();$('checkout-submit').disabled=false;
 }
+function clearAds() {
+  adsRequest++;adsMutation++;adsPolicy=null;adsPage=1;adsIntent.clear();
+  for(const id of ['ads-channel','ads-comment'])$(id).value='';
+  for(const id of ['ads-status','ads-offer','ads-page'])$(id).textContent='';
+  $('ads-list').replaceChildren();$('ads-form').hidden=true;$('ads-submit').disabled=false;
+}
 function clearPrivate(clearPromoIntent=true) {
+  $('ads-dialog').close();clearAds();
   if(clearPromoIntent)promoIntent='';
   clearPayment();
   clearPassword(); $('password-settings').hidden=true; $('password-settings').open=false;
@@ -551,3 +559,47 @@ async function redeemReferral(sid) {
   const order=await api('/api/referrals/redeem',{subscription_id:sid,days,request_id:referralIntents.get(key)});
   await refreshMe();if(epoch!==sessionEpoch || uid!==me?.id)return;referralIntents.delete(key);$('referral-status').textContent='Бонусное продление в очереди. Заказ: '+order.id;
 }
+
+
+const adsLabels={pending:'На модерации',approved:'Одобрено · оплата и запуск ещё не выполнены',rejected:'Отклонено',canceled:'Отменено'};
+async function refreshAds() {
+  const request=++adsRequest,epoch=sessionEpoch,page=adsPage;
+  const [policy,listing]=await Promise.all([api('/api/ads/policy'),api('/api/ads/requests?page='+page)]);
+  if(request!==adsRequest || epoch!==sessionEpoch || !$('ads-dialog').open)return;
+  adsPolicy=policy;
+  $('ads-offer').textContent=(policy.accepting?'Приём заявок открыт. ':'Приём новых заявок закрыт. ')+policy.amount+' ₽ за '+policy.hours+' ч. '+policy.instructions;
+  $('ads-form').hidden=!policy.accepting;
+  $('ads-list').innerHTML=listing.requests.map(r=>`<article class="subscription"><b>${esc('@'+r.channel)}</b><p>${esc(adsLabels[r.state] || r.state)}</p><p>${r.amount} ₽ / ${r.hours} ч · условия сохранены при подаче</p><p>${esc(r.comment)}</p><p>${esc(r.reason)}</p><code>${esc(r.id)}</code>${['pending','approved'].includes(r.state)?`<br><button class="text-link" data-ads-cancel="${esc(r.id)}" data-version="${r.version}">Отменить заявку</button>`:''}</article>`).join('') || '<p>Заявок пока нет.</p>';
+  $('ads-page').textContent='Страница '+page+' · всего '+listing.total;
+  $('ads-prev').disabled=page===1;$('ads-next').disabled=page*listing.page_size>=listing.total;
+}
+$('ads-dialog').addEventListener('close',clearAds);
+$('ads-open').onclick=async()=>{
+  if(!me || logoutPending)return;
+  const epoch=sessionEpoch;show('ads-dialog');try{await refreshAds();}catch(e){if(epoch===sessionEpoch && $('ads-dialog').open)toast(e.message);}
+};
+async function reloadAds(){const epoch=sessionEpoch;try{await refreshAds();}catch(e){if(epoch===sessionEpoch && $('ads-dialog').open)toast(e.message);}}
+$('ads-refresh').onclick=()=>reloadAds();
+$('ads-prev').onclick=()=>{if(adsPage>1){adsPage--;return reloadAds();}};
+$('ads-next').onclick=()=>{if(!$('ads-next').disabled){adsPage++;return reloadAds();}};
+$('ads-form').onsubmit=async event=>{
+  event.preventDefault();if(!adsPolicy?.accepting || $('ads-submit').disabled)return;
+  const epoch=sessionEpoch,request=adsRequest,mutation=++adsMutation;
+  const channel=$('ads-channel').value.trim(),comment=$('ads-comment').value.trim();
+  const key=JSON.stringify([channel,comment,adsPolicy.version]);if(!adsIntent.has(key))adsIntent.set(key,crypto.randomUUID());
+  $('ads-submit').disabled=true;
+  try {
+    await api('/api/ads/requests',{request_id:adsIntent.get(key),policy_version:adsPolicy.version,channel,comment});
+    if(epoch!==sessionEpoch || request!==adsRequest || !$('ads-dialog').open)return;
+    adsIntent.delete(key);$('ads-channel').value='';$('ads-comment').value='';adsPage=1;
+    await refreshAds();if(epoch===sessionEpoch && mutation===adsMutation && $('ads-dialog').open)$('ads-status').textContent='Заявка отправлена. Оплата не выполнялась.';
+  }catch(e){if(epoch===sessionEpoch && request===adsRequest && $('ads-dialog').open)$('ads-status').textContent=e.message;}
+  finally{if(epoch===sessionEpoch && mutation===adsMutation)$('ads-submit').disabled=false;}
+};
+$('ads-list').onclick=async event=>{
+  const b=event.target.closest('[data-ads-cancel]');if(!b)return;
+  const epoch=sessionEpoch,request=adsRequest;b.disabled=true;
+  try{await api('/api/ads/requests/'+encodeURIComponent(b.dataset.adsCancel)+'/cancel',{version:Number(b.dataset.version)});if(epoch===sessionEpoch && request===adsRequest && $('ads-dialog').open)await refreshAds();}
+  catch(e){if(epoch===sessionEpoch && request===adsRequest && $('ads-dialog').open)$('ads-status').textContent=e.message;}
+  finally{b.disabled=false;}
+};

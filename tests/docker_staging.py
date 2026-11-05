@@ -73,11 +73,11 @@ class Staging:
         if database:args.append(database)
         return self.json(command,args,input=json.dumps(payload).encode() if payload else None)
     def snapshot(self):return self.data('snapshot')
-    def http(self,path,*,cookie=None,body=None,expected=200):
+    def http(self,path,*,cookie=None,body=None,expected=200,method=None):
         headers={'Authorization':'Bearer '+self.admin}
         if cookie:headers['Cookie']='session='+cookie
         if body is not None:headers.update({'Content-Type':'application/json','Origin':'https://127.0.0.1'})
-        request=Request('https://127.0.0.1/shop'+path,headers=headers,data=json.dumps(body).encode() if body is not None else None)
+        request=Request('https://127.0.0.1/shop'+path,headers=headers,data=json.dumps(body).encode() if body is not None else None,method=method)
         try:response=urlopen(request,timeout=10)
         except HTTPError as error:response=error
         with response:
@@ -178,6 +178,7 @@ class Staging:
         self.controller(self.args.source,'rollback','rolled_back');self.compare(managed,cleared=managed_origin)
         self.event('managed_prepare_and_rollback_verified' if managed_origin else 'direct_prepare_and_rollback_verified')
         self.controller(self.args.source,'prepare','ready');self.controller(self.args.source,'activate','committed');self.compare(managed,cleared=True)
+        check({'ads_policy','ads_requests','ads_events'}<=set(self.snapshot()['tables']),'Missing advertising migration tables')
         self.event('target_activated_data_preserved')
         login,headers=self.http('/api/auth/login',body={'email':'fixture1@example.invalid','password':self.fixture['password']})
         cookies=SimpleCookie();cookies.load(headers['Set-Cookie']);token=cookies['session'].value;self.secrets.append(token)
@@ -216,6 +217,21 @@ class Staging:
         changed=self.snapshot()
         check(changed['business_digest']==managed['business_digest'] and changed['digest']!=managed['digest'],'Password change affected unrelated data')
         self.event('https_password_rotation_revocation_and_business_data_verified')
+        counts_before_ads=self.snapshot()['counts']
+        policy_body={'version':0,'accepting':True,'amount':300,'hours':24,'instructions':'Проверка заявок без оплаты'}
+        self.http('/api/admin/ads/policy',body=policy_body,method='PUT')
+        body,_=self.http('/api/ads/requests',cookie=fresh,body={'request_id':str(uuid.uuid4()),'policy_version':1,'channel':'@fixture_channel','comment':'Тестовая заявка'})
+        ad=json.loads(body)
+        self.http('/api/admin/ads/requests/'+ad['id'],body={'version':1,'state':'approved','reason':'Проверено на стенде'},method='PUT')
+        body,_=self.http('/api/ads/requests/'+ad['id'],cookie=fresh)
+        check(json.loads(body)['state']=='approved','Advertising moderation mismatch')
+        advertised=self.snapshot()
+        check(advertised['counts']['orders']==counts_before_ads['orders'] and advertised['counts']['subscriptions']==counts_before_ads['subscriptions'],'Advertising request changed VPN orders')
+        self.json('create advertising backup',base+['create','--env-stdin','--output','/tmp/ads.pvb'],input=(self.root/'.env').read_bytes(),env=env)
+        self.json('restore advertising backup',base+['restore','/tmp/ads.pvb','--target','/tmp/ads-restore'],env=env)
+        restored_ads=self.data('snapshot',database='/tmp/ads-restore/shop.db')
+        check(restored_ads['digest']==advertised['digest'] and restored_ads['counts']['ads_requests']==1 and restored_ads['counts']['ads_events']==3 and restored_ads['counts']['sessions']==0,'Advertising backup mismatch')
+        self.event('https_advertising_moderation_and_backup_without_vpn_orders_verified')
         return {'status':'passed','scenario':('0.021 -> 0.024 -> ' if managed_origin else '0.021 -> ')+version(self.args.source),'events':self.events,'data_digest':managed['digest'],
                 'real_docker':True,'intermediate_fixture_engine':'candidate','real_loopback_https':True,'real_provider_payment':False,'real_vpn_traffic':False}
     def cleanup(self):

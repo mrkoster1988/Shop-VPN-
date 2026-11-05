@@ -190,3 +190,24 @@ test('newer diagnostics cannot be replaced by an older response',async()=>{
   p.replyAt(1,diagnosticReport({generated_at:200}));await second;p.replyAt(0,diagnosticReport({generated_at:100}));await first;
   assert.equal(JSON.parse(p.element('diagnostics-json').value).generated_at,200);
 });
+
+const adsPolicyFixture={accepting:false,amount:300,hours:24,version:0,instructions:'Только модерация'};
+test('модерация рекламы отображается безопасно и отдельно от оплаты',async()=>{
+  const p=adminPage();const pending=p.run('refreshAdsAdmin()');p.replyAt(0,adsPolicyFixture);
+  p.replyAt(1,{requests:[{id:'ad-a',user_id:1,channel:'channel_name',state:'pending',comment:'<img src=x>',reason:'',version:1,amount:300,hours:24}],total:1,page:1,page_size:20});await pending;
+  assert.ok(p.element('ads-admin-list').innerHTML.includes('&lt;img'));assert.ok(p.element('ads-admin-list').innerHTML.includes('data-ads-id="ad-a"'));
+  assert.equal(p.element('ads-accepting').checked,false);assert.equal(p.element('ads-price').value,300);
+});
+
+test('выход администратора отсекает поздний ответ списка рекламодателей',async()=>{
+  const p=adminPage();const pending=p.run('refreshAdsAdmin()');p.run("$('exit').onclick()");
+  p.replyAt(0,adsPolicyFixture);p.replyAt(1,{requests:[{comment:'private-text'}],total:1,page:1,page_size:20});
+  await assert.rejects(pending,/Сессия/);assert.equal(p.element('ads-admin-list').innerHTML,'');assert.equal(p.element('ads-instructions').value,'');
+});
+
+test('новая страница модерации не заменяется старым ответом',async()=>{
+  const p=adminPage();const first=p.run('refreshAdsAdmin()');p.run('adsPage=2');const second=p.run('refreshAdsAdmin()');
+  p.replyAt(2,adsPolicyFixture);p.replyAt(3,{requests:[],total:30,page:2,page_size:20});await second;
+  p.replyAt(0,adsPolicyFixture);p.replyAt(1,{requests:[],total:30,page:1,page_size:20});await first;
+  assert.match(p.element('ads-admin-page').textContent,/Страница 2/);
+});
