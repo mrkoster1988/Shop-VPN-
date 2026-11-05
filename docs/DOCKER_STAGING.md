@@ -80,3 +80,9 @@ sudo python3 tests/docker_staging.py --disposable --baseline /path/to/v0.021 --i
 VPN-трафик, реальные платежи/чеки, Telegram polling и действия worker на узлах.
 Сценарии с этими составляющими остаются в STAGING.md. Сбой или отсутствие Docker-job
 не считается прохождением приёмки.
+
+
+С v0.027 в reusable CI добавлен отдельный обязательный `wireguard-staging` для
+настоящего kernel handshake, контролируемого IPv4 NAT и автоматического отзыва
+peer. Это отдельный сценарий из [WIREGUARD_STAGING.md](WIREGUARD_STAGING.md), а не
+расширение заявлений о публичной сети/платежах/чистом VPS для данного upgrade-job.

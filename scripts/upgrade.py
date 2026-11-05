@@ -1,4 +1,4 @@
-"""Installer-managed upgrades to v0.026. Standard library only; no shell."""
+"""Installer-managed upgrades to v0.027. Standard library only; no shell."""
 import argparse
 import ast
 from contextlib import contextmanager
@@ -20,8 +20,8 @@ from urllib.parse import urlsplit
 
 spec=importlib.util.spec_from_file_location('shop_installer',Path(__file__).with_name('install.py'))
 i=importlib.util.module_from_spec(spec);spec.loader.exec_module(i)
-VERSION='v0.026'
-SUPPORTED={'v0.021','v0.022','v0.023','v0.024','v0.025'}
+VERSION='v0.027'
+SUPPORTED={'v0.021','v0.022','v0.023','v0.024','v0.025','v0.026'}
 IGNORE=shutil.ignore_patterns('.git','.env','.env.*','data','wg-data','.venv','__pycache__','.pytest_cache','backups','upgrades','*.pvb','*.db','*.db-wal','*.db-shm','*.zip')
 CHECK_KEY="""import os,sys
 from scripts.backup import environment
@@ -129,7 +129,7 @@ def load(root):
     settings=json.loads(private_file(root/'installer.json'))
     if not isinstance(settings,dict):raise ValueError('Некорректные метаданные установки')
     if (root/'upgrades').is_symlink():raise ValueError('Симлинки в истории обновлений недопустимы')
-    if settings.get('version') not in SUPPORTED or settings['version']>=VERSION:raise ValueError('Поддерживаются исходные версии v0.021/v0.022/v0.023/v0.024/v0.025 → '+VERSION)
+    if settings.get('version') not in SUPPORTED or settings['version']>=VERSION:raise ValueError('Поддерживаются исходные версии v0.021/v0.022/v0.023/v0.024/v0.025/v0.026 → '+VERSION)
     if not re.fullmatch(r'pushok-[a-f0-9]{10}',settings.get('project','')):raise ValueError('Неизвестный проект Compose')
     i.public_url(settings['url'])
     if not isinstance(settings.get('port'),int) or not 1024<=settings['port']<=65535:raise ValueError('Некорректный порт установки')
@@ -377,7 +377,7 @@ def activate(root,s):
 
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(description='Обновление v0.021/v0.022/v0.023/v0.024/v0.025 → '+VERSION+' в новый volume, с резервной копией и отдельной активацией')
+    parser=argparse.ArgumentParser(description='Обновление v0.021/v0.022/v0.023/v0.024/v0.025/v0.026 → '+VERSION+' в новый volume, с резервной копией и отдельной активацией')
     parser.add_argument('command',choices=['plan','prepare','status','activate','rollback'])
     parser.add_argument('--dir',default='/opt/pushok-vpn');parser.add_argument('--source',type=Path,default=Path(__file__).resolve().parents[1]);parser.add_argument('--password-file')
     args=parser.parse_args(argv);root=i.install_path(args.dir);source=args.source.resolve()
