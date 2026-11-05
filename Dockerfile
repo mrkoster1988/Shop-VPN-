@@ -6,6 +6,7 @@ RUN pip install --no-cache-dir -r requirements.txt && useradd --uid 10001 --crea
 COPY app ./app
 COPY scripts/backup.py ./scripts/backup.py
 COPY scripts/status.py ./scripts/status.py
+COPY scripts/panel_check.py ./scripts/panel_check.py
 RUN mkdir /app/data && chown shop:shop /app/data
 USER shop
 EXPOSE 8000

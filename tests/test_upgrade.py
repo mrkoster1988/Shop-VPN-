@@ -275,7 +275,7 @@ def legacy_installation(installation,monkeypatch,*,committed=True):
     return operation
 
 
-@pytest.mark.parametrize('version',['v0.021','v0.022','v0.023','v0.024','v0.025','v0.026','v0.027','v0.028'])
+@pytest.mark.parametrize('version',['v0.021','v0.022','v0.023','v0.024','v0.025','v0.026','v0.027','v0.028','v0.029'])
 def test_supported_fresh_origins_choose_original_volume(installation,version):
     root,source,calls,health,fail=installation
     marker=json.loads((root/'installer.json').read_text());marker['version']=version;u.write(root/'installer.json',marker)

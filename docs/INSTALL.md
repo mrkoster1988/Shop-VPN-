@@ -5,16 +5,16 @@
 Python 3 уже установлен. Скрипт проверяет поддерживаемую ОС до установки магазина.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.029/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.030/install.sh | bash
 ```
 
-Команда устанавливает фиксированную версию v0.029. Скрипт скачивает архив этого
+Команда устанавливает фиксированную версию v0.030. Скрипт скачивает архив этого
 же тега по HTTPS, проверяет пути/типы файлов и размер до распаковки. Вопросы читает
 из терминала, поэтому запуск через pipe не мешает диалогу. При обычном пользователе
 запрашивается sudo. Для просмотра действий без установки:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.029/install.sh | bash -s -- --plan
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.030/install.sh | bash -s -- --plan
 ```
 
 ## Диалог и режимы
@@ -101,7 +101,7 @@ docker compose --project-name PROJECT --env-file .env -f compose.install.json lo
 бот остаётся ненастроенным. Для nginx также нужен --nginx-config:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.029/install.sh | bash -s -- --yes --url https://example.com/shop --mode caddy --support '@support'
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.030/install.sh | bash -s -- --yes --url https://example.com/shop --mode caddy --support '@support'
 ```
 
 При следующем релизе VERSION в install.sh и scripts/install.py должен совпадать с
@@ -121,15 +121,15 @@ access и error log этого пути. Собственные CDN/APM/logging 
 согласованного снимка; сохраняйте .env и состояние VPN-узлов отдельно по инструкции.
 
 
-Для установленных через установщик версий v0.021/v0.022/v0.023/v0.024/v0.025/v0.026/v0.027/v0.028 доступно отдельное
-обновление до v0.029, включая подтверждённый managed-upgrade. Обычный install.sh не
+Для установленных через установщик версий v0.021/v0.022/v0.023/v0.024/v0.025/v0.026/v0.027/v0.028/v0.029 доступно отдельное
+обновление до v0.030, включая подтверждённый managed-upgrade. Обычный install.sh не
 запускает обновление сам: используйте `--upgrade plan`, затем `--upgrade prepare`,
 проверьте результат и выполните `--upgrade activate` либо `--upgrade rollback` до
 начала активации. Команды, проверки текущего тома и ограничения: [UPGRADE.md](UPGRADE.md).
 
 Незавершённые старые операции сначала закончите инструментом их целевого релиза.
-Изменённые установки и более старые версии требуют отдельного плана. Bootstrap v0.029
-использует фиксированный v0.029 для новой установки и обновления.
+Изменённые установки и более старые версии требуют отдельного плана. Bootstrap v0.030
+использует фиксированный v0.030 для новой установки и обновления.
 
 Локальный отчёт в админке и CLI нового образа: [DIAGNOSTICS.md](DIAGNOSTICS.md).
 Он не подтверждает работу VPN-трафика, реальный платёж и восстановление копии.
