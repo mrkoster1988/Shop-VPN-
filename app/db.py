@@ -42,6 +42,13 @@ def init_db():
         CREATE TABLE IF NOT EXISTS ads_events (
           id INTEGER PRIMARY KEY, request_id TEXT REFERENCES ads_requests(id),
           actor TEXT NOT NULL, action TEXT NOT NULL, created INTEGER NOT NULL, details TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS ads_payment_entries (
+          id INTEGER PRIMARY KEY, operation_id TEXT NOT NULL UNIQUE,
+          request_id TEXT NOT NULL REFERENCES ads_requests(id),
+          kind TEXT NOT NULL CHECK(kind IN ('receipt','refund')),
+          amount INTEGER NOT NULL CHECK(amount>0), reference TEXT NOT NULL UNIQUE,
+          note TEXT NOT NULL, fingerprint TEXT NOT NULL, created INTEGER NOT NULL,
+          UNIQUE(request_id,kind));
         CREATE TABLE IF NOT EXISTS plans (
           id TEXT PRIMARY KEY, name TEXT NOT NULL, days INTEGER NOT NULL CHECK(days > 0),
           price INTEGER NOT NULL CHECK(price > 0), stars INTEGER NOT NULL CHECK(stars > 0),

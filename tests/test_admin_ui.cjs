@@ -18,12 +18,12 @@ function adminPage(options={}) {
   const replies = [], requests = [], bodies = [];
   const context = vm.createContext({
     document:{getElementById:element, querySelector:()=>({content:'/shop'})},
-    URLSearchParams, FormData:options.FormData || FormData,
-    fetch:(url,opts)=>new Promise(resolve=>{ requests.push(url); bodies.push(opts.body ? JSON.parse(opts.body) : null); replies.push(body=>resolve({ok:true,json:async()=>body})); }),
+    crypto:require('node:crypto').webcrypto, URLSearchParams, FormData:options.FormData || FormData,
+    fetch:(url,opts)=>new Promise(resolve=>{ requests.push(url); bodies.push(opts.body ? JSON.parse(opts.body) : null); replies.push((body,status=200)=>resolve({ok:status<400,json:async()=>body})); }),
   });
   vm.runInContext(fs.readFileSync('app/static/admin.js','utf8'), context);
   vm.runInContext("token='admin-test-token'", context);
-  return {element, run:code=>vm.runInContext(code,context), reply:body=>replies.at(-1)(body), replyAt:(index,body)=>replies[index](body), requests,bodies};
+  return {element, run:code=>vm.runInContext(code,context), reply:body=>replies.at(-1)(body), replyAt:(index,body,status=200)=>replies[index](body,status), requests,bodies};
 }
 
 test('logout rejects an in-flight response with customer data', async () => {
@@ -210,4 +210,47 @@ test('новая страница модерации не заменяется �
   p.replyAt(2,adsPolicyFixture);p.replyAt(3,{requests:[],total:30,page:2,page_size:20});await second;
   p.replyAt(0,adsPolicyFixture);p.replyAt(1,{requests:[],total:30,page:1,page_size:20});await first;
   assert.match(p.element('ads-admin-page').textContent,/Страница 2/);
+});
+
+class AdsPaymentFields {
+  constructor(form){this.fields=form.fields;}
+  get(name){return this.fields[name] ?? null;}
+  has(name){return name in this.fields;}
+}
+const paymentFormSource=`({dataset:{adsPayment:'ad-a',kind:'receipt',version:'2',paymentVersion:'0'},fields:{amount:'300',reference:'bank/receipt',note:'Проверено',checked:'on'},querySelector(){return paymentButton;}})`;
+
+test('форма ручного учёта показывает поступление или возврат и экранирует основания',()=>{
+  const p=adminPage();
+  const unpaid=p.run("adsPaymentForm({id:'ad-a',state:'approved',version:2,amount:300})");
+  assert.match(unpaid,/data-kind="receipt"/);assert.match(unpaid,/name="checked"/);
+  const confirmed=p.run("adsPaymentForm({id:'ad-a',state:'approved',version:2,amount:300,payment:{status:'confirmed',version:1,entries:[{kind:'receipt',amount:300,reference:'<img>',note:'<script>'}]}})");
+  assert.match(confirmed,/data-kind="refund"/);assert.ok(!confirmed.includes('<script>'));assert.match(confirmed,/&lt;img&gt;/);
+  const refunded=p.run("adsPaymentForm({id:'ad-a',state:'approved',version:2,amount:300,payment:{status:'refunded',version:2}})");
+  assert.ok(!refunded.includes('<form'));assert.match(refunded,/Размещение не запущено/);
+});
+
+test('повтор ручного учёта после ошибки сохраняет UUID операции и версии',async()=>{
+  const p=adminPage({FormData:AdsPaymentFields});p.run('var paymentButton={disabled:false};');
+  const first=p.run('saveAdsPayment('+paymentFormSource+')');p.replyAt(0,{detail:'Ответ потерян'},502);await first;
+  const second=p.run('saveAdsPayment('+paymentFormSource+')');p.replyAt(1,{detail:'Ответ потерян'},502);await second;
+  assert.equal(p.bodies[0].operation_id,p.bodies[1].operation_id);
+  assert.equal(p.bodies[0].payment_version,0);assert.equal(p.bodies[0].request_version,2);assert.equal(p.bodies[0].checked,true);
+  assert.equal(p.run('adsPaymentIntents.size'),1);assert.equal(p.run('paymentButton.disabled'),false);
+});
+
+test('выход администратора очищает платёжное намерение и поздний ответ',async()=>{
+  const p=adminPage({FormData:AdsPaymentFields});p.run('var paymentButton={disabled:false};');
+  const request=p.run('saveAdsPayment('+paymentFormSource+')');p.run("$('exit').onclick()");
+  p.replyAt(0,{status:'confirmed'});await request;
+  assert.equal(p.run('adsPaymentIntents.size'),0);assert.equal(p.element('ads-admin-list').innerHTML,'');
+  assert.equal(p.element('ads-admin-error').textContent,'');assert.equal(p.requests.length,1);
+});
+
+test('успешный ручной учёт обновляет очередь без повторного сохранения',async()=>{
+  const p=adminPage({FormData:AdsPaymentFields});p.run('var paymentButton={disabled:false};');
+  const request=p.run('saveAdsPayment('+paymentFormSource+')');
+  await p.run('saveAdsPayment('+paymentFormSource+')');assert.equal(p.requests.length,1);
+  p.replyAt(0,{status:'confirmed'});await new Promise(setImmediate);
+  p.replyAt(1,adsPolicyFixture);p.replyAt(2,{requests:[],total:0,page:1,page_size:20});await request;
+  assert.equal(p.run('adsPaymentIntents.size'),0);assert.equal(p.requests.filter(x=>x.includes('/payments/')).length,1);
 });

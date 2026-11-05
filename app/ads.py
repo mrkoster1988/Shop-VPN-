@@ -1,4 +1,5 @@
 """Заявки рекламы MTProxy: модерация отделена от оплаты и фактического размещения."""
+import hashlib
 import json
 import re
 import time
@@ -47,7 +48,34 @@ class Cancel(BaseModel):
     model_config={'extra':'forbid'}
     version:int=Field(ge=1,strict=True)
 
-DEFAULT={'accepting':False,'amount':300,'hours':24,'instructions':'Заявка проходит модерацию. Оплата и запуск размещения на этом этапе не выполняются.','version':0,'updated':0}
+class PaymentCommand(BaseModel):
+    model_config={'extra':'forbid'}
+    operation_id:uuid.UUID
+    request_version:int=Field(ge=1,strict=True)
+    payment_version:int=Field(ge=0,le=2,strict=True)
+    amount:int=Field(ge=1,le=1000000,strict=True)
+    reference:str=Field(min_length=3,max_length=120)
+    note:str=Field(min_length=1,max_length=500)
+    checked:bool=Field(strict=True)
+    @field_validator('reference')
+    @classmethod
+    def reference_format(cls,value):
+        value=value.strip().lower()
+        if not re.fullmatch(r'[a-z0-9][a-z0-9:._/-]{2,119}',value):raise ValueError('Укажите идентификатор операции без персональных данных')
+        return value
+    @field_validator('note')
+    @classmethod
+    def note_format(cls,value):
+        value=value.strip()
+        if not value:raise ValueError('Нужно основание проверки')
+        return value
+    @field_validator('checked')
+    @classmethod
+    def checked_required(cls,value):
+        if not value:raise ValueError('Сначала проверьте фактическое движение денег')
+        return value
+
+DEFAULT={'accepting':False,'amount':300,'hours':24,'instructions':'Заявка проходит модерацию. Автоматическая оплата и запуск размещения пока не выполняются.','version':0,'updated':0}
 
 def policy(conn=None):
     if conn is None:
@@ -70,8 +98,16 @@ def update_policy(data):
                      (int(data.accepting),data.amount,data.hours,data.instructions.strip(),data.version+1,now))
         after=policy(conn);event(conn,None,'admin','policy',{'before':before,'after':after});return after
 
-def public(row):
-    return {k:row[k] for k in ('id','channel','comment','amount','hours','policy_version','state','reason','version','created','updated')} | {'currency':'RUB'}
+def payment(conn,rid,private=False):
+    rows=conn.execute('SELECT * FROM ads_payment_entries WHERE request_id=? ORDER BY id',(rid,)).fetchall()
+    result={'status':'refunded' if len(rows)==2 else 'confirmed' if rows else 'unpaid','version':len(rows),
+            'received_amount':sum(r['amount'] for r in rows if r['kind']=='receipt'),
+            'refunded_amount':sum(r['amount'] for r in rows if r['kind']=='refund'),'currency':'RUB'}
+    if private:result['entries']=[{k:r[k] for k in ('kind','amount','reference','note','created')} for r in rows]
+    return result
+
+def public(row,conn,private=False):
+    return {k:row[k] for k in ('id','channel','comment','amount','hours','policy_version','state','reason','version','created','updated')} | {'currency':'RUB','payment':payment(conn,row['id'],private=private)}
 
 def create(user,data):
     now=int(time.time());uid=user['id']
@@ -81,7 +117,7 @@ def create(user,data):
         if previous:
             if previous['channel']!=data.channel or previous['comment']!=data.comment or previous['policy_version']!=data.policy_version:
                 raise HTTPException(409,'Этот запрос уже использован для другой заявки.')
-            return public(previous)
+            return public(previous,conn)
         p=policy(conn)
         if not p['accepting']:raise HTTPException(409,'Приём заявок рекламы сейчас закрыт.')
         if p['version']!=data.policy_version:raise HTTPException(409,'Условия изменились. Проверьте новый тариф.')
@@ -93,13 +129,14 @@ def create(user,data):
         conn.execute("INSERT INTO ads_requests(id,user_id,request_id,channel,comment,amount,hours,policy_version,state,created,updated) VALUES (?,?,?,?,?,?,?,?,'pending',?,?)",
                      (rid,uid,str(data.request_id),data.channel,data.comment,p['amount'],p['hours'],p['version'],now,now))
         event(conn,rid,'customer','created',{'user_id':uid,'amount':p['amount'],'hours':p['hours']})
-        return public(conn.execute('SELECT * FROM ads_requests WHERE id=?',(rid,)).fetchone())
+        return public(conn.execute('SELECT * FROM ads_requests WHERE id=?',(rid,)).fetchone(),conn)
 
 def get(rid,uid=None):
     with db() as conn:
+        conn.execute('BEGIN')
         row=conn.execute('SELECT * FROM ads_requests WHERE id=?'+(' AND user_id=?' if uid is not None else ''),(rid,uid) if uid is not None else (rid,)).fetchone()
         if not row:raise HTTPException(404,'Заявка не найдена.')
-        result=public(row)
+        result=public(row,conn,private=uid is None)
         if uid is None:result['user_id']=row['user_id']
         return result
 
@@ -112,7 +149,7 @@ def listing(uid=None,state=None,page=1):
         conn.execute('BEGIN')
         total=conn.execute('SELECT count(*) FROM ads_requests'+where,args).fetchone()[0]
         rows=conn.execute('SELECT * FROM ads_requests'+where+' ORDER BY created DESC,id DESC LIMIT 20 OFFSET ?',args+[(page-1)*20]).fetchall()
-        return {'requests':[public(row) | ({'user_id':row['user_id']} if uid is None else {}) for row in rows],'total':total,'page':page,'page_size':20}
+        return {'requests':[public(row,conn,private=uid is None) | ({'user_id':row['user_id']} if uid is None else {}) for row in rows],'total':total,'page':page,'page_size':20}
 
 def transition(rid,data,uid=None):
     with db() as conn:
@@ -123,8 +160,38 @@ def transition(rid,data,uid=None):
         target='canceled' if uid is not None else data.state
         allowed=('pending','approved') if uid is not None else ('pending',)
         if row['state'] not in allowed:raise HTTPException(409,'Действие недоступно для текущего состояния.')
+        if uid is not None and payment(conn,rid)['status']=='confirmed':
+            raise HTTPException(409,'Для оплаченной заявки сначала требуется проверенный возврат. Обратитесь к владельцу.')
         reason='' if uid is not None else data.reason
         if target=='rejected' and not reason:raise HTTPException(422,'Укажите причину отклонения.')
         conn.execute('UPDATE ads_requests SET state=?,reason=?,version=version+1,updated=? WHERE id=?',(target,reason,int(time.time()),rid))
         event(conn,rid,'customer' if uid is not None else 'admin',target,{'reason':reason} | ({'user_id':uid} if uid is not None else {}))
     return get(rid,uid)
+
+
+def record_payment(rid,kind,data):
+    # Журнал отражает ручную сверку владельца, а не ответ банка или платёжного API.
+    raw=data.model_dump(mode='json')
+    fingerprint=hashlib.sha256(json.dumps(raw,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+    with db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        old=conn.execute('SELECT * FROM ads_payment_entries WHERE operation_id=?',(str(data.operation_id),)).fetchone()
+        if old:
+            if old['request_id']!=rid or old['kind']!=kind or old['fingerprint']!=fingerprint:
+                raise HTTPException(409,'Идентификатор уже использован для другой операции.')
+            return payment(conn,rid,private=True)
+        row=conn.execute('SELECT * FROM ads_requests WHERE id=?',(rid,)).fetchone()
+        if not row:raise HTTPException(404,'Заявка не найдена.')
+        current=payment(conn,rid)
+        if row['version']!=data.request_version or current['version']!=data.payment_version:
+            raise HTTPException(409,'Данные изменились. Обновите раздел перед проверкой.')
+        if row['state']!='approved':raise HTTPException(409,'Учёт оплаты доступен только для одобренной заявки.')
+        expected='unpaid' if kind=='receipt' else 'confirmed'
+        if current['status']!=expected:raise HTTPException(409,'Операция недоступна для текущего состояния оплаты.')
+        if data.amount!=row['amount']:raise HTTPException(409,'Нужна точная сумма из заявки. Частичные операции пока не поддерживаются.')
+        if conn.execute('SELECT 1 FROM ads_payment_entries WHERE reference=?',(data.reference,)).fetchone():
+            raise HTTPException(409,'Эта банковская операция уже учтена.')
+        conn.execute('INSERT INTO ads_payment_entries(operation_id,request_id,kind,amount,reference,note,fingerprint,created) VALUES (?,?,?,?,?,?,?,?)',
+                     (str(data.operation_id),rid,kind,data.amount,data.reference,data.note,fingerprint,int(time.time())))
+        event(conn,rid,'admin','payment_'+kind,{'amount':data.amount,'currency':'RUB','reference':data.reference,'verification':'manual'})
+        return payment(conn,rid,private=True)

@@ -3,7 +3,7 @@ const basePath = document.querySelector('meta[name="shop-base"]').content;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let diagnosticsRequest=0;
-let adsPolicy=null,adsPage=1,adsRequest=0;
+let adsPolicy=null,adsPage=1,adsRequest=0,adsPaymentIntents=new Map();
 let token = '', authEpoch = 0, usersPage = 1, usersQuery = '', usersRequest = 0;
 let selectedUser = null, profilePage = 1, profileRequest = 0;
 let serverCache = [], editingServer = null;
@@ -50,7 +50,7 @@ $('admin-login').onsubmit = async event => {
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => {
-  adsRequest++;adsPolicy=null;adsPage=1;
+  adsRequest++;adsPolicy=null;adsPage=1;adsPaymentIntents.clear();
   for(const id of ['ads-admin-list','ads-admin-error','ads-admin-page'])$(id).replaceChildren();
   for(const id of ['ads-price','ads-hours','ads-instructions'])$(id).value='';
   $('ads-accepting').checked=false;$('ads-policy-save').disabled=false;$('ads-filter').value='';$('ads-admin-prev').disabled=true;$('ads-admin-next').disabled=true;
@@ -361,13 +361,20 @@ async function refreshDiagnostics() {
 $('diagnostics-refresh').onclick=()=>refreshDiagnostics();
 
 
-const adsLabels={pending:'На модерации',approved:'Одобрено · не оплачено и не размещено',rejected:'Отклонено',canceled:'Отменено'};
+const adsLabels={pending:'На модерации',approved:'Модерация пройдена · размещение не запущено',rejected:'Отклонено',canceled:'Отменено'};
+function adsPaymentForm(r){
+  const p=r.payment || {status:'unpaid',version:0,entries:[]};
+  const label=p.status==='confirmed'?'Поступление учтено вручную':p.status==='refunded'?'Полный возврат учтён вручную':'Поступление не учтено';
+  const history=(p.entries || []).map(e=>`<p>${e.kind==='receipt'?'Поступление':'Возврат'}: ${e.amount} ₽ · ${esc(e.reference)} · ${esc(e.note)}</p>`).join('');
+  const kind=p.status==='confirmed'?'refund':'receipt';
+  return `<p>${label}. Это учёт владельца, без автоматической сверки с банком. Размещение не запущено.</p>${history}${r.state==='approved' && p.status!=='refunded'?`<form data-ads-payment="${esc(r.id)}" data-kind="${kind}" data-version="${r.version}" data-payment-version="${p.version}"><h4>${kind==='receipt'?'Учесть поступление':'Учесть полный возврат'}</h4><label>Сумма, ₽<input name="amount" type="number" min="1" max="1000000" value="${r.amount}" required></label><label>ID банковской операции (без ФИО и реквизитов)<input name="reference" minlength="3" maxlength="120" required autocomplete="off"></label><label>Основание проверки (видно только владельцу)<textarea name="note" maxlength="500" required></textarea></label><label><input name="checked" type="checkbox" required> Я проверил фактическое ${kind==='receipt'?'поступление':'возвращение'} полной суммы в банке или платёжном сервисе</label><button>Сохранить проверенную операцию</button></form>`:''}`;
+}
 async function refreshAdsAdmin() {
   const request=++adsRequest,epoch=authEpoch,page=adsPage;
   const [policy,listing]=await Promise.all([api('ads/policy'),api('ads/requests?page='+page+($('ads-filter').value?'&state='+encodeURIComponent($('ads-filter').value):''))]);
   if(request!==adsRequest || epoch!==authEpoch)return;
   adsPolicy=policy;$('ads-accepting').checked=policy.accepting;$('ads-price').value=policy.amount;$('ads-hours').value=policy.hours;$('ads-instructions').value=policy.instructions;
-  $('ads-admin-list').innerHTML=listing.requests.map(r=>`<article class="subscription"><b>${esc('@'+r.channel)}</b><p>${esc(adsLabels[r.state] || r.state)} · клиент ${r.user_id}</p><p>${r.amount} ₽ / ${r.hours} ч</p><p>${esc(r.comment)}</p><p>${esc(r.reason)}</p><code>${esc(r.id)}</code>${r.state==='pending'?`<form data-ads-id="${esc(r.id)}" data-version="${r.version}"><label>Решение<select name="state"><option value="approved">Одобрить канал</option><option value="rejected">Отклонить</option></select></label><label>Причина для клиента<textarea name="reason" maxlength="500"></textarea></label><button>Сохранить решение</button></form>`:''}</article>`).join('') || '<p>Заявок нет.</p>';
+  $('ads-admin-list').innerHTML=listing.requests.map(r=>`<article class="subscription"><b>${esc('@'+r.channel)}</b><p>${esc(adsLabels[r.state] || r.state)} · клиент ${r.user_id}</p><p>${r.amount} ₽ / ${r.hours} ч</p><p>${esc(r.comment)}</p><p>${esc(r.reason)}</p><code>${esc(r.id)}</code>${r.state==='pending'?`<form data-ads-id="${esc(r.id)}" data-version="${r.version}"><label>Решение<select name="state"><option value="approved">Одобрить канал</option><option value="rejected">Отклонить</option></select></label><label>Причина для клиента<textarea name="reason" maxlength="500"></textarea></label><button>Сохранить решение</button></form>`:''}${adsPaymentForm(r)}</article>`).join('') || '<p>Заявок нет.</p>';
   $('ads-admin-page').textContent='Страница '+page+' · всего '+listing.total;$('ads-admin-prev').disabled=page===1;$('ads-admin-next').disabled=page*listing.page_size>=listing.total;
 }
 $('ads-policy-form').onsubmit=async event=>{
@@ -378,6 +385,7 @@ $('ads-policy-form').onsubmit=async event=>{
   finally{if(epoch===authEpoch)$('ads-policy-save').disabled=false;}
 };
 $('ads-admin-list').onsubmit=async event=>{
+  const paymentForm=event.target.closest('[data-ads-payment]');if(paymentForm){event.preventDefault();return saveAdsPayment(paymentForm);}
   const form=event.target.closest('[data-ads-id]');if(!form)return;event.preventDefault();
   const data=new FormData(form),epoch=authEpoch,request=adsRequest;const button=form.querySelector('button');button.disabled=true;
   try{await api('ads/requests/'+encodeURIComponent(form.dataset.adsId),{method:'PUT',data:{version:Number(form.dataset.version),state:data.get('state'),reason:data.get('reason')}});if(epoch===authEpoch && request===adsRequest)await refreshAdsAdmin();}
@@ -392,3 +400,18 @@ $('ads-admin-refresh').onclick=()=>reloadAdsAdmin();
 $('ads-filter').onchange=()=>{adsPage=1;return reloadAdsAdmin();};
 $('ads-admin-prev').onclick=()=>{if(adsPage>1){adsPage--;return reloadAdsAdmin();}};
 $('ads-admin-next').onclick=()=>{if(!$('ads-admin-next').disabled){adsPage++;return reloadAdsAdmin();}};
+
+async function saveAdsPayment(form){
+  const button=form.querySelector('button');if(button.disabled)return;
+  const fields=new FormData(form),epoch=authEpoch,request=adsRequest;
+  const data={request_version:Number(form.dataset.version),payment_version:Number(form.dataset.paymentVersion),amount:Number(fields.get('amount')),reference:String(fields.get('reference') || '').trim(),note:String(fields.get('note') || '').trim(),checked:fields.has('checked')};
+  const path='ads/requests/'+encodeURIComponent(form.dataset.adsPayment)+'/payments/'+form.dataset.kind;
+  const key=JSON.stringify([path,data]);if(!adsPaymentIntents.has(key))adsPaymentIntents.set(key,crypto.randomUUID());
+  button.disabled=true;$('ads-admin-error').textContent='';
+  try{
+    await api(path,{method:'POST',data:{...data,operation_id:adsPaymentIntents.get(key)}});
+    if(epoch!==authEpoch)return;
+    adsPaymentIntents.delete(key);if(request===adsRequest)await refreshAdsAdmin();
+  }catch(e){if(epoch===authEpoch && request===adsRequest)$('ads-admin-error').textContent=e.message;}
+  finally{if(epoch===authEpoch)button.disabled=false;}
+}

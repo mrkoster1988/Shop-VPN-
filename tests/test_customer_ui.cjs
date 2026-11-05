@@ -606,7 +606,7 @@ test('комментарии и причины модерации экранир
   const p=await customerPage();adsReplies(p);
   p.respond('/shop/api/ads/requests?page=1',{requests:[{id:'ad-a',channel:'channel_name',comment:'<img src=x>',reason:'<script>unsafe</script>',state:'approved',version:2,amount:300,hours:24}],total:1,page:1,page_size:20});
   await p.element('ads-open').onclick();const html=p.element('ads-list').innerHTML;
-  assert.ok(html.includes('&lt;img')&&!html.includes('<script>'));assert.match(html,/оплата и запуск ещё не выполнены/);
+  assert.ok(html.includes('&lt;img')&&!html.includes('<script>'));assert.match(html,/Размещение не запущено/);
 });
 
 test('выход во время отправки рекламы очищает форму и не возвращает заявку',async()=>{
@@ -614,4 +614,19 @@ test('выход во время отправки рекламы очищает 
   p.element('ads-channel').value='@channel_name';p.element('ads-comment').value='Личный комментарий';const reply=p.defer('/shop/api/ads/requests');
   const pending=p.element('ads-form').onsubmit({preventDefault(){}});await p.element('logout').onclick();reply({id:'ad-a'});await pending;
   assert.equal(p.element('ads-dialog').open,false);assert.equal(p.element('ads-comment').value,'');assert.equal(p.element('ads-list').innerHTML,'');assert.equal(p.run('adsIntent.size'),0);
+});
+
+test('учтённое поступление не даёт отменить заявку и не означает показ канала',async()=>{
+  const p=await customerPage();adsReplies(p);
+  p.respond('/shop/api/ads/requests?page=1',{requests:[{id:'ad-a',channel:'channel_name',comment:'',reason:'',state:'approved',version:2,amount:300,hours:24,payment:{status:'confirmed',version:1}}],total:1,page:1,page_size:20});
+  await p.element('ads-open').onclick();const html=p.element('ads-list').innerHTML;
+  assert.match(html,/владельцем вручную/);assert.match(html,/Размещение не запущено/);assert.ok(!html.includes('data-ads-cancel'));
+  assert.ok(!html.includes('href='));
+});
+
+test('учтённый полный возврат разрешает отмену заявки без повторного платежа',async()=>{
+  const p=await customerPage();adsReplies(p);
+  p.respond('/shop/api/ads/requests?page=1',{requests:[{id:'ad-a',channel:'channel_name',comment:'',reason:'',state:'approved',version:2,amount:300,hours:24,payment:{status:'refunded',version:2}}],total:1,page:1,page_size:20});
+  await p.element('ads-open').onclick();const html=p.element('ads-list').innerHTML;
+  assert.match(html,/Полный возврат/);assert.match(html,/data-ads-cancel/);assert.ok(!p.calls.some(x=>x.url.includes('/payments/')));
 });

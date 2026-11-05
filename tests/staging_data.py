@@ -61,7 +61,7 @@ def snapshot(database=None):
             tables.append(name)
             quoted='"'+name.replace('"','""')+'"';rows=conn.execute('SELECT * FROM '+quoted).fetchall();counts[name]=len(rows)
             # Новые пустые таблицы рекламы не меняют данные старой схемы; их наличие проверяется отдельно.
-            if name in ('ads_policy','ads_requests','ads_events') and not rows:continue
+            if name in ('ads_policy','ads_requests','ads_events','ads_payment_entries') and not rows:continue
             if name not in ('sessions','tickets'):
                 records[name]=sorted(json.dumps(row,ensure_ascii=True) for row in rows)
                 if name=='users':

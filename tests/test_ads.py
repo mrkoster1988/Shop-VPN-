@@ -132,7 +132,7 @@ def test_staging_digest_ignores_only_empty_new_tables(client):
     empty=module.snapshot(c.DB)
     from app.db import db
     with db() as conn:
-        conn.execute('DROP TABLE ads_events');conn.execute('DROP TABLE ads_requests');conn.execute('DROP TABLE ads_policy')
+        conn.execute('DROP TABLE ads_payment_entries');conn.execute('DROP TABLE ads_events');conn.execute('DROP TABLE ads_requests');conn.execute('DROP TABLE ads_policy')
     old=module.snapshot(c.DB)
     assert old['digest']==empty['digest'] and 'ads_requests' not in old['tables']
     init_db();register(client);policy(client,accepting=True);submit(client)

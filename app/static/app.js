@@ -561,7 +561,8 @@ async function redeemReferral(sid) {
 }
 
 
-const adsLabels={pending:'На модерации',approved:'Одобрено · оплата и запуск ещё не выполнены',rejected:'Отклонено',canceled:'Отменено'};
+const adsLabels={pending:'На модерации',approved:'Модерация пройдена',rejected:'Отклонено',canceled:'Отменено'};
+function adsPaymentLabel(p){return p?.status==='confirmed'?'Поступление учтено владельцем вручную. Размещение не запущено.':p?.status==='refunded'?'Полный возврат учтён владельцем вручную. Размещение не запущено.':'Поступление не учтено. Размещение не запущено.';}
 async function refreshAds() {
   const request=++adsRequest,epoch=sessionEpoch,page=adsPage;
   const [policy,listing]=await Promise.all([api('/api/ads/policy'),api('/api/ads/requests?page='+page)]);
@@ -569,7 +570,7 @@ async function refreshAds() {
   adsPolicy=policy;
   $('ads-offer').textContent=(policy.accepting?'Приём заявок открыт. ':'Приём новых заявок закрыт. ')+policy.amount+' ₽ за '+policy.hours+' ч. '+policy.instructions;
   $('ads-form').hidden=!policy.accepting;
-  $('ads-list').innerHTML=listing.requests.map(r=>`<article class="subscription"><b>${esc('@'+r.channel)}</b><p>${esc(adsLabels[r.state] || r.state)}</p><p>${r.amount} ₽ / ${r.hours} ч · условия сохранены при подаче</p><p>${esc(r.comment)}</p><p>${esc(r.reason)}</p><code>${esc(r.id)}</code>${['pending','approved'].includes(r.state)?`<br><button class="text-link" data-ads-cancel="${esc(r.id)}" data-version="${r.version}">Отменить заявку</button>`:''}</article>`).join('') || '<p>Заявок пока нет.</p>';
+  $('ads-list').innerHTML=listing.requests.map(r=>`<article class="subscription"><b>${esc('@'+r.channel)}</b><p>${esc(adsLabels[r.state] || r.state)}</p><p>${r.amount} ₽ / ${r.hours} ч · условия сохранены при подаче</p><p>${esc(r.comment)}</p><p>${esc(r.reason)}</p><code>${esc(r.id)}</code><p>${esc(adsPaymentLabel(r.payment))}</p>${['pending','approved'].includes(r.state) && r.payment?.status!=='confirmed'?`<br><button class="text-link" data-ads-cancel="${esc(r.id)}" data-version="${r.version}">Отменить заявку</button>`:''}</article>`).join('') || '<p>Заявок пока нет.</p>';
   $('ads-page').textContent='Страница '+page+' · всего '+listing.total;
   $('ads-prev').disabled=page===1;$('ads-next').disabled=page*listing.page_size>=listing.total;
 }

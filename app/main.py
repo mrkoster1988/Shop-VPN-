@@ -257,6 +257,15 @@ async def admin_ads_requests(page:int=Query(default=1,ge=1,le=100000),state:Lite
 @app.put('/api/admin/ads/requests/{rid}',dependencies=[Depends(admin)])
 async def admin_ads_decision(rid:UUID,data:ads.Decision):return ads.transition(str(rid),data)
 
+@app.post('/api/admin/ads/requests/{rid}/payments/{action}',dependencies=[Depends(admin)])
+async def admin_ads_payment(rid:UUID,action:Literal['receipt','refund'],data:ads.PaymentCommand):
+    return ads.record_payment(str(rid),action,data)
+
+@app.get('/api/admin/ads/requests/{rid}/payments',dependencies=[Depends(admin)])
+async def admin_ads_payment_history(rid:UUID):
+    ads.get(str(rid))
+    with ads.db() as conn:return ads.payment(conn,str(rid),private=True)
+
 @app.post('/api/auth/register')
 async def register(data: Credentials):
     email = email_address(data.email)

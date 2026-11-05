@@ -179,7 +179,7 @@ class Staging:
         self.controller(self.args.source,'rollback','rolled_back');self.compare(managed,cleared=managed_origin)
         self.event('managed_prepare_and_rollback_verified' if managed_origin else 'direct_prepare_and_rollback_verified')
         self.controller(self.args.source,'prepare','ready');self.controller(self.args.source,'activate','committed');self.compare(managed,cleared=True)
-        check({'ads_policy','ads_requests','ads_events'}<=set(self.snapshot()['tables']),'Missing advertising migration tables')
+        check({'ads_policy','ads_requests','ads_events','ads_payment_entries'}<=set(self.snapshot()['tables']),'Missing advertising migration tables')
         self.event('target_activated_data_preserved')
         login,headers=self.http('/api/auth/login',body={'email':'fixture1@example.invalid','password':self.fixture['password']})
         cookies=SimpleCookie();cookies.load(headers['Set-Cookie']);token=cookies['session'].value;self.secrets.append(token)
@@ -226,13 +226,23 @@ class Staging:
         self.http('/api/admin/ads/requests/'+ad['id'],body={'version':1,'state':'approved','reason':'Проверено на стенде'},method='PUT')
         body,_=self.http('/api/ads/requests/'+ad['id'],cookie=fresh)
         check(json.loads(body)['state']=='approved','Advertising moderation mismatch')
+        payment_path='/api/admin/ads/requests/'+ad['id']+'/payments/'
+        receipt={'operation_id':str(uuid.uuid4()),'request_version':2,'payment_version':0,'amount':300,'reference':'fixture/receipt','note':'Сверено на стенде без банка','checked':True}
+        self.http(payment_path+'receipt',body=receipt)
+        self.http(payment_path+'receipt',body=receipt)
+        body,_=self.http('/api/ads/requests/'+ad['id'],cookie=fresh)
+        check(json.loads(body)['payment']['status']=='confirmed' and 'fixture/receipt' not in body.decode(),'Advertising receipt privacy mismatch')
+        self.http('/api/ads/requests/'+ad['id']+'/cancel',cookie=fresh,body={'version':2},expected=409)
+        self.http(payment_path+'refund',body={**receipt,'operation_id':str(uuid.uuid4()),'payment_version':1,'reference':'fixture/refund'})
+        body,_=self.http('/api/ads/requests/'+ad['id'],cookie=fresh)
+        check(json.loads(body)['payment']['status']=='refunded','Advertising refund mismatch')
         advertised=self.snapshot()
         check(advertised['counts']['orders']==counts_before_ads['orders'] and advertised['counts']['subscriptions']==counts_before_ads['subscriptions'],'Advertising request changed VPN orders')
         self.json('create advertising backup',base+['create','--env-stdin','--output','/tmp/ads.pvb'],input=(self.root/'.env').read_bytes(),env=env)
         self.json('restore advertising backup',base+['restore','/tmp/ads.pvb','--target','/tmp/ads-restore'],env=env)
         restored_ads=self.data('snapshot',database='/tmp/ads-restore/shop.db')
-        check(restored_ads['digest']==advertised['digest'] and restored_ads['counts']['ads_requests']==1 and restored_ads['counts']['ads_events']==3 and restored_ads['counts']['sessions']==0,'Advertising backup mismatch')
-        self.event('https_advertising_moderation_and_backup_without_vpn_orders_verified')
+        check(restored_ads['digest']==advertised['digest'] and restored_ads['counts']['ads_requests']==1 and restored_ads['counts']['ads_events']==5 and restored_ads['counts']['ads_payment_entries']==2 and restored_ads['counts']['sessions']==0,'Advertising backup mismatch')
+        self.event('https_advertising_manual_receipt_refund_and_backup_without_vpn_orders_verified')
         return {'status':'passed','scenario':('0.021 -> 0.024 -> ' if managed_origin else '0.021 -> ')+version(self.args.source),'events':self.events,'data_digest':managed['digest'],
                 'real_docker':True,'intermediate_fixture_engine':'candidate','real_loopback_https':True,'real_provider_payment':False,'real_vpn_traffic':False}
     def cleanup(self):
