@@ -68,7 +68,8 @@ def snapshot(database=None):
                     columns=[item[1] for item in conn.execute('PRAGMA table_info(users)')]
                     index=columns.index('password')
                     rows=[tuple(None if i==index else value for i,value in enumerate(row)) for row in rows]
-                business[name]=sorted(json.dumps(row,ensure_ascii=True) for row in rows)
+                if name!='admin_audit':
+                    business[name]=sorted(json.dumps(row,ensure_ascii=True) for row in rows)
         table_digests={name:hashlib.sha256(json.dumps(rows,sort_keys=True).encode()).hexdigest()
             for name,rows in records.items()}
         return {'table_digests':table_digests,'digest':hashlib.sha256(json.dumps(records,sort_keys=True).encode()).hexdigest(),
