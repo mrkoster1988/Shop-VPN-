@@ -36,3 +36,28 @@ jobs:
           .venv/bin/python -m compileall -q app agent scripts
           bash -n scripts/wireguard-init.sh
           bash -n install.sh
+
+  docker-staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          path: candidate
+          persist-credentials: false
+      - name: Checkout baseline v0.021
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: v0.021
+          path: baseline
+          persist-credentials: false
+      - name: Checkout intermediate v0.024
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: v0.024
+          path: intermediate
+          persist-credentials: false
+      - name: Real Docker upgrade and restore staging
+        run: |
+          sudo python3 candidate/tests/docker_staging.py --disposable --baseline "$GITHUB_WORKSPACE/baseline" --intermediate "$GITHUB_WORKSPACE/intermediate" --source "$GITHUB_WORKSPACE/candidate" --report "$RUNNER_TEMP/shop-docker-staging.json"

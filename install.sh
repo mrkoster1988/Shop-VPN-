@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # A fixed release prevents downloading a moving main branch during installation.
-VERSION=v0.024
+VERSION=v0.025
 main() {
   local archive_version="$VERSION"
   command -v curl >/dev/null || { echo 'Нужен curl.' >&2; exit 1; }
