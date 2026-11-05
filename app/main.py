@@ -24,7 +24,7 @@ from fastapi.exception_handlers import request_validation_exception_handler
 from pydantic import BaseModel, Field, field_validator, ValidationError
 from starlette.applications import Starlette
 from starlette.routing import Mount
-from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics
+from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
 
@@ -306,7 +306,7 @@ async def logout(request: Request):
 async def me(user=Depends(current_user)):
     subs = all_rows('SELECT s.id,s.protocol,s.expires,s.state,s.device_limit,s.primary_key_state,s.access_source,(s.rotation_error IS NOT NULL) AS primary_retrying,coalesce(l.enabled,0) AS link_enabled,coalesce(l.follow_rotation,0) AS link_follows_rotation FROM subscriptions s LEFT JOIN subscription_links l ON l.subscription_id=s.id WHERE s.user_id=?', (user['id'],))
     orders = all_rows('SELECT id,protocol,plan,plan_name,days,amount,currency,method,status,created,payment_url,attempts,device_limit,kind,base_amount,discount,promo_code,promo_percent FROM orders WHERE user_id=? ORDER BY created DESC LIMIT 50', (user['id'],))
-    return {'id': user['id'], 'email': user['email'], 'telegram_id': user['telegram_id'], 'can_change_password': bool(user['email'] and user['password']), 'subscriptions': subs, 'orders': orders, 'referrals':referrals.summary(user)}
+    return {'id': user['id'], 'email': user['email'], 'telegram_id': user['telegram_id'], 'can_change_password': bool(user['email'] and user['password']), 'subscriptions': subs, 'orders': [{**row,'progress':order_progress.public(row)} for row in orders], 'referrals':referrals.summary(user)}
 
 @app.post('/api/referrals/code')
 async def referral_code(user=Depends(current_user)):
@@ -365,8 +365,9 @@ async def order_status(order_id: str, user=Depends(current_user)):
     if not order:
         raise HTTPException(404, 'Заказ не найден')
     return {k: order[k] for k in ('id', 'protocol', 'plan_name', 'days', 'amount', 'currency', 'method', 'status', 'payment_url','device_limit','kind','base_amount','discount','promo_code','promo_percent')} | {
+        'progress': order_progress.public(order),
         'instructions': os.getenv('MANUAL_PAYMENT_TEXT', 'Свяжитесь с поддержкой и сообщите номер заказа.')
-        if order['method'] == 'manual' else 'Пробный доступ без оплаты. Дождитесь выдачи в кабинете.' if order['kind']=='trial' else ''}
+        if order['method'] == 'manual' and order['status'] in ('pending','checkout') else ''}
 
 @app.post('/api/quote')
 async def order_quote(data: promos.Quote,user=Depends(current_user)):

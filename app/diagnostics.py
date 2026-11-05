@@ -5,7 +5,7 @@ import sqlite3
 from contextlib import closing
 from . import config as c
 
-VERSION='v0.028'
+VERSION='v0.029'
 QUEUE_SPECS={
     'issuance':('orders',"status='paid'"),
     'payment_poll':('orders',"status='pending' AND method='yookassa' AND payment_id IS NOT NULL"),

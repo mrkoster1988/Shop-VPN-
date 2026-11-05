@@ -5,8 +5,8 @@ const fs=require('node:fs');
 const tick=()=>new Promise(setImmediate);
 
 async function customerPage() {
-  const clock={now:Date.now()}, timers=new Map(), elements=new Map(), calls=[], overrides=new Map();
-  let timerId=0;
+  const clock={now:Date.now()}, timers=new Map(), elements=new Map(), calls=[], overrides=new Map(), intervals=[];
+  let timerId=0,elementId=0;
   const catalog={protocols:[{id:'xui',name:'VLESS',available:true},{id:'wg',name:'WireGuard',available:true}],plans:[{id:'month',name:'Месяц',days:30,price:199,version:1}],currency:'RUB',support:'Поддержка: @support',bot_username:'',terms:'Условия',payment_mode:'manual'};
   const subscription={id:'sub-a',protocol:'xui',state:'active',expires:Math.floor(clock.now/1000)+3600};
   const state={customer:{id:1,email:'buyer@example.com',subscriptions:[subscription],orders:[]},devices:[],catalog,config:{protocol:'xui',config:'vless://private-secret@vpn.example'},copied:[]};
@@ -30,14 +30,14 @@ async function customerPage() {
     else throw Error('Unexpected '+url);
     return {ok,status,json:async()=>body};
   };
-  const context=vm.createContext({document:{getElementById:element,querySelector:()=>({content:'/shop'}),querySelectorAll:()=>[],createElement:tag=>element('created-'+tag)},
+  const context=vm.createContext({document:{getElementById:element,querySelector:()=>({content:'/shop'}),querySelectorAll:()=>[],createElement:tag=>element('created-'+tag+'-'+(++elementId))},
     fetch,URL,URLSearchParams,FormData:class {constructor(form){this.fields=form.fields;}get(name){return this.fields[name];}},crypto:require('node:crypto').webcrypto,Date:class extends Date { static now(){return clock.now;} },
     navigator:{platform:'Linux x86_64',userAgent:'Android',clipboard:{writeText:async value=>state.copied.push(value)}},
     window:{confirm:()=>true},location:{search:''},history:{replaceState(){}},
-    setTimeout:(fn,delay)=>{const id=++timerId;timers.set(id,{fn,delay});return id;},clearTimeout:id=>timers.delete(id),setInterval:()=>0});
+    setTimeout:(fn,delay)=>{const id=++timerId;timers.set(id,{fn,delay});return id;},clearTimeout:id=>timers.delete(id),setInterval:fn=>{intervals.push(fn);return intervals.length;}});
   vm.runInContext(fs.readFileSync('app/static/app.js','utf8'),context);
   await tick();
-  return {state,element,calls,timers,clock,run:code=>vm.runInContext(code,context),
+  return {state,element,calls,timers,clock,intervals,run:code=>vm.runInContext(code,context),
     defer(path){let resolve;overrides.set(path,()=>new Promise(r=>resolve=r));return (body,status=200)=>resolve({ok:status<400,status,json:async()=>body});},
     respond(path,body,status=200){overrides.set(path,async()=>({ok:status<400,status,json:async()=>body}));}};
 }
@@ -444,4 +444,82 @@ test('closing account erases password fields and a failed change shows a safe er
   assert.match(p.element('password-status').textContent,/Текущий пароль неверен/);
   assert.equal(p.element('password-submit').disabled,false);
   for(const id of ['password-current','password-new','password-repeat'])assert.equal(p.element(id).value,'');
+});
+
+test('order history shows delayed fulfillment and opens help for paid orders',async()=>{
+  const p=await customerPage();
+  const order={id:'paid-order',protocol:'wg',status:'paid',amount:199,currency:'RUB',created:1,days:30,kind:'purchase',progress:{stage:'help',title:'Выдача задерживается · нужна помощь',message:'Повторно оплачивать не нужно.',needs_support:true}};
+  p.state.customer.orders=[order];p.respond('/shop/api/orders/paid-order',order);await p.run('refreshMe()');
+  assert.match(p.element('orders').innerHTML,/Статус и помощь/);assert.match(p.element('orders').innerHTML,/Повторно оплачивать не нужно/);
+  await p.run("openOrder('paid-order')");
+  assert.equal(p.element('checkout-dialog').open,true);assert.equal(p.element('checkout-form').hidden,true);
+  const children=p.element('payment-result').children;
+  assert.ok(children.some(c=>c.textContent.includes('нужна помощь')));
+  assert.ok(!children.some(c=>c.textContent==='Перейти к оплате ↗'));
+  await children.find(c=>c.textContent==='Скопировать номер заказа').onclick();
+  assert.deepEqual(p.state.copied,['Заказ: paid-order']);
+});
+
+test('closing order details prevents late response from restoring private data',async()=>{
+  const p=await customerPage();const reply=p.defer('/shop/api/orders/old-order');
+  const pending=p.run("openOrder('old-order')");p.element('checkout-dialog').close();
+  reply({id:'old-order',protocol:'wg',days:30,status:'paid',amount:199,currency:'RUB'});await pending;
+  assert.equal(p.element('checkout-dialog').open,false);assert.equal(p.element('payment-result').children.length,0);
+  assert.equal(p.run('paymentOrder'),null);
+});
+
+test('late order detail cannot replace a more recently selected order',async()=>{
+  const p=await customerPage();const reply=p.defer('/shop/api/orders/old-order');
+  p.respond('/shop/api/orders/new-order',{id:'new-order',protocol:'wg',days:30,status:'paid',amount:199,currency:'RUB'});
+  const pending=p.run("openOrder('old-order')");await p.run("openOrder('new-order')");
+  reply({id:'old-order',protocol:'wg',days:30,status:'paid',amount:199,currency:'RUB'});await pending;
+  assert.equal(p.run('paymentOrder.id'),'new-order');
+});
+
+test('status refresh reaches ready and offers account navigation without another payment',async()=>{
+  const p=await customerPage();
+  p.respond('/shop/api/orders/order-a',{id:'order-a',protocol:'wg',days:30,status:'paid',amount:199,currency:'RUB'});
+  await p.run("openOrder('order-a')");
+  p.respond('/shop/api/orders/order-a',{id:'order-a',protocol:'wg',days:30,status:'active',amount:199,currency:'RUB',progress:{title:'Доступ выдан',message:'Настройки в кабинете.'}});
+  await p.run('refreshPaymentOrder()');
+  const button=p.element('payment-result').children.find(c=>c.textContent==='Перейти к подключениям');assert.ok(button);
+  await button.onclick();assert.equal(p.element('checkout-dialog').open,false);assert.equal(p.element('account-dialog').open,true);
+});
+
+test('logout during order status refresh clears the order and ignores response',async()=>{
+  const p=await customerPage();p.respond('/shop/api/orders/order-a',{id:'order-a',protocol:'wg',days:30,status:'paid',amount:199,currency:'RUB'});
+  await p.run("openOrder('order-a')");const reply=p.defer('/shop/api/orders/order-a');const pending=p.run('refreshPaymentOrder()');
+  await p.element('logout').onclick();reply({id:'order-a',protocol:'wg',days:30,status:'active',amount:199,currency:'RUB'});await pending;
+  assert.equal(p.run('paymentOrder'),null);assert.equal(p.element('payment-result').children.length,0);assert.equal(p.element('checkout-dialog').open,false);
+});
+
+test('closing checkout during purchase leaves the saved order in history without late dialog data',async()=>{
+  const p=await customerPage();await p.run("beginCheckout('month')");const reply=p.defer('/shop/api/orders');
+  const pending=p.element('checkout-form').onsubmit({preventDefault(){},target:{fields:{receipt_email:''}}});
+  p.element('checkout-dialog').close();reply({id:'saved-order',protocol:'wg',days:30,status:'pending',amount:199,currency:'RUB'});await pending;
+  assert.equal(p.run('paymentOrder'),null);assert.equal(p.element('payment-result').children.length,0);assert.equal(p.element('checkout-dialog').open,false);
+  assert.equal(p.element('checkout-submit').disabled,false);
+});
+
+test('order progress and support text cannot insert HTML',async()=>{
+  const p=await customerPage();const order={id:'order-a',protocol:'wg',created:1,days:30,status:'paid',amount:199,currency:'RUB',progress:{title:'<img src=x>',message:'<script>unsafe</script>'}};
+  p.state.customer.orders=[order];p.state.catalog.support='<img src=support>';p.respond('/shop/api/orders/order-a',order);await p.run('refreshMe()');
+  assert.ok(p.element('orders').innerHTML.includes('&lt;img'));assert.ok(!p.element('orders').innerHTML.includes('<script>'));
+  await p.run("openOrder('order-a')");
+  const support=p.element('payment-result').children.find(c=>c.textContent==='<img src=support>');assert.ok(support);assert.equal(support.innerHTML,'');
+});
+
+test('automatic order polling updates an open pending order and stops when closed',async()=>{
+  const p=await customerPage();p.respond('/shop/api/orders/order-a',{id:'order-a',protocol:'wg',days:30,status:'paid',amount:199,currency:'RUB'});
+  await p.run("openOrder('order-a')");p.respond('/shop/api/orders/order-a',{id:'order-a',protocol:'wg',days:30,status:'active',amount:199,currency:'RUB'});
+  await p.intervals[0]();assert.equal(p.run('paymentOrder.status'),'active');
+  p.element('checkout-dialog').close();const count=p.calls.filter(c=>c.url.endsWith('/orders/order-a')).length;
+  await p.intervals[0]();assert.equal(p.calls.filter(c=>c.url.endsWith('/orders/order-a')).length,count);
+});
+
+test('invalid payment URL still leaves status and support reference available',async()=>{
+  const p=await customerPage();p.respond('/shop/api/orders/order-a',{id:'order-a',protocol:'wg',days:30,status:'pending',amount:199,currency:'RUB',payment_url:'not a URL'});
+  await p.run("openOrder('order-a')");
+  assert.ok(p.element('payment-result').children.some(c=>c.textContent==='Скопировать номер заказа'));
+  assert.ok(!p.element('payment-result').children.some(c=>c.textContent==='Перейти к оплате ↗'));
 });
