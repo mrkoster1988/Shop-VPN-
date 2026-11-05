@@ -30,7 +30,7 @@ test('logout rejects an in-flight response with customer data', async () => {
   const page = adminPage();
   const request = page.run("api('users')");
   page.run("$('exit').onclick()");
-  page.reply({users:[{email:'customer@example.com'}]});
+  page.replyAt(0,{users:[{email:'customer@example.com'}]});
   await assert.rejects(request, /Сессия администратора завершена/);
   assert.equal(page.element('users-list').innerHTML, '');
 });
