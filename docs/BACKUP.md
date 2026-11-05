@@ -64,7 +64,10 @@ printf '\n'
 export PUSHOK_BACKUP_PASSWORD
 "${compose[@]}" exec -T -e PUSHOK_BACKUP_PASSWORD shop python scripts/backup.py create --env-stdin --output "/tmp/$backup_name" < .env
 "${compose[@]}" exec -T -e PUSHOK_BACKUP_PASSWORD shop python scripts/backup.py verify "/tmp/$backup_name"
-"${compose[@]}" cp "shop:/tmp/$backup_name" "backups/$backup_name"
+umask 077
+(set -o noclobber; "${compose[@]}" exec -T shop python -c 'import shutil,sys;shutil.copyfileobj(open(sys.argv[1],"rb"),sys.stdout.buffer)' "/tmp/$backup_name" > "backups/$backup_name")
+"${compose[@]}" exec -T shop python -c 'import os,shutil,sys;f=os.fdopen(os.open(sys.argv[1],os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600),"wb");shutil.copyfileobj(sys.stdin.buffer,f);f.close()' "/tmp/copied-$backup_name" < "backups/$backup_name"
+"${compose[@]}" exec -T -e PUSHOK_BACKUP_PASSWORD shop python scripts/backup.py verify "/tmp/copied-$backup_name"
 chmod 600 "backups/$backup_name"
 unset PUSHOK_BACKUP_PASSWORD
 ```
@@ -76,7 +79,9 @@ unset PUSHOK_BACKUP_PASSWORD
 вместо чтения `installer.json` задайте массив
 `compose=(docker compose --env-file "$PWD/.env" -f "$PWD/compose.yaml")`.
 
-Docker-создание и перенос в этой среде не выполнялись: команды требуют приёмки на VPS.
+Передача из tmpfs выполняется через бинарный stdout Docker exec: Docker cp может не
+видеть файл такого mount. Сохранённая копия проверяется после обратного чтения.
+Docker-создание и перенос локально не выполнялись: команды требуют приёмки на VPS.
 Проверка архива после скачивания с удалённого хранилища обязательна: используйте `verify`
 над **скачанным файлом** инструментом того же релиза. Сам по себе успешный `cp` этого
 не подтверждает.

@@ -15,6 +15,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 from urllib.parse import urlsplit
 
 spec=importlib.util.spec_from_file_location('shop_installer',Path(__file__).with_name('install.py'))
@@ -44,6 +45,23 @@ for p in files:shutil.copyfile(p,target/p.name)
 def run(args,*,input=None,env=None,timeout=900):
     result=subprocess.run(args,input=input,capture_output=True,check=True,timeout=timeout,env=env)
     return result.stdout.decode().strip()
+
+
+
+def receive_archive(args,path):
+    """Stream binary data through exec: docker cp cannot reliably read tmpfs files."""
+    path=Path(path);fd,temp=tempfile.mkstemp(prefix='.archive-',dir=path.parent)
+    try:
+        with os.fdopen(fd,'wb') as stream:
+            os.fchmod(stream.fileno(),0o600)
+            subprocess.run(args,stdout=stream,stderr=subprocess.PIPE,check=True,timeout=120)
+            stream.flush();os.fsync(stream.fileno())
+        if Path(temp).stat().st_size>180*1024*1024:raise ValueError('Архив превышает лимит размера')
+        os.link(temp,path)
+        parent=os.open(path.parent,os.O_RDONLY|os.O_DIRECTORY)
+        try:os.fsync(parent)
+        finally:os.close(parent)
+    finally:os.unlink(temp)
 
 
 def sha(raw):return hashlib.sha256(raw).hexdigest()
@@ -304,7 +322,7 @@ def prepare(root,source,secret):
         secure_env={**os.environ,'PUSHOK_BACKUP_PASSWORD':secret}
         backup=['docker','exec','-i','-e','PUSHOK_BACKUP_PASSWORD',helper,'python','scripts/backup.py']
         run(backup+['create','--database','/tmp/source/shop.db','--env-stdin','--output','/tmp/shop.pvb'],input=private_file(root/'.env'),env=secure_env)
-        run(['docker','cp',helper+':/tmp/shop.pvb',str(work/'backup.pvb')]);os.chmod(work/'backup.pvb',0o600)
+        receive_archive(['docker','exec',helper,'python','-c',"import shutil,sys;shutil.copyfileobj(open(sys.argv[1],'rb'),sys.stdout.buffer)",'/tmp/shop.pvb'],work/'backup.pvb')
         # Verify the persisted host copy, not just the helper's original file.
         run(['docker','exec','-i',helper,'python','-c',"import os,sys;f=os.open('/tmp/saved.pvb',os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600);s=os.fdopen(f,'wb');s.write(sys.stdin.buffer.read());s.close()"],input=private_file(work/'backup.pvb'))
         save(root,s,'verifying_backup')

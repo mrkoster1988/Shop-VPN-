@@ -30,7 +30,7 @@ def installation(tmp_path,monkeypatch):
         if args[:2]==['docker','run'] and '-d' in args:return 'e'*64
         if args[:2]==['docker','cp'] and args[2].endswith(':/tmp/shop.pvb'):Path(args[3]).write_bytes(b'encrypted-snapshot')
         return ''
-    monkeypatch.setattr(u.i,'check_os',lambda:'noble');monkeypatch.setattr(u,'run',run);monkeypatch.setattr(u.i,'wait_health',lambda url,*a:health.append(url));monkeypatch.setattr(u.os,'geteuid',lambda:0)
+    monkeypatch.setattr(u,'receive_archive',lambda args,path:(run(args),Path(path).write_bytes(b'encrypted-snapshot'),Path(path).chmod(0o600)));monkeypatch.setattr(u.i,'check_os',lambda:'noble');monkeypatch.setattr(u,'run',run);monkeypatch.setattr(u.i,'wait_health',lambda url,*a:health.append(url));monkeypatch.setattr(u.os,'geteuid',lambda:0)
     return root,source,calls,health,fail
 
 
@@ -98,13 +98,14 @@ def test_pre_activation_rollback_keeps_original_volume_and_pins_old_image(instal
     count=len(calls);u.rollback(root,u.state(root));assert len(calls)==count
 
 
-@pytest.mark.parametrize('stage',['build','stop','backup','verify','restore','migrate','start'])
+@pytest.mark.parametrize('stage',['build','stop','backup','archive_stream','verify','restore','migrate','start'])
 def test_prepare_failure_restores_original_and_retains_journal(installation,stage):
     root,source,calls,health,fail=installation
     predicates={
         'build':lambda a:a[:2]==['docker','build'],
         'stop':lambda a:'stop' in a,
         'backup':lambda a:'scripts/backup.py' in a and 'create' in a,
+        'archive_stream':lambda a:'-c' in a and a[-1]=='/tmp/shop.pvb',
         'verify':lambda a:'scripts/backup.py' in a and 'verify' in a,
         'restore':lambda a:'scripts/backup.py' in a and 'restore' in a,
         'migrate':lambda a:a[:2]==['docker','run'] and 'init_db' in a[-1],
@@ -398,3 +399,20 @@ def test_key_guard_survives_python_optimization_without_printing_keys():
     result=subprocess.run([sys.executable,'-O','-c',u.CHECK_KEY],input=('ENCRYPTION_KEY='+new+'\n').encode(),env={**os.environ,'ENCRYPTION_KEY':old},cwd=Path(u.__file__).parents[1],capture_output=True)
     assert result.returncode!=0 and b'key_matches' not in result.stdout
     assert old.encode() not in result.stdout+result.stderr and new.encode() not in result.stdout+result.stderr
+
+
+def test_binary_archive_stream_preserves_salt_and_never_overwrites(tmp_path):
+    import sys
+    value=b'PUSHOKB1'+bytes(range(256));target=tmp_path/'backup.pvb'
+    args=[sys.executable,'-c',"import sys;sys.stdout.buffer.write(b'PUSHOKB1'+bytes(range(256)))"]
+    u.receive_archive(args,target)
+    assert target.read_bytes()==value and target.stat().st_mode&0o777==0o600
+    with pytest.raises(FileExistsError):u.receive_archive(args,target)
+    assert target.read_bytes()==value and not list(tmp_path.glob('.archive-*'))
+
+
+def test_failed_archive_stream_removes_partial_output(tmp_path):
+    import sys
+    target=tmp_path/'backup.pvb'
+    with pytest.raises(subprocess.CalledProcessError):u.receive_archive([sys.executable,'-c',"import sys;sys.stdout.buffer.write(b'partial');sys.exit(1)"],target)
+    assert not target.exists() and not list(tmp_path.glob('.archive-*'))

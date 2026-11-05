@@ -85,8 +85,11 @@ class Staging:
         check(status==expected,'Unexpected HTTP status for staging request: '+str(status))
         return data,result_headers
     def controller(self,source,command,expected):
-        spec=importlib.util.spec_from_file_location('staging_upgrade_'+secrets.token_hex(8),source/'scripts/upgrade.py')
-        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);output=io.StringIO()
+        spec=importlib.util.spec_from_file_location('staging_upgrade_'+secrets.token_hex(8),self.args.source/'scripts/upgrade.py')
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        # Construct an older-image fixture with the corrected engine; no Docker calls are mocked.
+        if source==self.args.intermediate:module.VERSION=version(source)
+        output=io.StringIO()
         try:
             with redirect_stdout(output):module.main([command,'--source',str(source),'--dir',str(self.root),'--password-file',str(self.password_file)])
         except subprocess.CalledProcessError as error:
@@ -190,7 +193,7 @@ class Staging:
         check(diagnostic['scope']['external_requests'] is False and diagnostic['release']==version(self.args.source),'Diagnostic scope/version mismatch')
         self.event('backup_restore_and_local_status_verified')
         return {'status':'passed','scenario':('0.021 -> 0.024 -> ' if managed_origin else '0.021 -> ')+version(self.args.source),'events':self.events,'data_digest':managed['digest'],
-                'real_docker':True,'real_loopback_https':True,'real_provider_payment':False,'real_vpn_traffic':False}
+                'real_docker':True,'intermediate_fixture_engine':'candidate','real_loopback_https':True,'real_provider_payment':False,'real_vpn_traffic':False}
     def cleanup(self):
         if self.proxy:self.proxy.shutdown();self.proxy.server_close()
         if not self.root or not self.project:return
