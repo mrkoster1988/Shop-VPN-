@@ -415,3 +415,31 @@ test('отмена из календаря передаёт только вер�
   p.replyAt(0,{state:'canceled'});await new Promise(setImmediate);p.replyAt(1,{sites:[],requests:[],total:0,page_size:20});await pending;
   assert.equal(p.run('adsBookingIntents.size'),0);
 });
+
+test('действующая бронь предлагает перенос без предварительной отмены',()=>{
+  const p=adminPage();p.run("adsSitesCache=[{id:'s1',name:'<Новая>',version:2,enabled:true,verified:true,occupied:false}]");
+  const html=p.run("adsBookingForm({id:'ad-a',state:'approved',version:2,payment:{status:'confirmed',version:1},booking:{state:'reserved',version:3,site_name:'Старая',starts_at:10000,ends_at:13600}})");
+  assert.match(html,/data-action="reschedule"/);assert.match(html,/data-action="cancel"/);assert.match(html,/data-booking-version="3"/);assert.match(html,/&lt;Новая&gt;/);
+});
+
+test('календарь помечает обе формы брони для обновления своего списка',async()=>{
+  const p=adminPage();const pending=p.run('refreshBookingCalendar()');
+  p.replyAt(0,{sites:[{id:'s1',name:'Свободная',enabled:true,verified:true,occupied:false}],requests:[{id:'ad-a',channel:'channel_name',state:'approved',version:2,payment:{status:'confirmed',version:1},booking:{state:'reserved',version:1,site_name:'Площадка',starts_at:10000,ends_at:13600,can_start:false}}],total:1,page_size:20});await pending;
+  const forms=p.element('ads-bookings-list').innerHTML.match(/<form[^>]+>/g);
+  assert.equal(forms.length,2);assert.ok(forms.every(f=>f.includes('data-ads-calendar="true"')));
+});
+
+const transferSource="saveAdsBooking({dataset:{adsCalendar:'true',adsBooking:'ad-a',action:'reschedule',requestVersion:'2',paymentVersion:'1',bookingVersion:'3'},fields:{site_id:'s1',starts_at:'2027-01-02T12:00',note:'Перенос'},querySelector(){return transferButton;}})";
+test('повтор переноса сохраняет UUID и не вызывает отмену',async()=>{
+  const p=adminPage({FormData:AdsPaymentFields});p.run("var transferButton={disabled:false};adsSitesCache=[{id:'s1',version:2}];");
+  const first=p.run(transferSource);p.replyAt(0,{detail:'Нет ответа'},502);await first;
+  const second=p.run(transferSource);p.replyAt(1,{detail:'Нет ответа'},502);await second;
+  assert.equal(p.bodies[0].operation_id,p.bodies[1].operation_id);assert.ok(p.requests.every(x=>x.endsWith('/booking/reschedule')));assert.equal(p.bodies[0].booking_version,3);
+});
+
+test('успешный перенос обновляет календарь одним изменением',async()=>{
+  const p=adminPage({FormData:AdsPaymentFields});p.run("var transferButton={disabled:false};adsSitesCache=[{id:'s1',version:2}];");
+  const pending=p.run(transferSource);p.replyAt(0,{state:'reserved',version:4});await new Promise(setImmediate);
+  assert.ok(p.requests[1].includes('/ads/bookings'));p.replyAt(1,{sites:[],requests:[],total:0,page_size:20});await pending;
+  assert.equal(p.requests.filter(x=>x.includes('/booking/')).length,1);assert.equal(p.run('adsBookingIntents.size'),0);
+});

@@ -274,6 +274,9 @@ async def admin_ads_bookings(view:Literal['reserved','expired','all']='reserved'
 @app.post('/api/admin/ads/requests/{rid}/booking/reserve',dependencies=[Depends(admin)])
 async def admin_ads_reserve(rid:UUID,data:bookings.Reserve):return bookings.change(str(rid),'reserve',data)
 
+@app.post('/api/admin/ads/requests/{rid}/booking/reschedule',dependencies=[Depends(admin)])
+async def admin_ads_reschedule(rid:UUID,data:bookings.Reserve):return bookings.change(str(rid),'reschedule',data)
+
 @app.post('/api/admin/ads/requests/{rid}/booking/cancel',dependencies=[Depends(admin)])
 async def admin_ads_cancel_booking(rid:UUID,data:bookings.BaseCommand):return bookings.change(str(rid),'cancel',data)
 

@@ -64,10 +64,12 @@ def change(rid,action,data):
         if request['version']!=data.request_version or ads.payment(conn,rid)['version']!=data.payment_version or (previous['version'] if previous else 0)!=data.booking_version:
             raise HTTPException(409,'Данные изменились. Обновите заявку и бронь.')
         now=int(time.time())
-        if action=='reserve':
+        if action in ('reserve','reschedule'):
             if request['state']!='approved' or ads.payment(conn,rid)['status']!='confirmed':raise HTTPException(409,'Нужны одобрение и учтённое поступление без возврата.')
             if conn.execute('SELECT 1 FROM ads_placements WHERE request_id=?',(rid,)).fetchone():raise HTTPException(409,'Для этой заявки уже начато размещение.')
-            if previous and previous['state']!='canceled':raise HTTPException(409,'Сначала отмените прежнюю бронь.')
+            if action=='reschedule':
+                if not previous or previous['state']!='reserved':raise HTTPException(409,'Перенос доступен только для неиспользованной брони.')
+            elif previous and previous['state']!='canceled':raise HTTPException(409,'Сначала отмените прежнюю бронь.')
             if not now<data.starts_at<=now+365*86400:raise HTTPException(409,'Начало должно быть в будущем, не далее 365 дней.')
             site=conn.execute('SELECT * FROM ads_sites WHERE id=?',(str(data.site_id),)).fetchone()
             if not site or site['version']!=data.site_version or not site['enabled'] or not site['verified']:raise HTTPException(409,'Площадка выключена, не проверена или изменена.')

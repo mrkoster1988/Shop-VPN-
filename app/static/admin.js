@@ -523,19 +523,20 @@ function adsBookingForm(r){
   const b=r.booking;
   const labels={reserved:'Бронь ожидает запуска',canceled:'Бронь отменена',consumed:'Бронь использована при запуске'};
   const status=b?'<p>'+esc(labels[b.state] || b.state)+' · '+esc(b.site_name)+' · '+esc(bookingTime(b.starts_at))+' — '+esc(bookingTime(b.ends_at))+' (время браузера)'+(b.expired?' · окно старта истекло':'')+'</p>':'<p>Плановой брони нет.</p>';
-  const history=(b?.actions || []).map(a=>'<p>'+esc(a.action==='reserve'?'Резерв':'Отмена')+' · '+esc(a.note)+'</p>').join('');
+  const history=(b?.actions || []).map(a=>'<p>'+esc(({reserve:'Резерв',cancel:'Отмена',reschedule:'Перенос'})[a.action] || a.action)+' · '+esc(a.note)+'</p>').join('');
   if(r.placement || r.state!=='approved' || r.payment?.status!=='confirmed')return status+history;
   const cancel=b?.state==='reserved';
   const options=adsSitesCache.filter(s=>s.enabled && s.verified && !s.occupied).map(s=>'<option value="'+esc(s.id)+'">'+esc(s.name)+'</option>').join('');
   if(!cancel && !options)return status+history+'<p>Нет свободной проверенной площадки для брони.</p>';
-  return status+history+'<form data-ads-booking="'+esc(r.id)+'" data-action="'+(cancel?'cancel':'reserve')+'" data-request-version="'+r.version+'" data-payment-version="'+r.payment.version+'" data-booking-version="'+(b?.version || 0)+'">'+(cancel?'':'<label>Площадка<select name="site_id" required>'+options+'</select></label><label>Начало, местное время браузера<input type="datetime-local" name="starts_at" required></label>')+'<label>Основание (только владельцу)<textarea name="note" maxlength="500" required></textarea></label><p>Бронь не запускает узел. Срок берётся из тарифа заявки; при позднем старте повторно проверяется полный период.</p><button>'+(cancel?'Отменить бронь':'Забронировать период')+'</button></form>';
+  const form=(action,title,period)=>'<form data-ads-booking="'+esc(r.id)+'" data-action="'+action+'" data-request-version="'+r.version+'" data-payment-version="'+r.payment.version+'" data-booking-version="'+(b?.version || 0)+'">'+(period?'<label>Новая площадка<select name="site_id" required>'+options+'</select></label><label>Новое начало, местное время браузера<input type="datetime-local" name="starts_at" required></label>':'')+'<label>Основание (только владельцу)<textarea name="note" maxlength="500" required></textarea></label><p>Перенос проверяется целиком; при конфликте прежняя бронь сохраняется. Запуска узла и движения денег нет.</p><button>'+title+'</button></form>';
+  return status+history+(cancel?form('cancel','Отменить бронь',false)+(options?form('reschedule','Перенести бронь одним действием',true):'<p>Нет свободной проверенной площадки для переноса.</p>'):form('reserve','Забронировать период',true));
 }
 async function saveAdsBooking(form){
   const button=form.querySelector('button');if(button.disabled)return;
   const epoch=authEpoch,request=adsRequest,calendarRequest=adsBookingRequest,fromCalendar=form.dataset.adsCalendar==='true',fields=new FormData(form);
   const errorId=fromCalendar?'ads-bookings-error':'ads-admin-error';
   const data={request_version:Number(form.dataset.requestVersion),payment_version:Number(form.dataset.paymentVersion),booking_version:Number(form.dataset.bookingVersion),note:String(fields.get('note') || '').trim()};
-  if(form.dataset.action==='reserve'){
+  if(['reserve','reschedule'].includes(form.dataset.action)){
     const site=adsSitesCache.find(s=>s.id===fields.get('site_id')),date=Date.parse(String(fields.get('starts_at') || ''));
     if(!site || !Number.isFinite(date)){$(errorId).textContent='Выберите площадку и корректное время';return;}
     data.site_id=site.id;data.site_version=site.version;data.starts_at=Math.floor(date/1000);
@@ -558,7 +559,7 @@ async function refreshBookingCalendar(){
     const result=await api('ads/bookings?view='+encodeURIComponent(view)+'&page='+page);
     if(epoch!==authEpoch || request!==adsBookingRequest)return;
     adsSitesCache=result.sites;
-    $('ads-bookings-list').innerHTML=result.requests.map(r=>'<article class="subscription"><h3>'+esc('@'+r.channel)+'</h3><code>'+esc(r.id)+'</code>'+adsBookingForm(r).replace('<form data-ads-booking','<form data-ads-calendar="true" data-ads-booking')+adsPlacementForm(r).replace('<form data-ads-placement','<form data-ads-calendar="true" data-ads-placement')+'</article>').join('') || '<p>Броней в выбранном списке нет.</p>';
+    $('ads-bookings-list').innerHTML=result.requests.map(r=>'<article class="subscription"><h3>'+esc('@'+r.channel)+'</h3><code>'+esc(r.id)+'</code>'+adsBookingForm(r).replaceAll('<form data-ads-booking','<form data-ads-calendar="true" data-ads-booking')+adsPlacementForm(r).replace('<form data-ads-placement','<form data-ads-calendar="true" data-ads-placement')+'</article>').join('') || '<p>Броней в выбранном списке нет.</p>';
     $('ads-bookings-page').textContent='Страница '+page+' · всего '+result.total;
     $('ads-bookings-prev').disabled=page===1;$('ads-bookings-next').disabled=page*result.page_size>=result.total;
   }catch(e){

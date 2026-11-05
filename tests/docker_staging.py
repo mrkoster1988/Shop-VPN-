@@ -241,18 +241,23 @@ class Staging:
         booking={'operation_id':str(uuid.uuid4()),'request_version':2,'payment_version':1,'booking_version':0,'site_id':site_id,'site_version':1,'starts_at':int(time.time())+3600,'note':'Синтетическая бронь'}
         self.http(booking_path+'reserve',body=booking)
         self.http(booking_path+'reserve',body=booking)
+        self.http(booking_path+'reschedule',body={**booking,'operation_id':str(uuid.uuid4()),'booking_version':1,'starts_at':int(time.time())-1},expected=409)
+        body,_=self.http('/api/admin/ads/bookings?view=reserved&page=1')
+        original_booking=json.loads(body)['requests'][0]['booking']
+        check(original_booking['starts_at']==booking['starts_at'] and original_booking['version']==1,'Failed transfer changed original reservation')
+        self.http(booking_path+'reschedule',body={**booking,'operation_id':str(uuid.uuid4()),'booking_version':1,'starts_at':booking['starts_at']+3600})
         self.http(payment_path+'refund',body={**receipt,'operation_id':str(uuid.uuid4()),'payment_version':1,'reference':'fixture/refund-booked'},expected=409)
-        self.http(placement_path+'start',body={**placement,'booking_version':1},expected=409)
-        self.http(booking_path+'cancel',body={'operation_id':str(uuid.uuid4()),'request_version':2,'payment_version':1,'booking_version':1,'note':'Перенос на стенде'})
+        self.http(placement_path+'start',body={**placement,'booking_version':2},expected=409)
+        self.http(booking_path+'cancel',body={'operation_id':str(uuid.uuid4()),'request_version':2,'payment_version':1,'booking_version':2,'note':'Перенос на стенде'})
         booking_start=int(time.time())+2
-        self.http(booking_path+'reserve',body={**booking,'operation_id':str(uuid.uuid4()),'booking_version':2,'starts_at':booking_start})
+        self.http(booking_path+'reserve',body={**booking,'operation_id':str(uuid.uuid4()),'booking_version':3,'starts_at':booking_start})
         body,_=self.http('/api/admin/ads/bookings?view=reserved&page=1')
         check(json.loads(body)['total']==1,'Reservation calendar mismatch')
         while time.time()<booking_start:time.sleep(0.1)
-        placement['booking_version']=3
+        placement['booking_version']=4
         self.http(placement_path+'start',body=placement)
         self.http(placement_path+'start',body=placement)
-        self.event('https_reservation_cancel_rebook_and_manual_consumption_verified')
+        self.event('https_reservation_atomic_transfer_cancel_rebook_and_manual_consumption_verified')
         self.http(payment_path+'refund',body={**receipt,'operation_id':str(uuid.uuid4()),'payment_version':1,'reference':'fixture/refund-blocked'},expected=409)
         before_queue=self.snapshot()
         body,_=self.http('/api/admin/ads/stop-queue?view=upcoming&page=1')
@@ -277,7 +282,7 @@ class Staging:
         self.json('create advertising backup',base+['create','--env-stdin','--output','/tmp/ads.pvb'],input=(self.root/'.env').read_bytes(),env=env)
         self.json('restore advertising backup',base+['restore','/tmp/ads.pvb','--target','/tmp/ads-restore'],env=env)
         restored_ads=self.data('snapshot',database='/tmp/ads-restore/shop.db')
-        check(restored_ads['digest']==advertised['digest'] and restored_ads['counts']['ads_requests']==1 and restored_ads['counts']['ads_events']==14 and restored_ads['counts']['ads_bookings']==1 and restored_ads['counts']['ads_booking_actions']==3 and restored_ads['counts']['ads_sites']==1 and restored_ads['counts']['ads_placements']==1 and restored_ads['counts']['ads_placement_actions']==4 and restored_ads['counts']['ads_payment_entries']==2 and restored_ads['counts']['sessions']==0,'Advertising backup mismatch')
+        check(restored_ads['digest']==advertised['digest'] and restored_ads['counts']['ads_requests']==1 and restored_ads['counts']['ads_events']==15 and restored_ads['counts']['ads_bookings']==1 and restored_ads['counts']['ads_booking_actions']==4 and restored_ads['counts']['ads_sites']==1 and restored_ads['counts']['ads_placements']==1 and restored_ads['counts']['ads_placement_actions']==4 and restored_ads['counts']['ads_payment_entries']==2 and restored_ads['counts']['sessions']==0,'Advertising backup mismatch')
         self.event('https_advertising_manual_placement_lifecycle_payment_and_backup_verified')
         return {'status':'passed','scenario':('0.021 -> 0.024 -> ' if managed_origin else '0.021 -> ')+version(self.args.source),'events':self.events,'data_digest':managed['digest'],
                 'real_docker':True,'intermediate_fixture_engine':'candidate','real_loopback_https':True,'real_provider_payment':False,'real_vpn_traffic':False}

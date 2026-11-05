@@ -78,7 +78,7 @@ def init_db():
           BEGIN SELECT RAISE(ABORT,'overlapping_ads_booking'); END;
         CREATE TABLE IF NOT EXISTS ads_booking_actions (
           operation_id TEXT PRIMARY KEY, request_id TEXT NOT NULL REFERENCES ads_requests(id),
-          action TEXT NOT NULL CHECK(action IN ('reserve','cancel')), fingerprint TEXT NOT NULL,
+          action TEXT NOT NULL CHECK(action IN ('reserve','cancel','reschedule')), fingerprint TEXT NOT NULL,
           note TEXT NOT NULL, details TEXT NOT NULL, created INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS plans (
           id TEXT PRIMARY KEY, name TEXT NOT NULL, days INTEGER NOT NULL CHECK(days > 0),
@@ -194,6 +194,7 @@ def init_db():
             conn.execute('ALTER TABLE orders ADD COLUMN plan_version INTEGER NOT NULL DEFAULT 1')
         if 'plan_name' not in columns:
             conn.execute('ALTER TABLE orders ADD COLUMN plan_name TEXT')
+        migrate_booking_actions(conn)
         sub_columns = {row['name'] for row in conn.execute('PRAGMA table_info(subscriptions)')}
         if 'server_id' not in sub_columns:
             conn.execute('ALTER TABLE subscriptions ADD COLUMN server_id TEXT REFERENCES servers(id)')
@@ -240,3 +241,18 @@ def all_rows(sql, args=()):
 def execute(sql, args=()):
     with db() as conn:
         return conn.execute(sql, args).lastrowid
+
+
+def migrate_booking_actions(conn):
+    """Расширение CHECK без изменения строк, отпечатков или порядка прежнего журнала."""
+    definition=conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='ads_booking_actions'").fetchone()['sql']
+    if "'reschedule'" in definition:return
+    columns=[r['name'] for r in conn.execute('PRAGMA table_info(ads_booking_actions)')]
+    extra=conn.execute("SELECT 1 FROM sqlite_master WHERE tbl_name='ads_booking_actions' AND type IN ('index','trigger') AND sql IS NOT NULL").fetchone()
+    if columns!=['operation_id','request_id','action','fingerprint','note','details','created'] or extra:
+        raise ValueError('Нестандартная схема журнала брони требует отдельного плана обновления')
+    conn.execute('BEGIN IMMEDIATE')
+    conn.execute("CREATE TABLE ads_booking_actions_v037 (operation_id TEXT PRIMARY KEY, request_id TEXT NOT NULL REFERENCES ads_requests(id),action TEXT NOT NULL CHECK(action IN ('reserve','cancel','reschedule')),fingerprint TEXT NOT NULL,note TEXT NOT NULL,details TEXT NOT NULL,created INTEGER NOT NULL)")
+    conn.execute('INSERT INTO ads_booking_actions_v037(rowid,operation_id,request_id,action,fingerprint,note,details,created) SELECT rowid,operation_id,request_id,action,fingerprint,note,details,created FROM ads_booking_actions ORDER BY rowid')
+    conn.execute('DROP TABLE ads_booking_actions')
+    conn.execute('ALTER TABLE ads_booking_actions_v037 RENAME TO ads_booking_actions')
