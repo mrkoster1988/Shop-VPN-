@@ -1,5 +1,8 @@
 """Real Docker integration runner. Only for an explicitly disposable Linux host."""
 import argparse
+from contextlib import redirect_stdout
+import importlib.util
+import io
 import ast
 import hashlib
 import http.client
@@ -82,8 +85,17 @@ class Staging:
         check(status==expected,'Unexpected HTTP status for staging request: '+str(status))
         return data,result_headers
     def controller(self,source,command,expected):
-        result=self.json('upgrade '+command,[sys.executable,str(source/'scripts/upgrade.py'),command,'--source',str(source),'--dir',str(self.root),'--password-file',str(self.password_file)])
-        check(result['phase']==expected,'Unexpected controller phase');return result
+        spec=importlib.util.spec_from_file_location('staging_upgrade_'+secrets.token_hex(8),source/'scripts/upgrade.py')
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);output=io.StringIO()
+        try:
+            with redirect_stdout(output):module.main([command,'--source',str(source),'--dir',str(self.root),'--password-file',str(self.password_file)])
+        except subprocess.CalledProcessError as error:
+            detail=error.stderr.decode(errors='replace') if isinstance(error.stderr,bytes) else str(error.stderr or '')
+            phase={}
+            if (self.root/'upgrade.json').is_file():
+                state=json.loads((self.root/'upgrade.json').read_text());phase={k:state.get(k) for k in ('phase','failure_stage','target')}
+            raise StageError('upgrade '+command+' '+json.dumps(phase)+' '+self.scrub(detail)) from None
+        result=json.loads(output.getvalue());check(result['phase']==expected,'Unexpected controller phase');return result
     def compare(self,expected,*,cleared):
         current=self.snapshot();check(current['digest']==expected['digest'],'Application data changed across snapshot/upgrade')
         check(current['counts']['sessions']==(0 if cleared else 1) and current['counts']['tickets']==(0 if cleared else 1),'Session cleanup mismatch')
