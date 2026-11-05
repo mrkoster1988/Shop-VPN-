@@ -1,6 +1,7 @@
 """Explicit VLESS API adapters. Never guess or fall back after a remote write."""
 import json
-from urllib.parse import quote
+from datetime import datetime, timezone
+from urllib.parse import quote, urlsplit
 
 
 class PanelError(RuntimeError):
@@ -148,10 +149,130 @@ class Clients(Legacy):
         return self.profile['link_template'].replace('{uuid}',sub['id'])
 
 
+class Remnawave:
+    """Создаёт, продлевает и отключает пользователя панели для VLESS-профиля магазина."""
+    def __init__(self, profile):
+        self.profile = profile
+        self.base = profile['url'].rstrip('/') + '/api'
+
+    def headers(self):
+        return {'Authorization': 'Bearer ' + self.profile['token']}
+
+    def response(self, response, *, allow_missing=False):
+        if allow_missing and response.status_code == 404:
+            return None
+        response.raise_for_status()
+        try:
+            body = response.json()
+            data = body.get('response') if isinstance(body, dict) else None
+        except (ValueError, TypeError):
+            raise PanelError('UnsupportedPanelSchema') from None
+        if not isinstance(data, dict):
+            raise PanelError('UnsupportedPanelSchema')
+        return data
+
+    async def check(self, client):
+        response = await client.get(self.base + '/users', params={'start': 0, 'size': 1},
+                                    headers=self.headers())
+        data = self.response(response)
+        if not isinstance(data.get('users'), list) or type(data.get('total')) is not int:
+            raise PanelError('UnsupportedPanelSchema')
+        return data
+
+    def username(self, identity):
+        compact = identity.replace('-', '')
+        if len(compact) != 32 or any(ch not in '0123456789abcdefABCDEF' for ch in compact):
+            raise PanelError('InvalidSubscriptionIdentity')
+        return 'p' + compact.lower()
+
+    async def find(self, client, username):
+        response = await client.get(self.base + '/users/by-username/' + quote(username, safe=''),
+                                    headers=self.headers())
+        return self.response(response, allow_missing=True)
+
+    def expiry(self, timestamp):
+        return datetime.fromtimestamp(int(timestamp), timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+
+    def subscription_url(self, record):
+        value = record.get('subscriptionUrl')
+        try:
+            parsed = urlsplit(value)
+            parsed.port
+        except (TypeError, ValueError):
+            raise PanelError('SubscriptionUrlUnavailable') from None
+        if (not isinstance(value, str) or len(value) > 4096 or parsed.scheme != 'https'
+                or not parsed.hostname or parsed.username or parsed.password
+                or any(ord(ch) < 33 for ch in value)):
+            raise PanelError('SubscriptionUrlUnavailable')
+        return value
+
+    def verify_identity(self, record, username, sub):
+        if (record.get('username') != username or record.get('vlessUuid') != sub['id']
+                or type(record.get('id')) is not int or record['id'] < 1):
+            raise PanelError('PanelUserIdentityMismatch')
+        if record.get('status') != 'ACTIVE' or record.get('expireAt') != self.expiry(sub['expires']):
+            raise PanelError('PanelUserWriteNotConfirmed')
+        return self.subscription_url(record)
+
+    async def apply(self, client, sub, enabled=True):
+        await self.check(client)
+        username = self.username(sub['id'])
+        record = await self.find(client, username)
+        headers = self.headers()
+        expiry = self.expiry(sub['expires'])
+        if record is None:
+            if not enabled:
+                return ''
+            body = {'username': username, 'vlessUuid': sub['id'], 'status': 'ACTIVE', 'expireAt': expiry}
+            if self.profile['squad_uuids']:
+                body['activeInternalSquads'] = self.profile['squad_uuids']
+            response = await client.post(self.base + '/users', json=body, headers=headers)
+            # Потерянный ответ не создаёт дубликат: повтор ищет того же пользователя.
+            self.response(response)
+        else:
+            if record.get('username') != username or record.get('vlessUuid') != sub['id']:
+                raise PanelError('PanelUserIdentityMismatch')
+            if not enabled:
+                await self.disable_record(client, record)
+                return ''
+            response = await client.patch(self.base + '/users',
+                json={'username': username, 'status': 'ACTIVE', 'expireAt': expiry}, headers=headers)
+            self.response(response)
+        confirmed = await self.find(client, username)
+        if confirmed is None:
+            raise PanelError('PanelUserWriteNotConfirmed')
+        return self.verify_identity(confirmed, username, sub)
+
+    async def disable_record(self, client, record):
+        user_id = record.get('id')
+        if type(user_id) is not int or user_id < 1:
+            raise PanelError('UnsupportedPanelSchema')
+        if record.get('status') != 'DISABLED':
+            response = await client.post(self.base + f'/users/{user_id}/actions/disable',
+                                         headers=self.headers())
+            self.response(response)
+        confirmed = await client.get(self.base + f'/users/{user_id}', headers=self.headers())
+        result = self.response(confirmed)
+        if result.get('id') != user_id or result.get('status') != 'DISABLED':
+            raise PanelError('PanelUserDisableNotConfirmed')
+
+    async def disable(self, client, sub):
+        await self.check(client)
+        username = self.username(sub['id'])
+        record = await self.find(client, username)
+        if record is None:
+            return
+        if record.get('username') != username or record.get('vlessUuid') != sub['id']:
+            raise PanelError('PanelUserIdentityMismatch')
+        await self.disable_record(client, record)
+
+
 def adapter(profile):
     mode = profile.get('api','legacy')
     if mode == 'legacy':
         return Legacy(profile)
     if mode == 'clients':
         return Clients(profile)
+    if mode == 'remnawave':
+        return Remnawave(profile)
     raise PanelError('UnsupportedPanelAPI')

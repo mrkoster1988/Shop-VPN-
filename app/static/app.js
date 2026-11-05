@@ -7,7 +7,7 @@ const money=(amount,currency)=>amount.toLocaleString('ru-RU')+' '+(currency==='X
 let checkoutQuote=null,quoteRequest=0,promoIntent='';
 let referralIntents=new Map();
 let adsPolicy=null,adsPage=1,adsRequest=0,adsMutation=0,adsIntent=new Map();
-let passwordOperation=null, logoutPending=false;
+let passwordOperation=null, logoutPending=false, supportRequest=0, selectedSupportCase=null;
 let paymentOrder=null,paymentRequest=0,paymentBusy=false;
 let catalog, me, protocol = 'xui', selectedPlan, checkoutTrial=null, register = false, toastTimer;
 let linkSubscription=null, linkRequest=0, linkState=null;
@@ -69,7 +69,8 @@ function clearPrivate(clearPromoIntent=true) {
   $('devices-dialog').close(); clearDevices();
   $('config-dialog').close(); clearConnection();
   $('account-dialog').close(); $('checkout-dialog').close();
-  for (const id of ['identity','subscriptions','orders','payment-result','checkout-info']) $(id).replaceChildren();
+  for (const id of ['identity','subscriptions','orders','payment-result','checkout-info','support-list','support-thread']) $(id).replaceChildren();
+  supportRequest++;selectedSupportCase=null;$('support-create').reset();$('support-reply').reset();$('support-reply').hidden=true;$('support-status').textContent='';
   $('auth-form').reset(); $('receipt-label').querySelector('input').value = '';
   $('account-btn').textContent = 'Личный кабинет ↗';
 }
@@ -108,7 +109,44 @@ function renderAccount() {
     return `<article class="subscription"><h3>${esc(protocolName(s.protocol))}</h3>${s.access_source==='trial'?'<span class="status">Пробный доступ</span>':''}<p>${active?'Доступ до '+date(s.expires):s.state==='pending'?'Подключение готовится':'Подписка закончилась'}</p><p>${esc(profileAllowance(s.device_limit ?? 4))}</p>${primaryReady?`<button class="small" data-config="${esc(s.id)}">Основной профиль ↗</button>${s.access_source!=='trial'?`<button class="text-link" data-primary-rotate="${esc(s.id)}">Сменить основной ключ</button>`:''}`:s.primary_key_state==='rotating'?`<p>Меняем основной ключ${s.primary_retrying?' · повторим после ошибки':''}. Дополнительные профили не меняются.</p>`:''}${s.protocol==='xui'&&s.state!=='pending'&&s.access_source!=='trial'?`<button class="text-link" data-link="${esc(s.id)}">Ссылка подписки</button>`:''}${active&&s.access_source!=='trial'&&me.referrals?.balance_days>0?`<button class="text-link" data-referral="${esc(s.id)}">Потратить бонус</button>`:''}${s.state!=='pending'?` ${s.access_source!=='trial'?`<button class="small secondary" data-devices="${esc(s.id)}">Устройства</button>`:''}<button class="text-link" data-renew="${esc(s.protocol)}">${active?'Продлить подписку':'Возобновить подписку'}</button>`:''}</article>`;
   }).join('') : '<p>Подписок пока нет. Выберите тариф на главной странице.</p>';
   $('orders').innerHTML = me.orders.length ? me.orders.map(o => `<div class="order"><div><b>${esc(protocolName(o.protocol))} · ${o.kind==='referral'?'Бонус · '+o.days+' дней':o.kind==='trial'?'Без оплаты':money(o.amount,o.currency)}</b><br><code>${esc(o.id)}</code><br>${date(o.created)}</div><div><span class="status ${esc(o.status)} ${esc(o.progress?.stage || '')}">${esc(displayOrderStatus(o))}</span><p>${esc(o.progress?.message || '')}</p><br><button class="text-link" data-order="${esc(o.id)}">${o.status==='pending'?'Оплатить / реквизиты':'Статус и помощь'}</button></div></div>`).join('') : '<p>Заказов пока нет.</p>';
+  refreshSupportCases().catch(e=>{ $('support-status').textContent=e.message; });
 }
+async function refreshSupportCases(){
+ const request=++supportRequest,epoch=sessionEpoch;
+ const select=$('support-order');select.innerHTML='<option value="">Без привязки</option>'+me.orders.map(o=>'<option value="'+esc(o.id)+'">'+esc(o.plan_name||protocolName(o.protocol))+' · '+esc(o.id.slice(0,8))+'</option>').join('');
+ const data=await api('/api/support/tickets?page=1&page_size=30');
+ if(request!==supportRequest||epoch!==sessionEpoch||!me)return;
+ const labels={open:'Открыто',waiting_staff:'Ждёт поддержки',waiting_customer:'Ждёт вашего ответа',closed:'Закрыто'};
+ $('support-list').innerHTML=data.cases.map(c=>'<article class="order"><b>'+esc(c.subject)+'</b><p>'+esc(labels[c.status]||c.status)+' · обновлено '+date(c.updated)+'</p><p>'+esc(c.last_message||'')+'</p><button class="text-link" data-support-case="'+esc(c.id)+'">Открыть переписку</button></article>').join('')||'<p>Обращений пока нет.</p>';
+}
+async function openSupportCase(id){
+ const request=++supportRequest,epoch=sessionEpoch;selectedSupportCase=id;
+ const c=await api('/api/support/tickets/'+encodeURIComponent(id));
+ if(request!==supportRequest||epoch!==sessionEpoch||!me)return;
+ const labels={open:'Открыто',waiting_staff:'Ждёт поддержки',waiting_customer:'Ждёт вашего ответа',closed:'Закрыто'};
+ $('support-thread').innerHTML='<article class="subscription"><h4>'+esc(c.subject)+' · '+esc(labels[c.status]||c.status)+'</h4>'+c.messages.map(m=>'<p><b>'+esc(m.author)+' · '+date(m.created)+'</b><br>'+esc(m.body)+'</p>').join('')+'</article>';
+ $('support-reply').hidden=false;$('support-reply').dataset.version=String(c.version);
+}
+$('support-create').onsubmit=async event=>{
+ event.preventDefault();if(!me)return;
+ const form=event.target,values=new FormData(form),button=form.querySelector('button');button.disabled=true;
+ try{
+  await api('/api/support/tickets',{request_id:crypto.randomUUID(),subject:values.get('subject'),order_id:values.get('order_id')||null,message:values.get('message')});
+  form.reset();$('support-status').textContent='Обращение создано. Ответ появится в этой переписке.';await refreshSupportCases();
+ }catch(error){$('support-status').textContent=error.message}
+ finally{button.disabled=false}
+};
+$('support-list').onclick=event=>{const b=event.target.closest('[data-support-case]');if(b)openSupportCase(b.dataset.supportCase).catch(e=>$('support-status').textContent=e.message)};
+$('support-reply').onsubmit=async event=>{
+ event.preventDefault();if(!selectedSupportCase)return;
+ const form=event.target,body=new FormData(form).get('body'),button=form.querySelector('button');button.disabled=true;
+ try{
+  await api('/api/support/tickets/'+encodeURIComponent(selectedSupportCase)+'/messages',{body,version:Number(form.dataset.version)});
+  form.reset();$('support-status').textContent='Ответ отправлен.';await openSupportCase(selectedSupportCase);await refreshSupportCases();
+ }catch(error){$('support-status').textContent=error.message}
+ finally{button.disabled=false}
+};
+
 async function beginCheckout(id) {
   checkoutTrial=null;resetQuote();
   selectedPlan = catalog.plans.find(p => p.id===id);
@@ -183,7 +221,20 @@ $('protocols').onclick = event => { const b=event.target.closest('[data-protocol
 $('plan-list').onclick = event => { const b=event.target.closest('[data-plan]'); if(b) beginCheckout(b.dataset.plan).catch(e=>toast(e.message)); };
 document.querySelectorAll('[data-close]').forEach(button => button.onclick=()=>$(button.dataset.close).close());
 $('account-btn').onclick = async () => { if(logoutPending)return; try { await refreshMe(); show(me?'account-dialog':'auth-dialog'); } catch(e) { toast(e.message); } };
-$('auth-switch').onclick = () => { register=!register; $('auth-title').textContent=register?'Добро пожаловать.':'С возвращением.'; $('auth-submit').textContent=register?'Создать аккаунт →':'Войти →'; $('auth-switch').textContent=register?'Уже есть аккаунт? Войти':'Создать аккаунт'; $('auth-form').password.autocomplete=register?'new-password':'current-password'; };
+function showForgotForm(show){
+ $('auth-form').hidden=show;$('auth-switch').hidden=show;$('forgot-open').hidden=show;$('forgot-form').hidden=!show;
+ $('auth-title').textContent=show?'Сменить пароль.':'С возвращением.';
+}
+$('auth-dialog').addEventListener('close',()=>{showForgotForm(false);$('forgot-form').reset();$('forgot-status').textContent='';register=false;});
+$('forgot-open').onclick=()=>{const email=$('auth-form').email.value;$('forgot-form').email.value=email;showForgotForm(true);};
+$('forgot-back').onclick=()=>showForgotForm(false);
+$('forgot-form').onsubmit=async event=>{
+ event.preventDefault();const button=event.target.querySelector('button[type=submit]');button.disabled=true;
+ try{const email=new FormData(event.target).get('email');await api('/api/auth/password-reset/request',{email});$('forgot-status').textContent='Если аккаунт с таким email зарегистрирован и почта настроена, письмо будет отправлено.'}
+ catch(error){$('forgot-status').textContent=error.message}
+ finally{button.disabled=false}
+};
+$('auth-switch').onclick = () => { register=!register; $('auth-title').textContent=register?'Добро пожаловать.':'С возвращением.'; $('auth-submit').textContent=register?'Создать аккаунт →':'Войти →'; $('auth-switch').textContent=register?'Уже есть аккаунт? Войти':'Создать аккаунт'; $('auth-form').password.autocomplete=register?'new-password':'current-password'; $('forgot-open').hidden=register; };
 $('auth-form').onsubmit = async event => {
   event.preventDefault(); if(logoutPending || passwordOperation)return; const b=$('auth-submit'); b.disabled=true;
   try { const form=new FormData(event.target); await api('/api/auth/'+(register?'register':'login'),Object.fromEntries(form)); sessionEpoch++; $('auth-form').reset(); $('auth-dialog').close(); await refreshMe(); if(selectedPlan) await beginCheckout(selectedPlan.id); else show('account-dialog'); }
@@ -215,14 +266,15 @@ function connectionInstructions() {
   const platform = $('config-platform').value;
   const mobile = platform==='android' || platform==='ios';
   const wg = connection.protocol==='wg';
+  const remoteSubscription = connection.remoteSubscription;
   const install = wg ? 'Установите приложение WireGuard для выбранного устройства.' : 'Установите VPN-клиент с поддержкой VLESS для выбранного устройства.';
   const source = platform==='ios' || platform==='macos' ? 'Ищите приложение в App Store или на официальном сайте его разработчика.' : platform==='android' ? 'Используйте магазин приложений или официальный сайт разработчика.' : 'Скачайте клиент с официального сайта его разработчика для вашей системы.';
-  const importing = wg ? (platform==='linux' ? 'Скачайте файл .conf. Импортируйте его в установленный клиент WireGuard; при ручной настройке обратитесь к администратору.' : 'Скачайте файл .conf. В WireGuard добавьте туннель и выберите импорт из файла.') : 'Нажмите «Копировать настройки». В VPN-клиенте выберите добавление профиля или импорт из буфера обмена. Можно также скачать ссылку как .txt.';
+  const importing = wg ? (platform==='linux' ? 'Скачайте файл .conf. Импортируйте его в установленный клиент WireGuard; при ручной настройке обратитесь к администратору.' : 'Скачайте файл .conf. В WireGuard добавьте туннель и выберите импорт из файла.') : remoteSubscription ? 'Скопируйте HTTPS-ссылку. В VPN-клиенте выберите добавление подписки по URL или по ссылке; обновление подписки будет получать конфигурации с панели.' : 'Нажмите «Копировать настройки». В VPN-клиенте выберите добавление профиля или импорт из буфера обмена. Можно также скачать ссылку как .txt.';
   const alternative = mobile ? 'Если настройки открыты на другом экране, покажите QR-код и отсканируйте его внутри VPN-клиента.' : 'Для телефона можно открыть QR-код на этом компьютере и отсканировать его в VPN-клиенте телефона.';
   const titles = ['Установите приложение','Импортируйте настройки','Включите VPN'];
   const steps = [install+' '+source, importing+' '+alternative, 'Выберите импортированный профиль и включите подключение. Разрешите добавление VPN, если устройство запросит это. Затем откройте сайт в браузере и проверьте интернет.'];
   $('connection-steps').innerHTML = steps.map((text,i)=>`<li><h3>${titles[i]}</h3><p>${esc(text)}</p></li>`).join('');
-  $('config-help').textContent = wg ? 'Импортируйте именно файл .conf или сканируйте код внутри WireGuard. Не используйте этот профиль в VLESS-клиенте.' : 'Клиент должен поддерживать параметры вашей VLESS-ссылки. Скопируйте ссылку целиком, без лишних пробелов. Обычная камера телефона может не распознать VPN-конфигурацию.';
+  $('config-help').textContent = wg ? 'Импортируйте именно файл .conf или сканируйте код внутри WireGuard. Не используйте этот профиль в VLESS-клиенте.' : remoteSubscription ? 'Это ссылка подписки. Добавьте её в клиент как подписку по URL; QR-код также содержит ссылку. Поддержка подписок зависит от выбранного клиента.' : 'Клиент должен поддерживать параметры вашей VLESS-ссылки. Скопируйте ссылку целиком, без лишних пробелов. Обычная камера телефона может не распознать VPN-конфигурацию.';
 }
 function connectionReady() {
   if (!connection || connection.expires*1000<=Date.now()) {
@@ -252,7 +304,7 @@ async function openConnection(sid, device=null) {
     const result = await api(path+'/config');
     if (request!==connectionRequest || !$('config-dialog').open) return;
     if (result.protocol!==sub.protocol || typeof result.config!=='string' || !result.config) throw new Error('Не удалось получить настройки. Обновите кабинет.');
-    connection = {id:sid,deviceId:device?.id,deviceExpires:device?.expires,protocol:sub.protocol,expires:Math.min(sub.expires,device?.expires || Infinity),path};
+    connection = {id:sid,deviceId:device?.id,deviceExpires:device?.expires,protocol:sub.protocol,remoteSubscription:sub.protocol==='xui' && result.config.startsWith('https://'),expires:Math.min(sub.expires,device?.expires || Infinity),path};
     if (!connectionReady()) return;
     $('config-value').value = result.config;
     $('config-summary').textContent = (device ? device.name+' · ' : '')+protocolName(sub.protocol)+' · доступ до '+date(connection.expires);

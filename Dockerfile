@@ -7,6 +7,7 @@ COPY app ./app
 COPY scripts/backup.py ./scripts/backup.py
 COPY scripts/status.py ./scripts/status.py
 COPY scripts/panel_check.py ./scripts/panel_check.py
+COPY scripts/mail_check.py ./scripts/mail_check.py
 RUN mkdir /app/data && chown shop:shop /app/data
 USER shop
 EXPOSE 8000

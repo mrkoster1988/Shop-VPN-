@@ -54,6 +54,30 @@ class XUIProfile(VLESSProfile):
     username: str = Field(min_length=1, max_length=256)
     password: str = Field(min_length=1, max_length=2048)
 
+class RemnawaveProfile(Profile):
+    """Профиль API панели для выдачи VLESS-подписок."""
+    api: Literal['remnawave'] = 'remnawave'
+    token: str = Field(min_length=32, max_length=2048)
+    squad_uuids: list[str] = Field(default_factory=list, max_length=100)
+
+    @field_validator('token')
+    @classmethod
+    def valid_header(cls, value):
+        if any(ord(x) < 33 or ord(x) > 126 for x in value):
+            raise ValueError('Токен должен содержать печатные ASCII-символы без пробелов')
+        return value
+
+    @field_validator('squad_uuids')
+    @classmethod
+    def valid_squads(cls, values):
+        import re
+        if any(not re.fullmatch(r'[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}', value) for value in values):
+            raise ValueError('ID групп доступа должны быть UUID')
+        if len(set(values)) != len(values):
+            raise ValueError('ID групп доступа не должны повторяться')
+        return values
+
+
 class WGProfile(Profile):
     token: str = Field(min_length=32, max_length=2048)
 
@@ -72,7 +96,13 @@ class ClientsProfile(VLESSProfile):
 
 
 def validated(protocol, settings):
-    model = (ClientsProfile if settings.get('api') == 'clients' else XUIProfile) if protocol == 'xui' else WGProfile
+    if protocol == 'xui':
+        mode = settings.get('api', 'legacy')
+        model = {'legacy': XUIProfile, 'clients': ClientsProfile, 'remnawave': RemnawaveProfile}.get(mode)
+        if model is None:
+            raise ValueError('Неизвестный режим API VLESS')
+    else:
+        model = WGProfile
     return model.model_validate(settings).model_dump()
 
 
@@ -86,7 +116,10 @@ def decode(row):
 def public(row):
     fields = ('id','name','location','protocol','state','capacity','version','created','health','checked_at','error_code')
     result = {key: row[key] for key in fields}
-    result['profile'] = ('clients_vless' if decode(row)['api']=='clients' else 'legacy_vless') if row['protocol']=='xui' else 'wireguard_agent'
+    if row['protocol'] == 'xui':
+        result['profile'] = {'legacy':'legacy_vless','clients':'clients_vless','remnawave':'remnawave_vless'}.get(decode(row).get('api','legacy'),'legacy_vless')
+    else:
+        result['profile'] = 'wireguard_agent'
     result['bound_subscriptions'] = row.get('bound_subscriptions', 0)
     result['occupied'] = row.get('occupied', 0)
     return result
@@ -157,7 +190,8 @@ def update(sid, data):
         profile = decode(before)
         replacement = validated(before['protocol'], data.settings) if data.settings is not None else profile
         bound = conn.execute('SELECT count(*) FROM subscriptions WHERE server_id=?',(sid,)).fetchone()[0]
-        identity = ('url','api','inbound_id','link_template','flow') if before['protocol']=='xui' else ('url',)
+        identity = (('url','api','squad_uuids') if profile.get('api') == 'remnawave'
+                    else ('url','api','inbound_id','link_template','flow')) if before['protocol']=='xui' else ('url',)
         if bound and any(profile.get(k)!=replacement.get(k) for k in identity):
             raise HTTPException(409,'У сервера есть подписки. Для другого endpoint создайте отдельный сервер.')
         credentials_changed = replacement != profile

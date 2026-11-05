@@ -14,9 +14,9 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Literal
 from uuid import UUID
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, quote
 import qrcode
-from fastapi import FastAPI, Depends, HTTPException, Request, Query, Path as APIPath
+from fastapi import FastAPI, Depends, HTTPException, Request, Query, Path as APIPath, BackgroundTasks
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
@@ -25,9 +25,11 @@ from pydantic import BaseModel, Field, field_validator, ValidationError
 from starlette.applications import Starlette
 from starlette.routing import Mount
 from . import ads_bookings as bookings, ads_finance as finance
+from . import support as support_cases
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
+from . import staff, mail
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -39,6 +41,7 @@ STATIC = Path(__file__).parent / 'static'
 async def lifespan(app):
     init_db()
     c.cipher()  # Fail before accepting purchases if encryption is not configured.
+    mail.validate_configuration()
     if len(c.ADMIN_TOKEN) < 32:
         raise RuntimeError('ADMIN_TOKEN must contain at least 32 characters')
     if c.PAYMENT_MODE not in ('manual', 'yookassa'):
@@ -98,7 +101,7 @@ async def safety(request, call_next):
         now = time.monotonic()
         while bucket and bucket[0] < now - 60:
             bucket.popleft()
-        limit = 60 if path.startswith('/sub/') else 20 if path.startswith('/api/auth/') else 180
+        limit = 60 if path.startswith('/sub/') else 20 if path.startswith(('/api/auth/','/api/admin/auth/')) else 180
         if len(bucket) >= limit:
             return JSONResponse({'detail': 'Слишком много запросов. Подождите минуту.'}, status_code=429,headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer'})
         bucket.append(now)
@@ -107,6 +110,10 @@ async def safety(request, call_next):
                 if not hits[key] or hits[key][-1] < now - 60:
                     del hits[key]
     response = await call_next(request)
+    actor = getattr(request.state, 'admin_actor', None)
+    if actor and path.startswith('/api/admin/') and not path.startswith('/api/admin/auth/'):
+        try: staff.audit(actor, request.method, path, response.status_code)
+        except sqlite3.Error: logging.exception('Не удалось записать событие аудита администратора')
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'no-referrer'
     if path.startswith(('/api/', '/login','/sub/')):
@@ -116,6 +123,15 @@ async def safety(request, call_next):
 class Credentials(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=10, max_length=128)
+
+class PasswordResetRequest(BaseModel):
+    model_config = {'extra':'forbid'}
+    email: str = Field(min_length=5,max_length=254)
+
+class PasswordResetConfirm(BaseModel):
+    model_config = {'extra':'forbid'}
+    token: str = Field(min_length=32,max_length=128)
+    new_password: str = Field(min_length=10,max_length=128)
 
 class PasswordChange(BaseModel):
     model_config = {'extra': 'forbid'}
@@ -210,6 +226,51 @@ async def index():
 async def admin_page():
     return html_page('admin.html')
 
+class StaffLogin(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=1, max_length=128)
+class StaffCreate(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=12, max_length=128)
+    role: Literal['panel_operator','mtproxy_manager','finance','support']
+class StaffUpdate(BaseModel):
+    enabled: bool | None = None
+    role: Literal['owner','panel_operator','mtproxy_manager','finance','support'] | None = None
+@app.post('/api/admin/auth/login')
+async def staff_login(data: StaffLogin, response: Response):
+    return staff.login(data.email, data.password, response)
+@app.post('/api/admin/auth/bootstrap')
+async def staff_bootstrap(data: StaffLogin, request: Request, response: Response):
+    result=staff.bootstrap(data.email,data.password,request.headers.get('authorization',''))
+    return {**result,**staff.login(data.email,data.password,response)}
+@app.get('/api/admin/auth/me')
+async def staff_me(request: Request):
+    actor=staff.authorize(request)
+    return {'id':actor.get('id'),'email':actor['email'],'role':actor['role'],'role_label':staff.ROLE_LABELS[actor['role']]}
+@app.post('/api/admin/auth/logout')
+async def staff_logout(request: Request, response: Response):
+    raw=request.cookies.get('staff_session','')
+    if raw:
+        with db() as conn: conn.execute('DELETE FROM staff_sessions WHERE token_hash=?',(digest(raw),))
+    response.delete_cookie('staff_session',path=c.COOKIE_PATH)
+    return {'ok':True}
+@app.get('/api/admin/staff',dependencies=[Depends(admin)])
+async def staff_list():
+    return staff.list_staff()
+@app.post('/api/admin/staff',dependencies=[Depends(admin)])
+async def staff_create(data: StaffCreate, request: Request):
+    actor=request.state.admin_actor
+    if actor['role']!='owner': raise HTTPException(403,'Управлять сотрудниками может только владелец')
+    return JSONResponse(staff.create_staff(data.email,data.password,data.role,actor.get('id')),status_code=201)
+@app.patch('/api/admin/staff/{staff_id}',dependencies=[Depends(admin)])
+async def staff_update(staff_id: int, data: StaffUpdate, request: Request):
+    actor=request.state.admin_actor
+    if actor['role']!='owner': raise HTTPException(403,'Управлять сотрудниками может только владелец')
+    return staff.update_staff(staff_id,data.enabled,data.role,actor.get('id'))
+@app.get('/api/admin/audit',dependencies=[Depends(admin)])
+async def admin_audit(limit: int = Query(default=200,ge=1,le=500)):
+    return staff.audit_rows(limit)
+
 @app.get('/api/catalog')
 async def catalog(request: Request):
     try:
@@ -225,6 +286,38 @@ async def catalog(request: Request):
             'support': os.getenv('SUPPORT_TEXT', 'Напишите администратору магазина.'),
             'receipts': not tg and os.getenv('YOOKASSA_RECEIPTS') == 'true',
             'terms': os.getenv('TERMS_TEXT', 'Условия продажи ещё не заполнены владельцем магазина.')}
+
+@app.get('/api/support/tickets')
+async def support_user_list(page:int=Query(default=1,ge=1,le=100000),page_size:int=Query(default=20,ge=1,le=50),user=Depends(current_user)):
+    return support_cases.list_user(user['id'],page,page_size)
+
+@app.post('/api/support/tickets',status_code=201)
+async def support_user_create(data:support_cases.TicketCreate,user=Depends(current_user)):
+    return support_cases.create(user['id'],data)
+
+@app.get('/api/support/tickets/{case_id}')
+async def support_user_get(case_id:UUID,user=Depends(current_user)):
+    return support_cases.get_user(str(case_id),user['id'])
+
+@app.post('/api/support/tickets/{case_id}/messages')
+async def support_user_reply(case_id:UUID,data:support_cases.UserReply,user=Depends(current_user)):
+    return support_cases.reply_user(str(case_id),user['id'],data)
+
+@app.get('/api/admin/support/tickets',dependencies=[Depends(admin)])
+async def support_staff_list(status:Literal['open','waiting_staff','waiting_customer','closed']|None=None,page:int=Query(default=1,ge=1,le=100000),page_size:int=Query(default=25,ge=1,le=100)):
+    return support_cases.list_staff(status,page,page_size)
+
+@app.get('/api/admin/support/tickets/{case_id}',dependencies=[Depends(admin)])
+async def support_staff_get(case_id:UUID):
+    return support_cases.get_staff(str(case_id))
+
+@app.post('/api/admin/support/tickets/{case_id}/messages',dependencies=[Depends(admin)])
+async def support_staff_reply(case_id:UUID,data:support_cases.StaffReply):
+    return support_cases.reply_staff(str(case_id),data)
+
+@app.patch('/api/admin/support/tickets/{case_id}',dependencies=[Depends(admin)])
+async def support_staff_status(case_id:UUID,data:support_cases.TicketStatus):
+    return support_cases.set_status(str(case_id),data)
 
 @app.get('/api/ads/policy')
 async def ads_policy():return ads.policy()
@@ -358,6 +451,46 @@ async def change_password(data: PasswordChange, request: Request, user=Depends(c
         conn.execute('DELETE FROM tickets WHERE user_id=?', (user['id'],))
         session(response, user['id'], conn)
     return response
+
+@app.post('/api/auth/password-reset/request', status_code=202)
+async def request_password_reset(data: PasswordResetRequest, background_tasks: BackgroundTasks):
+    email=email_address(data.email)
+    user=one('SELECT id,email,password FROM users WHERE email=?',(email,))
+    now=int(time.time())
+    if user and user['password'] and mail.enabled():
+        with db() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            latest=conn.execute('SELECT max(created) FROM password_reset_tokens WHERE user_id=?',(user['id'],)).fetchone()[0]
+            if latest is None or now-latest>=60:
+                conn.execute('DELETE FROM password_reset_tokens WHERE user_id=? AND (expires<=? OR consumed IS NOT NULL)',(user['id'],now))
+                conn.execute('DELETE FROM password_reset_tokens WHERE user_id=?',(user['id'],))
+                raw=secrets.token_urlsafe(32)
+                conn.execute('INSERT INTO password_reset_tokens(token_hash,user_id,created,expires) VALUES (?,?,?,?)',
+                    (digest(raw),user['id'],now,now+1200))
+                link=c.PUBLIC_URL+'/reset-password#'+quote(raw,safe='')
+                background_tasks.add_task(mail.send_password_reset,user['email'],link)
+    return JSONResponse({'ok':True,'message':'Если аккаунт с таким email зарегистрирован и почта настроена, письмо для смены пароля будет отправлено.'},status_code=202)
+
+@app.post('/api/auth/password-reset/confirm')
+async def confirm_password_reset(data: PasswordResetConfirm):
+    now=int(time.time()); encoded=await asyncio.to_thread(password_hash,data.new_password)
+    with db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        row=conn.execute('SELECT user_id FROM password_reset_tokens WHERE token_hash=? AND expires>? AND consumed IS NULL',
+            (digest(data.token),now)).fetchone()
+        if not row: raise HTTPException(400,'Ссылка недействительна или срок её действия истёк. Запросите новую.')
+        uid=row['user_id']
+        changed=conn.execute('UPDATE users SET password=? WHERE id=? AND email IS NOT NULL',(encoded,uid)).rowcount
+        if not changed: raise HTTPException(400,'Ссылка недействительна или срок её действия истёк. Запросите новую.')
+        conn.execute('DELETE FROM sessions WHERE user_id=?',(uid,))
+        conn.execute('DELETE FROM tickets WHERE user_id=?',(uid,))
+        conn.execute('UPDATE password_reset_tokens SET consumed=? WHERE token_hash=?',(now,digest(data.token)))
+        conn.execute('DELETE FROM password_reset_tokens WHERE user_id=? AND token_hash!=?',(uid,digest(data.token)))
+    return {'ok':True,'message':'Пароль изменён. Войдите с новым паролем.'}
+
+@app.get('/reset-password')
+async def reset_password_page():
+    return html_page('reset-password.html')
 
 @app.post('/api/auth/telegram')
 async def tg_login(data: TgAuth):
@@ -662,6 +795,19 @@ async def export_subscription(token: str):
         raise HTTPException(404,'Подписка недоступна')
     try:config=c.decrypt(row['secret'])
     except Exception:raise HTTPException(503,'Профиль временно недоступен') from None
+    if config.startswith('https://'):
+        try:
+            parsed=urlsplit(config)
+            parsed.port
+        except (TypeError, ValueError):
+            raise HTTPException(503,'Профиль временно недоступен') from None
+        if (len(config)>4096 or not parsed.hostname or parsed.username or parsed.password
+                or parsed.fragment or any(ord(ch)<33 for ch in config)):
+            raise HTTPException(503,'Профиль временно недоступен')
+        # Сохраняем URL и User-Agent клиента: панель формирует для него формат подписки.
+        return RedirectResponse(config,status_code=302,headers={
+            'Cache-Control':'no-store','Referrer-Policy':'no-referrer',
+            'X-Robots-Tag':'noindex, nofollow, noarchive'})
     if not config.startswith('vless://') or len(config)>16384 or any(ord(ch)<33 for ch in config):
         raise HTTPException(503,'Профиль временно недоступен')
     body=base64.b64encode((config+'\n').encode()).decode()
