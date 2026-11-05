@@ -188,6 +188,7 @@ class Staging:
         self.controller(self.args.source,'rollback','rolled_back');self.compare(managed,cleared=managed_origin)
         self.event('managed_prepare_and_rollback_verified' if managed_origin else 'direct_prepare_and_rollback_verified')
         self.controller(self.args.source,'prepare','ready');self.controller(self.args.source,'activate','committed');self.compare(managed,cleared=True)
+        managed=self.snapshot()
         settings=self.data('settings')
         check(settings=={'support_text':'Disposable CI fixture','terms_configured':False},
               'Store settings were not initialized from the installation environment')
