@@ -1,4 +1,4 @@
-"""Interactive Ubuntu installer; standard library only. --plan performs no mutations."""
+"""Интерактивный установщик Ubuntu на стандартной библиотеке. --plan не меняет систему."""
 import argparse
 import base64
 import contextlib
@@ -19,7 +19,7 @@ import time
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 
-VERSION = 'v0.030'
+VERSION = 'v0.031'
 
 
 def run(args, **kwargs):
@@ -41,13 +41,27 @@ def atomic_text(path, text, mode=0o600):
 
 
 def public_url(value):
-    p=urlsplit(value.rstrip('/'))
-    if (p.scheme!='https' or not p.hostname or p.username or p.password or p.query or p.fragment
-            or p.port not in (None,443) or p.netloc!=p.hostname
-            or not re.fullmatch(r'[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?',p.hostname)
-            or '.' not in p.hostname or not re.fullmatch(r'(?:/[A-Za-z0-9_-]+)+',p.path)):
-        raise ValueError('Нужен HTTPS-домен без порта и путь, например https://pushok.shop/shop')
-    return 'https://'+p.hostname+p.path
+    message='Нужен HTTPS-адрес на вашем домене без порта, например https://example.com/shop'
+    try:
+        p=urlsplit(value.strip().rstrip('/'))
+        host=p.hostname.encode('idna').decode('ascii').lower() if p.hostname else ''
+        labels=host.split('.')
+        if (p.scheme!='https' or not host or p.username or p.password or p.query or p.fragment
+                or p.netloc.lower()!=p.hostname or len(host)>253 or len(labels)<2
+                or any(not re.fullmatch(r'[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?',label) for label in labels)
+                or not re.fullmatch(r'(?:/[A-Za-z0-9_-]+)+',p.path)):
+            raise ValueError()
+        return 'https://'+host+p.path
+    except (ValueError,UnicodeError,AttributeError):
+        raise ValueError(message) from None
+
+
+def choose_public_url(value):
+    if value:return public_url(value)
+    while True:
+        candidate=ask('Адрес магазина на вашем домене (например https://example.com/shop)')
+        try:return public_url(candidate)
+        except ValueError as error:print(str(error))
 
 
 def install_path(value):
@@ -119,7 +133,7 @@ location ^~ {path}/ {{
 
 def nginx_insert(text,domain,include,path):
     marker='include '+str(include)+';'
-    # Only parse ordinary server blocks; refuse ambiguous templated configurations.
+    # Разбираем только обычные блоки server; неоднозначные шаблоны отклоняем.
     if '${' in text:raise ValueError('Шаблонная конфигурация Nginx: используйте режим external')
     tokens=list(re.finditer(r'"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|\#[^\n]*|[{};]|[^\s{};#]+',text))
     stack=[];statement=[];candidates=[]
@@ -196,7 +210,7 @@ def docker_ready(codename):
     if shutil.which('docker'):
         run(['docker','compose','version']);run(['docker','info'],stdout=subprocess.DEVNULL)
         return
-    # Never remove another engine or container runtime to install ours.
+    # Не удаляем чужой движок или среду контейнеров ради установки.
     for package in ('docker.io','docker-compose','docker-compose-v2','containerd','containerd.io','runc','podman-docker'):
         r=subprocess.run(['dpkg-query','-W','-f=${Status}',package],capture_output=True,text=True)
         if r.returncode==0 and 'install ok installed' in r.stdout:
@@ -252,11 +266,12 @@ def main(argv=None):
         if settings.get('version')!=VERSION:raise ValueError('Другая версия уже установлена. Автоматическое обновление с миграцией не выполняется.')
         for key in ('url','mode','port','support','nginx_config'):
             supplied=getattr(args,key,None)
+            if key=='url' and supplied is not None:supplied=public_url(supplied)
             if supplied is not None and supplied!=settings.get(key):raise ValueError('Повторный запуск сохраняет параметры; не меняйте '+key)
     else:
         if root.exists() and any(p.name!='.install.lock' for p in root.iterdir()):raise ValueError('Каталог не пуст и не принадлежит установщику. Существующая установка не изменена.')
         if args.yes and (not args.url or not args.mode):raise ValueError('--yes требует --url и --mode')
-        url=public_url(args.url or ask('Адрес магазина','https://pushok.shop/shop'))
+        url=choose_public_url(args.url)
         mode=args.mode or ask('Режим: caddy (новый HTTPS), nginx (существующий сайт), external (другой прокси)','nginx' if shutil.which('nginx') else 'caddy')
         if mode not in ('caddy','nginx','external'):raise ValueError('Неизвестный режим')
         port=args.port or int(ask('Внутренний порт магазина','8000') if not args.yes else '8000')

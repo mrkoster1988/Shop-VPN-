@@ -183,3 +183,13 @@ def test_discounted_yookassa_request_and_receipt_use_saved_total(buyer,monkeypat
     body=json.loads(requests[0].content)
     assert body['amount']=={'value':'180.00','currency':'RUB'} and body['receipt']['items'][0]['amount']==body['amount']
     assert requests[0].headers['idempotence-key']==result.json()['id']
+
+def test_partner_offer_percent_is_configured_by_owner_and_snapshot_survives_change(buyer):
+    client=buyer;row=coupon(client,code='PARTNER15',percent=15)
+    result=quote(client,'PARTNER15');assert result.status_code==200
+    offer=result.json();assert (offer['promo_percent'],offer['discount'],offer['amount'])==(15,29,170)
+    placed=purchase(client,offer);assert placed.status_code==200 and placed.json()['amount']==170
+    changed=edit(client,row,percent=20)
+    assert changed.status_code==200 and changed.json()['percent']==20
+    saved=client.get('/api/orders/'+placed.json()['id']).json()
+    assert saved['amount']==170 and saved['promo_percent']==15

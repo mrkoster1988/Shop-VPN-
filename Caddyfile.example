@@ -1,4 +1,4 @@
-# Merge into existing global options if already present.
+# Объедините с существующим блоком глобальных настроек, если он уже есть.
 {
     log default {
         format filter {
@@ -9,10 +9,10 @@
         }
     }
 }
-# Merge these routes into the existing pushok.shop site block.
-# Keep all existing routes for the main website.
-# PUBLIC_URL=https://pushok.shop/shop
-pushok.shop {
+# Добавьте эти маршруты в существующий блок сайта; замените example.com своим доменом.
+# Сохраните существующие маршруты основного сайта.
+# PUBLIC_URL=https://example.com/shop
+example.com {
     @private_shop path /shop/login /shop/sub/*
     log_skip @private_shop
     encode gzip
@@ -22,8 +22,8 @@ pushok.shop {
     handle @shop {
         reverse_proxy 127.0.0.1:8000
     }
-    # Retain the existing handle / reverse_proxy / file_server for the main site here.
+    # Сохраните здесь существующие handle / reverse_proxy / file_server основного сайта.
 }
-# Caddy runs on the host. In Docker use the appropriate private/host network.
-# Do not enable access logs: /shop/login contains a single-use credential.
-# Use handle, not handle_path: the application expects the /shop prefix.
+# Caddy работает на хосте. Для Docker настройте подходящую частную сеть или сеть хоста.
+# Не включайте журнал запросов: /shop/login содержит одноразовый секрет входа.
+# Используйте handle, а не handle_path: приложение ожидает сохранённый префикс /shop.

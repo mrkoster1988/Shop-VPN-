@@ -194,3 +194,47 @@ def test_bootstrap_pins_install_and_upgrade_to_current_release(tmp_path,upgrade)
     assert output['script'].endswith('/scripts/'+('upgrade.py' if upgrade else 'install.py'))
     assert ('/'+i.VERSION+'.tar.gz') in log.read_text()
     assert '--source' in output['args'] and ('plan' if upgrade else '--plan') in output['args']
+
+@pytest.mark.parametrize('raw,expected',[
+    ('https://vpn.alpha.example/shop/','https://vpn.alpha.example/shop'),
+    ('https://SHOP.BETA.EXAMPLE/shop','https://shop.beta.example/shop'),
+    ('https://магазин.рф/shop','https://xn--80aairftm.xn--p1ai/shop'),
+    (' https://vpn.example.com/store/vpn/ ','https://vpn.example.com/store/vpn'),
+])
+def test_custom_domains_are_normalized_without_project_domain(raw,expected):
+    assert i.public_url(raw)==expected
+
+@pytest.mark.parametrize('raw',[
+    'https://bad..example/shop','https://-bad.example/shop','https://bad-.example/shop',
+    'https://example.com./shop','https://example.com:443/shop','https://example.com:bad/shop',
+    'https://'+'a'*64+'.example/shop','https://example.com/%2e%2e/shop',
+])
+def test_invalid_domain_labels_and_ports_refused(raw):
+    with pytest.raises(ValueError):i.public_url(raw)
+
+def test_domain_prompt_has_no_personal_default_and_retries_empty(monkeypatch,capsys):
+    answers=iter(['','https://custom-owner.example/shop']);prompts=[]
+    def ask(label,default='',secret=False):
+        prompts.append((label,default));return next(answers)
+    monkeypatch.setattr(i,'ask',ask)
+    assert i.choose_public_url(None)=='https://custom-owner.example/shop'
+    assert len(prompts)==2 and all(default=='' for label,default in prompts)
+    assert 'pushok.shop' not in capsys.readouterr().out
+
+def test_explicit_url_does_not_prompt(monkeypatch):
+    monkeypatch.setattr(i,'ask',lambda *a,**kw:pytest.fail('No prompt for --url'))
+    assert i.choose_public_url('https://owner.example/shop')=='https://owner.example/shop'
+
+@pytest.mark.parametrize('url',['https://pushok.shop/shop','https://OTHER.OWNER.EXAMPLE/shop/'])
+def test_install_persists_selected_owner_domain_and_repeat_never_replaces_it(system,url):
+    root,args,calls,health=system
+    args[args.index('--url')+1]=url
+    assert i.main(args)==0
+    saved=(root/'.env').read_bytes();settings=json.loads((root/'installer.json').read_text())
+    canonical=i.public_url(url)
+    assert settings['url']==canonical and dotenv_values(root/'.env')['PUBLIC_URL']==canonical
+    assert canonical.split('/')[2] in (root/'Caddyfile').read_text()
+    assert i.main(args)==0 and (root/'.env').read_bytes()==saved
+    args[args.index('--url')+1]='https://different-owner.example/shop'
+    with pytest.raises(ValueError):i.main(args)
+    assert (root/'.env').read_bytes()==saved

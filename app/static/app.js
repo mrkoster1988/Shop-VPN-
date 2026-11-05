@@ -4,7 +4,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const statusLabel = {pending:'Ожидает оплаты',checkout:'Оплата не завершена',paid:'Оплачено · готовим VPN',active:'Доступ выдан',canceled:'Отменён'};
 const money=(amount,currency)=>amount.toLocaleString('ru-RU')+' '+(currency==='XTR'?'★':'₽');
-let checkoutQuote=null,quoteRequest=0;
+let checkoutQuote=null,quoteRequest=0,promoIntent='';
 let referralIntents=new Map();
 let passwordOperation=null, logoutPending=false;
 let paymentOrder=null,paymentRequest=0,paymentBusy=false;
@@ -52,7 +52,8 @@ $('account-dialog').addEventListener('close',clearPassword);
 function clearPayment() {
   paymentOrder=null;paymentRequest++;paymentBusy=false;$('payment-result').replaceChildren();$('checkout-submit').disabled=false;
 }
-function clearPrivate() {
+function clearPrivate(clearPromoIntent=true) {
+  if(clearPromoIntent)promoIntent='';
   clearPayment();
   clearPassword(); $('password-settings').hidden=true; $('password-settings').open=false;
   me = null; selectedPlan = null; checkoutTrial=null;resetQuote(); primaryRotationIntents.clear();referralIntents.clear();$('referral-url').value='';$('referral-code').value='';$('referral-accept').checked=false;$('referral-status').textContent='';$('referral-info').textContent='';$('referral-history').replaceChildren();$('referrals-panel').hidden=true;
@@ -72,7 +73,7 @@ async function refreshMe() {
   const nextCatalog = await api('/api/catalog');
   if (request !== meRequest || epoch !== sessionEpoch) return;
   if (me && me.id !== customer?.id) { sessionEpoch++; clearPrivate(); }
-  else if (!customer) clearPrivate();
+  else if (!customer) clearPrivate(false);
   me = customer; catalog = nextCatalog; renderPlans();
   $('account-btn').textContent = me ? 'Мой кабинет ↗' : 'Личный кабинет ↗';
   if (connection) {
@@ -108,6 +109,7 @@ async function beginCheckout(id) {
   if (!selectedPlan) throw new Error('Тариф больше недоступен. Выберите другой тариф.');
   if (!me) { show('auth-dialog'); return; }
   $('promo-controls').hidden=false;renderCheckoutAmount();
+  if(promoIntent){$('promo-code').value=promoIntent;$('promo-status').textContent='Промокод из ссылки. Нажмите «Применить», чтобы проверить скидку и итоговую цену.';}
   clearPayment(); $('checkout-form').hidden = false;
   $('terms-text').textContent=catalog.terms; $('accept-terms').checked=false; $('accept-terms').required=catalog.payment_mode==='stars';
   $('receipt-label').hidden = !catalog.receipts; $('receipt-label').querySelector('input').required = catalog.receipts;
@@ -181,7 +183,7 @@ $('auth-form').onsubmit = async event => {
 };
 $('checkout-form').onsubmit = async event => {
   event.preventDefault(); const b=$('checkout-submit'); b.disabled=true; const request=paymentRequest,epoch=sessionEpoch;
-  try { if(!checkoutTrial && $('promo-code').value.trim() && !checkoutQuote)throw new Error('Сначала нажмите «Применить» и проверьте сумму скидки.'); const email=new FormData(event.target).get('receipt_email'); const path=checkoutTrial?'/api/trial':'/api/orders';const payload=checkoutTrial?{protocol:checkoutTrial.protocol,policy_version:checkoutTrial.version,accept_terms:$('accept-terms').checked}:{plan:selectedPlan.id,plan_version:selectedPlan.version,protocol,receipt_email:email||null,accept_terms:$('accept-terms').checked,...(checkoutQuote?{promo_code:checkoutQuote.promo_code,promo_version:checkoutQuote.promo_version,quoted_amount:checkoutQuote.amount,quote_currency:checkoutQuote.currency}:{})};const order=await api(path,payload);if(request!==paymentRequest || epoch!==sessionEpoch || !$('checkout-dialog').open)return;checkoutTrial=null;paymentResult(order);await refreshMe(); }
+  try { if(!checkoutTrial && $('promo-code').value.trim() && !checkoutQuote)throw new Error('Сначала нажмите «Применить» и проверьте сумму скидки.'); const email=new FormData(event.target).get('receipt_email'); const path=checkoutTrial?'/api/trial':'/api/orders';const payload=checkoutTrial?{protocol:checkoutTrial.protocol,policy_version:checkoutTrial.version,accept_terms:$('accept-terms').checked}:{plan:selectedPlan.id,plan_version:selectedPlan.version,protocol,receipt_email:email||null,accept_terms:$('accept-terms').checked,...(checkoutQuote?{promo_code:checkoutQuote.promo_code,promo_version:checkoutQuote.promo_version,quoted_amount:checkoutQuote.amount,quote_currency:checkoutQuote.currency}:{})};const order=await api(path,payload);if(request!==paymentRequest || epoch!==sessionEpoch || !$('checkout-dialog').open)return;promoIntent='';checkoutTrial=null;paymentResult(order);await refreshMe(); }
   catch(e) {
     if(request!==paymentRequest || epoch!==sessionEpoch || !$('checkout-dialog').open)return;
     if (e.status===409) {
@@ -315,8 +317,8 @@ function resetQuote(clearInput=true) {
   $('promo-status').textContent='';$('promo-apply').disabled=false;renderCheckoutAmount();
 }
 $('checkout-dialog').addEventListener('close',()=>{resetQuote();clearPayment();});
-$('promo-code').oninput=()=>{resetQuote(false);if($('promo-code').value.trim())$('promo-status').textContent='Нажмите «Применить», чтобы рассчитать скидку.';};
-$('promo-clear').onclick=()=>resetQuote();
+$('promo-code').oninput=()=>{promoIntent='';resetQuote(false);if($('promo-code').value.trim())$('promo-status').textContent='Нажмите «Применить», чтобы рассчитать скидку.';};
+$('promo-clear').onclick=()=>{promoIntent='';resetQuote();};
 async function applyPromo() {
   if(!selectedPlan || checkoutTrial)return;
   const code=$('promo-code').value.trim(),request=++quoteRequest,plan=selectedPlan.id,version=selectedPlan.version,chosen=protocol;
@@ -505,6 +507,12 @@ $('logout').onclick = async () => {
     const tg=window.Telegram?.WebApp;
     if(tg?.initData) { tg.ready(); tg.expand(); await api('/api/auth/telegram',{init_data:tg.initData}); }
     await refreshMe();
+    // Ссылка передаёт только код: процент и право на скидку проверяет сервер после явного применения.
+    const incomingPromos=new URLSearchParams(location.search).getAll('promo');
+    const incomingPromo=incomingPromos.length===1?incomingPromos[0].trim().toUpperCase():'';
+    if(/^[A-Z0-9][A-Z0-9_-]{3,31}$/.test(incomingPromo)){
+      promoIntent=incomingPromo;toast('В ссылке есть промокод. Выберите тариф и примените его перед оформлением.');
+    }
     if(/^[a-f0-9]{24}$/.test(new URLSearchParams(location.search).get('ref') || '')) {show(me?'account-dialog':'auth-dialog');toast('Примите приглашение в кабинете до первого заказа или пробного доступа.');}
     if(new URLSearchParams(location.search).has('payment')) { history.replaceState(null,'',basePath+'/'); show(me?'account-dialog':'auth-dialog'); }
     setInterval(async()=>{ if(me && ( $('account-dialog').open || $('checkout-dialog').open || $('config-dialog').open || $('devices-dialog').open )) { try { await refreshMe(); await refreshPaymentOrder(true); } catch {} } },15000);

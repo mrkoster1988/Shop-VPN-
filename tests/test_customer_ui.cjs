@@ -4,12 +4,13 @@ const vm=require('node:vm');
 const fs=require('node:fs');
 const tick=()=>new Promise(setImmediate);
 
-async function customerPage() {
+async function customerPage(options={}) {
   const clock={now:Date.now()}, timers=new Map(), elements=new Map(), calls=[], overrides=new Map(), intervals=[];
   let timerId=0,elementId=0;
   const catalog={protocols:[{id:'xui',name:'VLESS',available:true},{id:'wg',name:'WireGuard',available:true}],plans:[{id:'month',name:'Месяц',days:30,price:199,version:1}],currency:'RUB',support:'Поддержка: @support',bot_username:'',terms:'Условия',payment_mode:'manual'};
   const subscription={id:'sub-a',protocol:'xui',state:'active',expires:Math.floor(clock.now/1000)+3600};
   const state={customer:{id:1,email:'buyer@example.com',subscriptions:[subscription],orders:[]},devices:[],catalog,config:{protocol:'xui',config:'vless://private-secret@vpn.example'},copied:[]};
+  if(options.anonymous)state.customer=null;
   function element(id) {
     if (!elements.has(id)) elements.set(id,{value:'',textContent:'',innerHTML:'',hidden:false,open:false,disabled:false,attrs:{},listeners:{},children:[],
       reset(){},select(){this.selected=true;},showModal(){this.open=true;},close(){if(this.open){this.open=false;this.listeners.close?.();}},
@@ -33,7 +34,7 @@ async function customerPage() {
   const context=vm.createContext({document:{getElementById:element,querySelector:()=>({content:'/shop'}),querySelectorAll:()=>[],createElement:tag=>element('created-'+tag+'-'+(++elementId))},
     fetch,URL,URLSearchParams,FormData:class {constructor(form){this.fields=form.fields;}get(name){return this.fields[name];}},crypto:require('node:crypto').webcrypto,Date:class extends Date { static now(){return clock.now;} },
     navigator:{platform:'Linux x86_64',userAgent:'Android',clipboard:{writeText:async value=>state.copied.push(value)}},
-    window:{confirm:()=>true},location:{search:''},history:{replaceState(){}},
+    window:{confirm:()=>true},location:{search:options.search || ''},history:{replaceState(){}},
     setTimeout:(fn,delay)=>{const id=++timerId;timers.set(id,{fn,delay});return id;},clearTimeout:id=>timers.delete(id),setInterval:fn=>{intervals.push(fn);return intervals.length;}});
   vm.runInContext(fs.readFileSync('app/static/app.js','utf8'),context);
   await tick();
@@ -522,4 +523,54 @@ test('invalid payment URL still leaves status and support reference available',a
   await p.run("openOrder('order-a')");
   assert.ok(p.element('payment-result').children.some(c=>c.textContent==='Скопировать номер заказа'));
   assert.ok(!p.element('payment-result').children.some(c=>c.textContent==='Перейти к оплате ↗'));
+});
+
+test('код из партнёрской ссылки подставляется без автоматического запроса скидки или покупки',async()=>{
+  const p=await customerPage({search:'?promo=partner15&discount=99'});await p.run("beginCheckout('month')");
+  assert.equal(p.element('promo-code').value,'PARTNER15');
+  assert.match(p.element('promo-status').textContent,/Применить/);
+  assert.ok(!p.calls.some(c=>c.url.endsWith('/api/quote')||c.url.endsWith('/api/orders')));
+  assert.equal(p.run('checkoutQuote'),null);
+});
+
+test('скидка по ссылке применяется только после серверного расчёта и явного действия',async()=>{
+  const p=await customerPage({search:'?promo=PARTNER15&discount=99'});await p.run("beginCheckout('month')");
+  p.respond('/shop/api/quote',{plan:'month',protocol:'xui',plan_version:1,base_amount:199,amount:170,discount:29,currency:'RUB',promo_code:'PARTNER15',promo_version:2,promo_percent:15});
+  await p.run('applyPromo()');assert.match(p.element('checkout-info').textContent,/170/);
+  p.respond('/shop/api/orders',{id:'partner-order',protocol:'xui',days:30,status:'pending',amount:170,currency:'RUB'});
+  await p.element('checkout-form').onsubmit({preventDefault(){},target:{fields:{receipt_email:''}}});
+  const body=JSON.parse(p.calls.find(c=>c.url.endsWith('/api/orders')).opts.body);
+  assert.equal(body.quoted_amount,170);assert.equal(body.promo_code,'PARTNER15');assert.equal(body.promo_version,2);assert.equal(body.discount,undefined);
+});
+
+test('недействующий партнёрский код не позволяет незаметно оформить заказ по полной цене',async()=>{
+  const p=await customerPage({search:'?promo=EXPIRED15'});await p.run("beginCheckout('month')");
+  p.respond('/shop/api/quote',{detail:'Промокод недействителен'},409);
+  await p.run('applyPromo()');
+  await p.element('checkout-form').onsubmit({preventDefault(){},target:{fields:{receipt_email:''}}});
+  assert.ok(!p.calls.some(c=>c.url.endsWith('/api/orders')));
+});
+
+test('небезопасные и неоднозначные параметры промокода игнорируются',async()=>{
+  for(const search of ['?promo=%3Cscript%3E','?promo=A','?promo='+('A'.repeat(33)),'?promo=PARTNER15&promo=OTHER15']){
+    const p=await customerPage({search});await p.run("beginCheckout('month')");assert.equal(p.element('promo-code').value,'');
+  }
+});
+
+test('пользователь может убрать промокод из ссылки без повторной подстановки',async()=>{
+  const p=await customerPage({search:'?promo=PARTNER15'});await p.run("beginCheckout('month')");
+  p.element('promo-clear').onclick();p.element('checkout-dialog').close();await p.run("beginCheckout('month')");
+  assert.equal(p.element('promo-code').value,'');assert.equal(p.run('promoIntent'),'');
+});
+
+test('выход очищает намерение применить партнёрский промокод',async()=>{
+  const p=await customerPage({search:'?promo=PARTNER15'});await p.run("beginCheckout('month')");await p.element('logout').onclick();
+  assert.equal(p.run('promoIntent'),'');assert.equal(p.element('promo-code').value,'');
+});
+
+test('публичный партнёрский код сохраняется до входа покупателя',async()=>{
+  const p=await customerPage({search:'?promo=PARTNER15',anonymous:true});await p.run("beginCheckout('month')");
+  assert.equal(p.element('auth-dialog').open,true);assert.equal(p.run('promoIntent'),'PARTNER15');
+  p.state.customer={id:2,email:'new@example.com',subscriptions:[],orders:[]};await p.run('refreshMe()');await p.run("beginCheckout('month')");
+  assert.equal(p.element('promo-code').value,'PARTNER15');
 });
