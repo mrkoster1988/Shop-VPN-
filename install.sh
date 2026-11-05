@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # A fixed release prevents downloading a moving main branch during installation.
-VERSION=v0.023
+VERSION=v0.024
 main() {
   local archive_version="$VERSION"
-  # --upgrade remains the explicitly supported v0.021 -> v0.022 transition.
-  if [[ "${1:-}" == '--upgrade' ]]; then archive_version=v0.022; fi
   command -v curl >/dev/null || { echo 'Нужен curl.' >&2; exit 1; }
   command -v python3 >/dev/null || { echo 'Нужен Python 3: apt-get update && apt-get install -y python3' >&2; exit 1; }
   stage=$(mktemp -d)

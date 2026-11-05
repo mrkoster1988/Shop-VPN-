@@ -179,7 +179,7 @@ def test_subscription_urls_are_redacted_in_proxy_templates():
 
 
 @pytest.mark.parametrize('upgrade',[False,True])
-def test_bootstrap_pins_install_and_legacy_upgrade_separately(tmp_path,upgrade):
+def test_bootstrap_pins_install_and_upgrade_to_current_release(tmp_path,upgrade):
     import io,tarfile
     root=Path(__file__).parents[1];archive=tmp_path/'mock.tar.gz';binary=tmp_path/'bin';binary.mkdir();log=tmp_path/'curl-args'
     with tarfile.open(archive,'w:gz') as tar:
@@ -192,5 +192,5 @@ def test_bootstrap_pins_install_and_legacy_upgrade_separately(tmp_path,upgrade):
     result=subprocess.run(['bash',str(root/'install.sh'),*(['--upgrade','plan'] if upgrade else ['--plan'])],env=env,capture_output=True,text=True,check=True)
     output=json.loads(result.stdout)
     assert output['script'].endswith('/scripts/'+('upgrade.py' if upgrade else 'install.py'))
-    assert ('/v0.022.tar.gz' if upgrade else '/'+i.VERSION+'.tar.gz') in log.read_text()
+    assert ('/'+i.VERSION+'.tar.gz') in log.read_text()
     assert '--source' in output['args'] and ('plan' if upgrade else '--plan') in output['args']

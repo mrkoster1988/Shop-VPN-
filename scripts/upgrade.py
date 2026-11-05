@@ -1,4 +1,4 @@
-"""Installer-managed v0.021 -> v0.022 upgrade. Standard library only; no shell."""
+"""Installer-managed upgrades to v0.024. Standard library only; no shell."""
 import argparse
 import ast
 from contextlib import contextmanager
@@ -19,9 +19,15 @@ from urllib.parse import urlsplit
 
 spec=importlib.util.spec_from_file_location('shop_installer',Path(__file__).with_name('install.py'))
 i=importlib.util.module_from_spec(spec);spec.loader.exec_module(i)
-VERSION='v0.022'
-SUPPORTED='v0.021'
+VERSION='v0.024'
+SUPPORTED={'v0.021','v0.022','v0.023'}
 IGNORE=shutil.ignore_patterns('.git','.env','.env.*','data','wg-data','.venv','__pycache__','.pytest_cache','backups','upgrades','*.pvb','*.db','*.db-wal','*.db-shm','*.zip')
+CHECK_KEY="""import os,sys
+from scripts.backup import environment
+values,cipher=environment(sys.stdin.buffer.read())
+if values['ENCRYPTION_KEY']!=os.environ.get('ENCRYPTION_KEY'):raise ValueError('key_mismatch')
+print('key_matches')
+"""
 STAGE_SQLITE="""import os,shutil,stat,sys
 from pathlib import Path
 source=Path(sys.argv[1]);target=Path(sys.argv[2])
@@ -52,27 +58,91 @@ def private_file(path):
 def write(path,value):i.atomic_text(path,json.dumps(value,ensure_ascii=False,indent=2)+'\n')
 
 
+def journal(path):
+    value=json.loads(private_file(path))
+    if not isinstance(value,dict):raise ValueError('Некорректный журнал обновления')
+    if not re.fullmatch(r'[a-f0-9]{24}',value.get('operation','')):raise ValueError('Некорректный журнал обновления')
+    if value.get('previous') not in SUPPORTED or value.get('target') not in SUPPORTED|{VERSION} or value['previous']>=value['target']:
+        raise ValueError('Неизвестный переход в журнале')
+    phases={'building','stopping','copying','verifying_backup','backed_up','migrating','switching','ready','activating','activation_failed','committed','rolled_back','recovery_required'}
+    if value.get('phase') not in phases or type(value.get('activation_started')) is not bool:raise ValueError('Некорректная фаза журнала')
+    return value
+
+
+def terminal(root):
+    if not (root/'upgrade.json').exists():return None
+    previous=journal(root/'upgrade.json')
+    if previous['phase'] not in ('committed','rolled_back'):
+        raise ValueError('Сначала завершите предыдущую операцию инструментом '+previous['target']+': status/activate/rollback')
+    return previous
+
+
+def proof(root,settings):
+    managed=settings['managed_upgrade'];operation=managed.get('operation','')
+    if not re.fullmatch(r'[a-f0-9]{24}',operation):raise ValueError('Некорректная привязка managed-upgrade')
+    work=root/'upgrades'/operation
+    if work.resolve()!=work:raise ValueError('Симлинки в истории обновлений недопустимы')
+    if managed.get('source')!=str(work/'source') or not (work/'source').is_dir() or (work/'source').is_symlink():raise ValueError('Не найдены сохранённые исходники установки')
+    if managed.get('volume')!=settings['project']+'-upgrade-'+operation or managed.get('image')!='pushok-upgrade:'+operation:
+        raise ValueError('Изменена привязка image/volume')
+    current=terminal(root)
+    saved=current if current and current['operation']==operation else journal(work/'activation.json')
+    if (work/'activation.json').exists() and journal(work/'activation.json')!=saved:raise ValueError('История завершённой активации отличается')
+    if saved['operation']!=operation or saved['phase']!='committed' or not saved['activation_started'] or saved['target']!=settings['version']:
+        raise ValueError('Не подтверждена завершённая активация установки')
+    if saved.get('new_marker_sha')!=sha(private_file(root/'installer.json')):raise ValueError('Метаданные managed-upgrade изменены')
+    actual=sha(private_file(root/'compose.install.json'))
+    accepted={saved.get('active_sha')}
+    if current and current['phase']=='rolled_back' and current['previous']==settings['version'] and current.get('old_marker_sha')==sha(private_file(root/'installer.json')):
+        accepted.add(current.get('rollback_sha'))
+    if actual not in accepted:raise ValueError('Compose не соответствует завершённой активации или откату')
+    return saved
+
+
+def remember_activation(root,value):
+    if value['phase']!='committed':raise ValueError('Нельзя сохранять незавершённую активацию')
+    path=root/'upgrades'/value['operation']/'activation.json'
+    if path.exists() or path.is_symlink():
+        if json.loads(private_file(path))!=value:raise ValueError('Сохранённая история активации отличается')
+    else:write(path,value)
+
+
 def load(root):
     settings=json.loads(private_file(root/'installer.json'))
-    if settings.get('version')!=SUPPORTED:raise ValueError('Поддерживается только обновление v0.021 → '+VERSION)
+    if not isinstance(settings,dict):raise ValueError('Некорректные метаданные установки')
+    if (root/'upgrades').is_symlink():raise ValueError('Симлинки в истории обновлений недопустимы')
+    if settings.get('version') not in SUPPORTED or settings['version']>=VERSION:raise ValueError('Поддерживаются исходные версии v0.021/v0.022/v0.023 → '+VERSION)
     if not re.fullmatch(r'pushok-[a-f0-9]{10}',settings.get('project','')):raise ValueError('Неизвестный проект Compose')
     i.public_url(settings['url'])
     if not isinstance(settings.get('port'),int) or not 1024<=settings['port']<=65535:raise ValueError('Некорректный порт установки')
-    config=json.loads(private_file(root/'compose.install.json'))
-    shop=config['services']['shop']
-    if shop.get('environment',{}).get('DATA_DIR')!='/app/data' or shop.get('volumes')!=['shop_data:/app/data']:
+    config=json.loads(private_file(root/'compose.install.json'));shop=config['services']['shop']
+    managed=settings.get('managed_upgrade')
+    if managed is not None and (not isinstance(managed,dict) or not managed):raise ValueError('Некорректная привязка managed-upgrade')
+    if managed:
+        proof(root,settings)
+        if shop.get('environment',{}).get('DATA_DIR')!='/app/data/restored' or shop.get('volumes')!=['upgrade_data:/app/data']:
+            raise ValueError('Изменённая схема managed-upgrade')
+        if config.get('volumes',{}).get('upgrade_data')!={'external':True,'name':managed['volume']}:raise ValueError('Изменён текущий volume')
+        if shop.get('image')!=managed['image'] and not re.fullmatch(r'sha256:[a-f0-9]{64}',shop.get('image','')):raise ValueError('Изменён текущий образ')
+    elif shop.get('environment',{}).get('DATA_DIR')!='/app/data' or shop.get('volumes')!=['shop_data:/app/data']:
         raise ValueError('Изменённая схема данных требует ручного плана обновления')
     if shop.get('network_mode')!='host' or shop.get('env_file')!=[str(root/'.env')]:raise ValueError('Изменённая конфигурация Compose не поддерживается')
     if config.get('volumes',{}).get('shop_data')!={}:raise ValueError('Изменённое имя volume не поддерживается')
-    expected=json.loads(i.compose(settings,root));normalized=json.loads(json.dumps(config))
-    normalized_shop=normalized['services']['shop']
+    expected=json.loads(i.compose(settings,root));normalized=json.loads(json.dumps(config));normalized_shop=normalized['services']['shop']
+    if managed:
+        normalized['volumes'].pop('upgrade_data');normalized_shop['volumes']=['shop_data:/app/data'];normalized_shop['environment']['DATA_DIR']='/app/data'
     if 'image' in normalized_shop:
-        if not re.fullmatch(r'sha256:[a-f0-9]{64}',normalized_shop.pop('image')):raise ValueError('Нестандартный образ требует ручного плана')
+        image=normalized_shop.pop('image')
+        if not managed and not re.fullmatch(r'sha256:[a-f0-9]{64}',image):raise ValueError('Нестандартный образ требует ручного плана')
         normalized_shop['build']=str(root/'source')
     for key in ('BACKGROUND_TASKS','MAINTENANCE_MODE'):
         if key in normalized_shop['environment']:
             if normalized_shop['environment'].pop(key) not in ('true','false'):raise ValueError('Некорректный режим работы магазина')
     if normalized!=expected:raise ValueError('Изменённая конфигурация Compose требует ручного обновления')
+    previous=terminal(root)
+    if previous:
+        if previous['phase']=='committed' and previous['target']!=settings['version']:raise ValueError('Версия установки расходится с завершённым обновлением')
+        if previous['phase']=='rolled_back' and (previous['previous']!=settings['version'] or previous.get('old_marker_sha')!=sha(private_file(root/'installer.json'))):raise ValueError('Версия установки расходится с откатом')
     private_file(root/'.env')
     return settings,config
 
@@ -104,15 +174,14 @@ def compose(root,settings,file=None):
 
 
 def state(root):
-    journal=json.loads(private_file(root/'upgrade.json'))
-    if not re.fullmatch(r'[a-f0-9]{24}',journal.get('operation','')):raise ValueError('Некорректный журнал обновления')
-    if journal.get('target')!=VERSION or journal.get('previous')!=SUPPORTED:raise ValueError('Журнал относится к другой версии')
-    return journal
+    value=journal(root/'upgrade.json')
+    if value['target']!=VERSION:raise ValueError('Для завершения этой операции нужен инструмент '+value['target'])
+    return value
 
 
 def report(root):
     if not (root/'upgrade.json').exists():return {'phase':'no_upgrade'}
-    s=state(root)
+    s=journal(root/'upgrade.json')
     return {k:s[k] for k in ('operation','phase','previous','target','activation_started','failure_stage') if k in s}
 
 
@@ -156,9 +225,10 @@ def password(args):
 
 
 def plan(root,source):
+    terminal(root)
     settings,config=load(root);check_source(source,root)
-    if (root/'upgrade.json').exists() and state(root)['phase'] not in ('rolled_back',):raise ValueError('Сначала завершите предыдущее обновление: status/activate/rollback')
-    return {'previous':SUPPORTED,'target':VERSION,'url':settings['url'],'downtime':True,
+    terminal(root)
+    return {'previous':settings['version'],'target':VERSION,'url':settings['url'],'downtime':True,
             'new_volume':True,'activation':'explicit','backup':'encrypted','plan_only':True}
 
 
@@ -196,12 +266,20 @@ def prepare(root,source,secret):
     if not re.fullmatch(r'sha256:[a-f0-9]{64}',old_image):raise ValueError('Не найден локальный образ магазина')
     mounts=json.loads(run(['docker','inspect','--format','{{json .Mounts}}',cid]))
     matches=[m for m in mounts if m.get('Destination')=='/app/data' and m.get('Type')=='volume']
-    if len(matches)!=1 or matches[0].get('Name')!=settings['project']+'_shop_data' or matches[0].get('RW') is not True:raise ValueError('Не найден исходный named volume')
+    expected_volume=settings['managed_upgrade']['volume'] if settings.get('managed_upgrade') else settings['project']+'_shop_data'
+    if len(matches)!=1 or matches[0].get('Name')!=expected_volume or matches[0].get('RW') is not True:raise ValueError('Не найден исходный named volume')
+    try:
+        key_check=run(['docker','exec','-i',cid,'python','-c',CHECK_KEY],input=private_file(root/'.env'),timeout=30)
+    except subprocess.SubprocessError:raise ValueError('Не подтверждён ключ текущего shop и .env; подготовка не начата') from None
+    if key_check!='key_matches':raise ValueError('Не подтверждён ключ текущего shop и .env; подготовка не начата')
     operation=secrets.token_hex(12);work=root/'upgrades'/operation
     (root/'upgrades').mkdir(exist_ok=True,mode=0o700);work.mkdir(mode=0o700)
     old_compose=private_file(root/'compose.install.json');old_marker=private_file(root/'installer.json')
     i.atomic_text(work/'compose.before.json',old_compose.decode());i.atomic_text(work/'installer.before.json',old_marker.decode())
-    s={'operation':operation,'previous':SUPPORTED,'target':VERSION,'phase':'building','activation_started':False,
+    previous=terminal(root)
+    if previous:write(work/'journal.before.json',previous)
+    if settings.get('managed_upgrade'):remember_activation(root,proof(root,settings))
+    s={'operation':operation,'previous':settings['version'],'target':VERSION,'phase':'building','activation_started':False,
        'stopped':False,'env_sha':sha(private_file(root/'.env')),'old_compose_sha':sha(old_compose),'old_marker_sha':sha(old_marker),
        'old_image':old_image,'old_volume':matches[0]['Name'],'new_volume':settings['project']+'-upgrade-'+operation,
        'new_image':'pushok-upgrade:'+operation}
@@ -222,7 +300,7 @@ def prepare(root,source,secret):
                     '--volumes-from',cid+':ro','-v',s['new_volume']+':/upgrade-data',old_image,'python','-c','import time;time.sleep(900)'])
         if not re.fullmatch(r'[a-f0-9]{12,64}',helper):helper=None;raise ValueError('Не создан контейнер копирования')
         save(root,s,'copying')
-        run(['docker','exec',helper,'python','-c',STAGE_SQLITE,'/app/data','/tmp/source'])
+        run(['docker','exec',helper,'python','-c',STAGE_SQLITE,config['services']['shop']['environment']['DATA_DIR'],'/tmp/source'])
         secure_env={**os.environ,'PUSHOK_BACKUP_PASSWORD':secret}
         backup=['docker','exec','-i','-e','PUSHOK_BACKUP_PASSWORD',helper,'python','scripts/backup.py']
         run(backup+['create','--database','/tmp/source/shop.db','--env-stdin','--output','/tmp/shop.pvb'],input=private_file(root/'.env'),env=secure_env)
@@ -261,7 +339,8 @@ def prepare(root,source,secret):
 
 
 def activate(root,s):
-    if s['phase']=='committed':return report(root)
+    if s['phase']=='committed':
+        remember_activation(root,s);return report(root)
     if s['phase']!='ready':raise ValueError('Активация разрешена только после успешной подготовки')
     unchanged(root,s);work=root/'upgrades'/s['operation'];settings=json.loads(private_file(work/'installer.before.json'))
     old_raw=private_file(work/'compose.before.json')
@@ -275,12 +354,12 @@ def activate(root,s):
     try:
         i.atomic_text(root/'compose.install.json',encoded.decode())
         run(compose(root,settings)+['up','-d','--no-deps','--no-build','--wait','--wait-timeout','120','shop']);health(settings)
-        save(root,s,'committed');return report(root)
+        save(root,s,'committed');remember_activation(root,s);return report(root)
     except Exception:s['failure_stage']='activating';save(root,s,'activation_failed');raise
 
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(description='Обновление v0.021 → '+VERSION+' в новый volume, с резервной копией и отдельной активацией')
+    parser=argparse.ArgumentParser(description='Обновление v0.021/v0.022/v0.023 → '+VERSION+' в новый volume, с резервной копией и отдельной активацией')
     parser.add_argument('command',choices=['plan','prepare','status','activate','rollback'])
     parser.add_argument('--dir',default='/opt/pushok-vpn');parser.add_argument('--source',type=Path,default=Path(__file__).resolve().parents[1]);parser.add_argument('--password-file')
     args=parser.parse_args(argv);root=i.install_path(args.dir);source=args.source.resolve()

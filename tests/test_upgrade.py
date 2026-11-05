@@ -13,7 +13,7 @@ u=importlib.util.module_from_spec(spec);spec.loader.exec_module(u)
 @pytest.fixture
 def installation(tmp_path,monkeypatch):
     root=tmp_path/'installed';root.mkdir();source=tmp_path/'release';(source/'scripts').mkdir(parents=True);(source/'app').mkdir()
-    (source/'scripts/install.py').write_text("VERSION='v0.022'\n")
+    (source/'scripts/install.py').write_text("VERSION="+repr(u.VERSION)+"\n")
     (source/'scripts/backup.py').write_text('# backup');(source/'app/main.py').write_text('# app');(source/'Dockerfile').write_text('FROM test')
     settings={'version':'v0.021','url':'https://example.com/shop','port':8000,'mode':'caddy','project':'pushok-1234567890','support':'test','nginx_config':None}
     u.write(root/'installer.json',settings);(root/'.env').write_text('ENCRYPTION_KEY=private-key\nBOT_TOKEN=private-bot\n')
@@ -24,8 +24,9 @@ def installation(tmp_path,monkeypatch):
         if fail['predicate'] and fail['predicate'](args):
             fail['predicate']=None;raise subprocess.CalledProcessError(1,args,output=b'private-provider-response')
         if 'ps' in args:return 'c'*64
+        if u.CHECK_KEY in args:return 'key_matches'
         if '{{.Image}}' in args:return 'sha256:'+'d'*64
-        if '{{json .Mounts}}' in args:return json.dumps([{'Destination':'/app/data','Type':'volume','Name':'pushok-1234567890_shop_data','RW':True}])
+        if '{{json .Mounts}}' in args:return json.dumps([{'Destination':'/app/data','Type':'volume','Name':json.loads((root/'installer.json').read_text()).get('managed_upgrade',{}).get('volume','pushok-1234567890_shop_data'),'RW':True}])
         if args[:2]==['docker','run'] and '-d' in args:return 'e'*64
         if args[:2]==['docker','cp'] and args[2].endswith(':/tmp/shop.pvb'):Path(args[3]).write_bytes(b'encrypted-snapshot')
         return ''
@@ -68,7 +69,7 @@ def test_prepare_uses_readonly_old_volume_and_offline_new_data(installation):
     assert commands.index(next(a for a in commands if 'stop' in a))<commands.index(next(a for a in commands if 'create' in a and 'scripts/backup.py' in a))
     assert all('volume' not in a or 'rm' not in a for a in commands)
     assert health==['http://127.0.0.1:8000/shop/health','https://example.com/shop/health']
-    assert json.loads((root/'installer.json').read_text())['version']=='v0.022'
+    assert json.loads((root/'installer.json').read_text())['version']==u.VERSION
 
 
 def test_activate_enables_original_policy_then_forbids_database_rollback(installation):
@@ -122,7 +123,7 @@ def test_activation_failure_never_automatically_restores_old_data(installation):
     with pytest.raises(subprocess.CalledProcessError):u.activate(root,s)
     s=u.state(root);assert s['phase']=='activation_failed' and s['activation_started']
     with pytest.raises(ValueError):u.rollback(root,s)
-    assert json.loads((root/'installer.json').read_text())['version']=='v0.022'
+    assert json.loads((root/'installer.json').read_text())['version']==u.VERSION
 
 
 @pytest.mark.parametrize('file',['.env','compose.install.json','installer.json'])
@@ -255,3 +256,145 @@ def test_backup_tool_accepts_compatible_previous_release(client,tmp_path):
     with zipfile.ZipFile(output,'w') as archive:
         for name,value in files.items():archive.writestr(name,value)
     _,read=b.unpack(output.getvalue());assert read['release']=='v0.021'
+
+
+def legacy_installation(installation,monkeypatch,*,committed=True):
+    root,source,calls,health,fail=installation
+    # Produce the metadata/layout of the previously published 0.021 -> 0.022 transition.
+    with monkeypatch.context() as context:
+        context.setattr(u,'VERSION','v0.022')
+        (source/'scripts/install.py').write_text("VERSION='v0.022'\n")
+        legacy=ready(installation)
+        if committed:u.activate(root,legacy)
+    operation=json.loads((root/'installer.json').read_text())['managed_upgrade']['operation']
+    saved=root/'upgrades'/operation/'activation.json'
+    if saved.exists():saved.unlink()  # v0.022 did not create this additional proof file.
+    (source/'scripts/install.py').write_text('VERSION='+repr(u.VERSION)+'\n')
+    calls.clear();health.clear()
+    return operation
+
+
+@pytest.mark.parametrize('version',['v0.021','v0.022','v0.023'])
+def test_supported_fresh_origins_choose_original_volume(installation,version):
+    root,source,calls,health,fail=installation
+    marker=json.loads((root/'installer.json').read_text());marker['version']=version;u.write(root/'installer.json',marker)
+    assert u.plan(root,source)['previous']==version
+    result=u.prepare(root,source,'long-backup-password');assert result['previous']==version and result['target']==u.VERSION
+    command=next(a for a,k in calls if u.STAGE_SQLITE in a)
+    assert command[-2:]==['/app/data','/tmp/source']
+    assert u.state(root)['old_volume']=='pushok-1234567890_shop_data'
+
+
+def test_managed_upgrade_uses_current_volume_and_preserves_legacy_history(installation,monkeypatch):
+    root,source,calls,health,fail=installation;old_operation=legacy_installation(installation,monkeypatch)
+    old_marker=(root/'installer.json').read_bytes();old_compose=(root/'compose.install.json').read_bytes();old_journal=(root/'upgrade.json').read_bytes()
+    assert u.plan(root,source)['previous']=='v0.022'
+    assert not (root/'upgrades'/old_operation/'activation.json').exists()  # plan remains read-only
+    result=u.prepare(root,source,'long-backup-password');assert result['phase']=='ready'
+    current=u.state(root);work=root/'upgrades'/current['operation']
+    assert current['old_volume']=='pushok-1234567890-upgrade-'+old_operation
+    assert (work/'installer.before.json').read_bytes()==old_marker and (work/'compose.before.json').read_bytes()==old_compose
+    assert json.loads((work/'journal.before.json').read_text())==json.loads(old_journal)
+    assert json.loads((root/'upgrades'/old_operation/'activation.json').read_text())['phase']=='committed'
+    stage=next(a for a,k in calls if u.STAGE_SQLITE in a);assert stage[-2:]==['/app/data/restored','/tmp/source']
+    assert current['new_volume']!=current['old_volume']
+    assert json.loads((root/'compose.install.json').read_text())['services']['shop']['environment']['DATA_DIR']=='/app/data/restored'
+    assert u.activate(root,current)['phase']=='committed'
+    assert (work/'activation.json').is_file()
+
+
+def test_managed_rollback_can_be_followed_by_another_prepare(installation,monkeypatch):
+    root,source,calls,health,fail=installation;operation=legacy_installation(installation,monkeypatch)
+    for _ in range(2):
+        s=ready(installation);assert s['old_volume']=='pushok-1234567890-upgrade-'+operation
+        assert u.rollback(root,s)['phase']=='rolled_back'
+        assert json.loads((root/'installer.json').read_text())['managed_upgrade']['operation']==operation
+        assert u.plan(root,source)['previous']=='v0.022'
+    final=ready(installation);u.activate(root,final)
+    assert json.loads((root/'installer.json').read_text())['version']==u.VERSION
+
+
+def test_failed_build_does_not_lose_proof_of_previous_activation(installation,monkeypatch):
+    root,source,calls,health,fail=installation;operation=legacy_installation(installation,monkeypatch)
+    fail['predicate']=lambda a:a[:2]==['docker','build']
+    with pytest.raises(subprocess.CalledProcessError):u.prepare(root,source,'long-backup-password')
+    assert u.state(root)['phase']=='rolled_back'
+    assert (root/'upgrades'/operation/'activation.json').exists()
+    assert u.plan(root,source)['previous']=='v0.022'
+    assert ready(installation)['old_volume'].endswith(operation)
+
+
+def test_pending_legacy_operation_is_visible_but_not_overwritten(installation,monkeypatch):
+    root,source,calls,health,fail=installation;legacy_installation(installation,monkeypatch,committed=False)
+    before=(root/'upgrade.json').read_bytes()
+    assert u.report(root)['target']=='v0.022' and u.report(root)['phase']=='ready'
+    with pytest.raises(ValueError,match='v0.022'):u.plan(root,source)
+    with pytest.raises(ValueError,match='v0.022'):u.state(root)
+    assert (root/'upgrade.json').read_bytes()==before and not calls
+
+
+@pytest.mark.parametrize('change',['marker','compose','history','source_missing','volume','proof_conflict'])
+def test_managed_drift_fails_before_build_or_stopping_shop(installation,monkeypatch,change):
+    root,source,calls,health,fail=installation;operation=legacy_installation(installation,monkeypatch)
+    if change=='marker':(root/'installer.json').write_bytes((root/'installer.json').read_bytes()+b' ')
+    elif change=='compose':(root/'compose.install.json').write_bytes((root/'compose.install.json').read_bytes()+b' ')
+    elif change=='history':(root/'upgrade.json').unlink()
+    elif change=='source_missing':(root/'upgrades'/operation/'source').rename(root/'upgrades'/operation/'removed')
+    elif change=='volume':
+        config=json.loads((root/'compose.install.json').read_text());config['volumes']['upgrade_data']['name']='unrelated';u.write(root/'compose.install.json',config)
+    else:
+        wrong=json.loads((root/'upgrade.json').read_text());wrong['active_sha']='0'*64;u.write(root/'upgrades'/operation/'activation.json',wrong)
+    with pytest.raises((ValueError,OSError)):u.plan(root,source)
+    assert not calls
+
+
+def test_unexpected_runtime_volume_is_rejected_before_changes(installation,monkeypatch):
+    root,source,calls,health,fail=installation;legacy_installation(installation,monkeypatch)
+    original=u.run
+    def run(args,**kwargs):
+        if '{{json .Mounts}}' in args:return json.dumps([{'Destination':'/app/data','Type':'volume','Name':'stale-original-volume','RW':True}])
+        return original(args,**kwargs)
+    monkeypatch.setattr(u,'run',run);before=(root/'upgrade.json').read_bytes()
+    with pytest.raises(ValueError):u.prepare(root,source,'long-backup-password')
+    assert (root/'upgrade.json').read_bytes()==before
+    assert not any('stop' in a or a[:2]==['docker','build'] for a,k in calls)
+
+
+def test_symlink_history_is_not_followed(installation,tmp_path):
+    root,source,calls,health,fail=installation;other=tmp_path/'other';other.mkdir();(root/'upgrades').symlink_to(other,target_is_directory=True)
+    with pytest.raises(ValueError):u.plan(root,source)
+    assert not calls and not list(other.iterdir())
+
+
+@pytest.mark.parametrize('stage',['backup','migrate','start'])
+def test_managed_prepare_failure_returns_to_current_external_volume(installation,monkeypatch,stage):
+    root,source,calls,health,fail=installation;operation=legacy_installation(installation,monkeypatch)
+    predicates={
+        'backup':lambda a:'scripts/backup.py' in a and 'create' in a,
+        'migrate':lambda a:a[:2]==['docker','run'] and 'init_db' in a[-1],
+        'start':lambda a:'up' in a}
+    fail['predicate']=predicates[stage]
+    with pytest.raises(subprocess.CalledProcessError):u.prepare(root,source,'long-backup-password')
+    assert u.state(root)['phase']=='rolled_back'
+    old=json.loads((root/'compose.install.json').read_text())
+    assert old['volumes']['upgrade_data']['name'].endswith(operation)
+    assert old['services']['shop']['environment']['DATA_DIR']=='/app/data/restored'
+    assert u.plan(root,source)['previous']=='v0.022'
+
+
+def test_runtime_key_mismatch_refuses_before_build_stop_or_journal(installation):
+    root,source,calls,health,fail=installation;fail['predicate']=lambda args:u.CHECK_KEY in args
+    before={p.name:p.read_bytes() for p in root.iterdir() if p.is_file()}
+    with pytest.raises(ValueError,match='ключ'):u.prepare(root,source,'long-backup-password')
+    assert before=={p.name:p.read_bytes() for p in root.iterdir() if p.is_file()}
+    assert not (root/'upgrades').exists()
+    assert not any('stop' in args or args[:2]==['docker','build'] for args,kwargs in calls)
+
+
+def test_key_guard_survives_python_optimization_without_printing_keys():
+    import sys
+    from cryptography.fernet import Fernet
+    old=Fernet.generate_key().decode();new=Fernet.generate_key().decode()
+    result=subprocess.run([sys.executable,'-O','-c',u.CHECK_KEY],input=('ENCRYPTION_KEY='+new+'\n').encode(),env={**os.environ,'ENCRYPTION_KEY':old},cwd=Path(u.__file__).parents[1],capture_output=True)
+    assert result.returncode!=0 and b'key_matches' not in result.stdout
+    assert old.encode() not in result.stdout+result.stderr and new.encode() not in result.stdout+result.stderr

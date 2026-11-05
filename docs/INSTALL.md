@@ -5,16 +5,16 @@
 Python 3 уже установлен. Скрипт проверяет поддерживаемую ОС до установки магазина.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.023/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.024/install.sh | bash
 ```
 
-Команда устанавливает фиксированную версию v0.023. Скрипт скачивает архив этого
+Команда устанавливает фиксированную версию v0.024. Скрипт скачивает архив этого
 же тега по HTTPS, проверяет пути/типы файлов и размер до распаковки. Вопросы читает
 из терминала, поэтому запуск через pipe не мешает диалогу. При обычном пользователе
 запрашивается sudo. Для просмотра действий без установки:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.023/install.sh | bash -s -- --plan
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.024/install.sh | bash -s -- --plan
 ```
 
 ## Диалог и режимы
@@ -101,7 +101,7 @@ docker compose --project-name PROJECT --env-file .env -f compose.install.json lo
 бот остаётся ненастроенным. Для nginx также нужен --nginx-config:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.023/install.sh | bash -s -- --yes --url https://example.com/shop --mode caddy --support '@support'
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.024/install.sh | bash -s -- --yes --url https://example.com/shop --mode caddy --support '@support'
 ```
 
 При следующем релизе VERSION в install.sh и scripts/install.py должен совпадать с
@@ -121,13 +121,15 @@ access и error log этого пути. Собственные CDN/APM/logging 
 согласованного снимка; сохраняйте .env и состояние VPN-узлов отдельно по инструкции.
 
 
-Для установленной через установщик версии v0.021 доступен отдельный переход на v0.022:
-[UPGRADE.md](UPGRADE.md). Обычный install.sh не запускает его автоматически; укажите
-`--upgrade plan`, затем `--upgrade prepare`, проверьте результат и выполните
-`--upgrade activate` либо `--upgrade rollback` до начала активации. Другие версии и
-изменённые установки по-прежнему требуют отдельной процедуры.
+Для установленных через установщик версий v0.021/v0.022/v0.023 доступно отдельное
+обновление до v0.024, включая подтверждённый managed-upgrade. Обычный install.sh не
+запускает обновление сам: используйте `--upgrade plan`, затем `--upgrade prepare`,
+проверьте результат и выполните `--upgrade activate` либо `--upgrade rollback` до
+начала активации. Команды, проверки текущего тома и ограничения: [UPGRADE.md](UPGRADE.md).
 
+Незавершённые старые операции сначала закончите инструментом их целевого релиза.
+Изменённые установки и более старые версии требуют отдельного плана. Bootstrap v0.024
+использует фиксированный v0.024 для новой установки и обновления.
 
-Локальный отчёт в админке и CLI нового образа описаны в [DIAGNOSTICS.md](DIAGNOSTICS.md).
-Установка v0.023 и обновление — разные операции: флаг --upgrade сохраняет прежний
-фиксированный переход v0.021 → v0.022; переход v0.022 → v0.023 пока не добавлен.
+Локальный отчёт в админке и CLI нового образа: [DIAGNOSTICS.md](DIAGNOSTICS.md).
+Он не подтверждает работу VPN-трафика, реальный платёж и восстановление копии.
