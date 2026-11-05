@@ -109,6 +109,7 @@ class Staging:
             def log_message(self,*args):pass
             def do_GET(self):self.forward()
             def do_POST(self):self.forward()
+            def do_PUT(self):self.forward()
             def forward(self):
                 size=int(self.headers.get('Content-Length','0'));body=self.rfile.read(size) if size else None
                 conn=http.client.HTTPConnection('127.0.0.1',port,timeout=10)
