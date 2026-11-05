@@ -66,10 +66,10 @@ def save_site(sid,data):
         return next(r for r in sites(conn,True) if r['id']==sid)
 
 
-def summary(conn,rid,private=False):
+def summary(conn,rid,private=False,now=None):
     row=conn.execute('SELECT * FROM ads_placements WHERE request_id=?',(rid,)).fetchone()
     if not row:return None
-    now=int(time.time())
+    now=int(time.time()) if now is None else now
     used=min(row['allocated_seconds'],row['used_seconds']+(max(0,now-row['segment_started']) if row['state']=='active' else 0))
     remaining=row['allocated_seconds']-used
     result={k:row[k] for k in ('state','version','site_name','allocated_seconds','started','finished','updated')} | {
@@ -131,3 +131,29 @@ def change(rid,action,data):
         conn.execute('INSERT INTO ads_placement_actions VALUES (?,?,?,?,?,?)',(str(data.operation_id),rid,action,fingerprint,data.note,now))
         ads.event(conn,rid,'admin','placement_'+action,{'note':data.note,'verification':'manual'})
         return summary(conn,rid,private=True)
+
+
+def stop_queue(view='due',page=1):
+    """Снимок очереди без автоматической остановки, списания времени или освобождения места."""
+    deadline='p.segment_started+p.allocated_seconds-p.used_seconds'
+    now=int(time.time())
+    clauses={'due':(" AND p.state='active' AND "+deadline+'<=?',[now]),
+             'upcoming':(" AND p.state='active' AND "+deadline+'>?',[now]),
+             'paused':(" AND p.state='paused'",[]),'all':('',[])}
+    if view not in clauses:raise HTTPException(422,'Неизвестный фильтр очереди')
+    extra,args=clauses[view]
+    base=" FROM ads_placements p JOIN ads_requests r ON r.id=p.request_id WHERE p.state IN ('active','paused')"
+    with db() as conn:
+        conn.execute('BEGIN')
+        counts=conn.execute("SELECT SUM(CASE WHEN p.state='active' AND "+deadline+"<=? THEN 1 ELSE 0 END) AS due,SUM(CASE WHEN p.state='active' AND "+deadline+">? THEN 1 ELSE 0 END) AS upcoming,SUM(CASE WHEN p.state='paused' THEN 1 ELSE 0 END) AS paused"+base,(now,now)).fetchone()
+        total=conn.execute('SELECT count(*)'+base+extra,args).fetchone()[0]
+        rows=conn.execute('SELECT r.*'+base+extra+" ORDER BY CASE WHEN p.state='paused' THEN 2 WHEN "+deadline+"<=? THEN 0 ELSE 1 END,"+deadline+',p.updated,r.id LIMIT ? OFFSET ?',args+[now,20,(page-1)*20]).fetchall()
+        items=[]
+        for r in rows:
+            placement=summary(conn,r['id'],now=now)
+            category='paused' if placement['state']=='paused' else 'due' if placement['attention_due'] else 'upcoming'
+            items.append({k:r[k] for k in ('id','user_id','channel','state','version','amount','hours')} | {
+                'payment':ads.payment(conn,r['id']),'placement':placement,'queue_status':category,
+                'overdue_seconds':max(0,now-placement['expected_stop_at']) if category=='due' else 0})
+        return {'requests':items,'counts':{k:counts[k] or 0 for k in ('due','upcoming','paused')},
+                'total':total,'page':page,'page_size':20,'view':view,'generated_at':now}

@@ -266,6 +266,10 @@ async def admin_ads_payment_history(rid:UUID):
     ads.get(str(rid))
     with ads.db() as conn:return ads.payment(conn,str(rid),private=True)
 
+@app.get('/api/admin/ads/stop-queue',dependencies=[Depends(admin)])
+async def admin_ads_stop_queue(view:Literal['due','upcoming','paused','all']='due',page:int=Query(default=1,ge=1,le=100000)):
+    return placements.stop_queue(view,page)
+
 @app.get('/api/admin/ads/sites',dependencies=[Depends(admin)])
 async def admin_ads_sites():
     with ads.db() as conn:return {'sites':placements.sites(conn,private=True)}

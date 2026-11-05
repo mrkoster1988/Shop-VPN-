@@ -3,6 +3,7 @@ const basePath = document.querySelector('meta[name="shop-base"]').content;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let diagnosticsRequest=0;
+let adsStopRequest=0,adsStopPage=1;
 let adsSitesCache=[],adsPrivateSites=[],adsSitesRequest=0,adsSiteEditor=null,adsSiteMutation=0,adsPlacementIntents=new Map();
 let adsPolicy=null,adsPage=1,adsRequest=0,adsPaymentIntents=new Map();
 let token = '', authEpoch = 0, usersPage = 1, usersQuery = '', usersRequest = 0;
@@ -51,6 +52,9 @@ $('admin-login').onsubmit = async event => {
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => {
+  adsStopRequest++;adsStopPage=1;
+  for(const id of ['ads-stop-list','ads-stop-counts','ads-stop-error','ads-stop-page'])$(id).replaceChildren();
+  $('ads-stop-filter').value='due';$('ads-stop-prev').disabled=true;$('ads-stop-next').disabled=true;
   adsRequest++;adsPolicy=null;adsPage=1;adsPaymentIntents.clear();
   adsSitesRequest++;adsSitesCache=[];adsPrivateSites=[];adsPlacementIntents.clear();clearAdsSite();
   $('ads-sites-list').replaceChildren();$('ads-sites-error').textContent='';
@@ -434,7 +438,7 @@ function adsPlacementForm(r){
 }
 async function saveAdsPlacement(form){
   const button=form.querySelector('button');if(button.disabled)return;
-  const fields=new FormData(form),epoch=authEpoch,request=adsRequest,action=String(fields.get('action'));
+  const fields=new FormData(form),epoch=authEpoch,request=adsRequest,queueRequest=adsStopRequest,fromQueue=form.dataset.adsQueue==='true',action=String(fields.get('action'));
   const data={request_version:Number(form.dataset.requestVersion),payment_version:Number(form.dataset.paymentVersion),placement_version:Number(form.dataset.placementVersion),note:String(fields.get('note') || '').trim(),checked:fields.has('checked')};
   if(action==='start'){
     const site=adsSitesCache.find(s=>s.id===fields.get('site_id'));
@@ -443,9 +447,13 @@ async function saveAdsPlacement(form){
   }
   const path='ads/requests/'+encodeURIComponent(form.dataset.adsPlacement)+'/placement/'+action;
   const key=JSON.stringify([path,data]);if(!adsPlacementIntents.has(key))adsPlacementIntents.set(key,crypto.randomUUID());
-  button.disabled=true;$('ads-admin-error').textContent='';
-  try{await api(path,{method:'POST',data:{...data,operation_id:adsPlacementIntents.get(key)}});if(epoch!==authEpoch)return;adsPlacementIntents.delete(key);if(request===adsRequest)await refreshAdsAdmin();}
-  catch(e){if(epoch===authEpoch && request===adsRequest)$('ads-admin-error').textContent=e.message;}
+  button.disabled=true;$(fromQueue?'ads-stop-error':'ads-admin-error').textContent='';
+  try{
+    await api(path,{method:'POST',data:{...data,operation_id:adsPlacementIntents.get(key)}});if(epoch!==authEpoch)return;
+    adsPlacementIntents.delete(key);
+    if(fromQueue){if(queueRequest===adsStopRequest)await refreshStopQueue();}
+    else if(request===adsRequest)await refreshAdsAdmin();
+  }catch(e){if(epoch===authEpoch && (fromQueue?queueRequest===adsStopRequest:request===adsRequest))$(fromQueue?'ads-stop-error':'ads-admin-error').textContent=e.message;}
   finally{if(epoch===authEpoch)button.disabled=false;}
 }
 function clearAdsSite(){
@@ -475,4 +483,29 @@ $('ads-site-form').onsubmit=async event=>{
     if(epoch!==authEpoch)return;if(editor===adsSiteEditor)clearAdsSite();await Promise.all([refreshAdsSites(),refreshAdsAdmin()]);
   }catch(e){if(epoch===authEpoch && mutation===adsSiteMutation)$('ads-sites-error').textContent=e.message;}
   finally{if(epoch===authEpoch && mutation===adsSiteMutation)$('ads-site-save').disabled=false;}
+};
+
+async function refreshStopQueue(){
+  const epoch=authEpoch,request=++adsStopRequest,page=adsStopPage,view=$('ads-stop-filter').value || 'due';
+  $('ads-stop-error').textContent='';
+  try{
+    const result=await api('ads/stop-queue?view='+encodeURIComponent(view)+'&page='+page);
+    if(epoch!==authEpoch || request!==adsStopRequest)return;
+    $('ads-stop-counts').textContent='Требуют остановки: '+result.counts.due+' · предстоящие: '+result.counts.upcoming+' · на паузе: '+result.counts.paused+' · снимок: '+new Date(result.generated_at*1000).toLocaleString('ru-RU')+' (время браузера)';
+    const labels={due:'Требуется проверка и остановка',upcoming:'Предстоящее окончание',paused:'На паузе · площадка удерживается'};
+    $('ads-stop-list').innerHTML=result.requests.map(r=>'<article class="subscription"><h3>'+esc('@'+r.channel)+'</h3><p>'+esc(labels[r.queue_status] || r.queue_status)+'</p><p>Клиент '+r.user_id+' · заявка '+esc(r.id)+'</p>'+(r.placement.expected_stop_at?'<p>План остановки: '+esc(new Date(r.placement.expected_stop_at*1000).toLocaleString('ru-RU'))+' (время браузера)</p>':'')+(r.queue_status==='due'?'<p>Просрочка: '+r.overdue_seconds+' сек.</p>':'')+adsPlacementForm(r).replace('<form data-ads-placement','<form data-ads-queue="true" data-ads-placement')+'</article>').join('') || '<p>В выбранной очереди размещений нет.</p>';
+    $('ads-stop-page').textContent='Страница '+page+' · всего '+result.total;
+    $('ads-stop-prev').disabled=page===1;$('ads-stop-next').disabled=page*result.page_size>=result.total;
+  }catch(e){
+    if(epoch!==authEpoch || request!==adsStopRequest)return;
+    $('ads-stop-list').replaceChildren();$('ads-stop-counts').textContent='';$('ads-stop-page').textContent='';
+    $('ads-stop-prev').disabled=true;$('ads-stop-next').disabled=true;$('ads-stop-error').textContent=e.message;
+  }
+}
+$('ads-stop-refresh').onclick=()=>refreshStopQueue();
+$('ads-stop-filter').onchange=()=>{adsStopPage=1;return refreshStopQueue();};
+$('ads-stop-prev').onclick=()=>{if(adsStopPage>1){adsStopPage--;return refreshStopQueue();}};
+$('ads-stop-next').onclick=()=>{if(!$('ads-stop-next').disabled){adsStopPage++;return refreshStopQueue();}};
+$('ads-stop-list').onsubmit=event=>{
+  const form=event.target.closest('[data-ads-placement]');if(!form)return;event.preventDefault();return saveAdsPlacement(form);
 };

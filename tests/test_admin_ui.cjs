@@ -301,3 +301,53 @@ test('список площадок экранирует основания и �
   p.run("$('ads-sites-list').onclick({target:{closest(){return {dataset:{adsSite:'s1'}}}}})");
   assert.equal(p.run('adsSiteEditor.version'),4);assert.equal(p.element('ads-site-name').value,'<Имя>');assert.equal(p.element('ads-site-verified').checked,false);
 });
+
+
+function stopQueueFixture(changes={}){
+  return {requests:[],counts:{due:1,upcoming:2,paused:3},total:0,page:1,page_size:20,generated_at:10000,...changes};
+}
+test('очередь остановок экранирует канал и показывает просрочку с ручным подтверждением',async()=>{
+  const p=adminPage();const pending=p.run('refreshStopQueue()');
+  p.replyAt(0,stopQueueFixture({requests:[{id:'ad-a',user_id:1,channel:'<img>',state:'approved',version:2,queue_status:'due',overdue_seconds:12,payment:{status:'confirmed',version:1},placement:{state:'active',version:1,site_name:'<Площадка>',expected_stop_at:9900,remaining_seconds:0,attention_due:true}}],total:1}));
+  await pending;const html=p.element('ads-stop-list').innerHTML;
+  assert.match(html,/&lt;img&gt;/);assert.match(html,/Просрочка: 12 сек/);assert.match(html,/data-ads-queue="true"/);assert.match(html,/value="finish"/);
+  assert.ok(!html.includes('<img>'));assert.match(p.element('ads-stop-counts').textContent,/Требуют остановки: 1/);
+});
+
+test('выход отсекает позднюю очередь остановок и очищает её данные',async()=>{
+  const p=adminPage();const pending=p.run('refreshStopQueue()');p.run("$('exit').onclick()");
+  p.replyAt(0,stopQueueFixture());await pending;
+  assert.equal(p.element('ads-stop-list').innerHTML,'');assert.equal(p.element('ads-stop-counts').textContent,'');assert.equal(p.element('ads-stop-error').textContent,'');
+});
+
+test('новая страница очереди не заменяется старым ответом',async()=>{
+  const p=adminPage();const first=p.run('refreshStopQueue()');p.run('adsStopPage=2');const second=p.run('refreshStopQueue()');
+  p.replyAt(1,stopQueueFixture({total:30,page:2}));await second;
+  p.replyAt(0,stopQueueFixture({total:30,page:1}));await first;
+  assert.match(p.element('ads-stop-page').textContent,/Страница 2/);
+});
+
+test('ошибка обновления удаляет прежние команды и счётчики очереди',async()=>{
+  const p=adminPage();p.element('ads-stop-list').innerHTML='stale-private-data';p.element('ads-stop-counts').textContent='old-counts';
+  const pending=p.run('refreshStopQueue()');p.replyAt(0,{detail:'Нет связи'},502);await pending;
+  assert.equal(p.element('ads-stop-list').innerHTML,'');assert.equal(p.element('ads-stop-counts').textContent,'');
+  assert.equal(p.element('ads-stop-error').textContent,'Нет связи');assert.equal(p.element('ads-stop-next').disabled,true);
+});
+
+test('подтверждение из очереди использует прежний API и обновляет саму очередь',async()=>{
+  const p=adminPage({FormData:AdsPaymentFields});p.run('var stopButton={disabled:false};');
+  const pending=p.run("saveAdsPlacement({dataset:{adsQueue:'true',adsPlacement:'ad-a',requestVersion:'2',paymentVersion:'1',placementVersion:'3'},fields:{action:'finish',note:'Остановка проверена',checked:'on'},querySelector(){return stopButton;}})");
+  assert.ok(p.requests[0].endsWith('/placement/finish'));assert.equal(p.bodies[0].placement_version,3);assert.equal(p.bodies[0].checked,true);
+  p.replyAt(0,{state:'finished'});await new Promise(setImmediate);
+  assert.match(p.requests[1],/stop-queue/);p.replyAt(1,stopQueueFixture({counts:{due:0,upcoming:0,paused:0}}));await pending;
+  assert.equal(p.run('adsPlacementIntents.size'),0);assert.match(p.element('ads-stop-list').innerHTML,/размещений нет/);
+});
+
+test('ошибка подтверждения из очереди сохраняет UUID и выводится рядом с очередью',async()=>{
+  const p=adminPage({FormData:AdsPaymentFields});p.run('var stopButton={disabled:false};');
+  const source="saveAdsPlacement({dataset:{adsQueue:'true',adsPlacement:'ad-a',requestVersion:'2',paymentVersion:'1',placementVersion:'1'},fields:{action:'pause',note:'Пауза проверена',checked:'on'},querySelector(){return stopButton;}})";
+  const first=p.run(source);p.replyAt(0,{detail:'Ответ потерян'},502);await first;
+  const second=p.run(source);p.replyAt(1,{detail:'Ответ потерян'},502);await second;
+  assert.equal(p.bodies[0].operation_id,p.bodies[1].operation_id);assert.equal(p.element('ads-stop-error').textContent,'Ответ потерян');
+  assert.equal(p.element('ads-admin-error').textContent,'');
+});

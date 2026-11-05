@@ -240,8 +240,18 @@ class Staging:
         self.http(placement_path+'start',body=placement)
         self.http(placement_path+'start',body=placement)
         self.http(payment_path+'refund',body={**receipt,'operation_id':str(uuid.uuid4()),'payment_version':1,'reference':'fixture/refund-blocked'},expected=409)
+        before_queue=self.snapshot()
+        body,_=self.http('/api/admin/ads/stop-queue?view=upcoming&page=1')
+        queue=json.loads(body)
+        check(queue['counts']=={'due':0,'upcoming':1,'paused':0} and queue['requests'][0]['id']==ad['id'],'Upcoming stop queue mismatch')
+        check(self.snapshot()['digest']==before_queue['digest'],'Stop queue changed stored data')
         for version_number,action in enumerate(('pause','resume','finish'),start=1):
             self.http(placement_path+action,body={**{k:v for k,v in placement.items() if k not in ('site_id','site_version')},'operation_id':str(uuid.uuid4()),'placement_version':version_number})
+            body,_=self.http('/api/admin/ads/stop-queue?view=all&page=1')
+            queue=json.loads(body)
+            check(queue['total']==(0 if action=='finish' else 1),'Stop queue lifecycle count mismatch')
+            if action!='finish':check(queue['requests'][0]['queue_status']==('paused' if action=='pause' else 'upcoming'),'Stop queue lifecycle status mismatch')
+        self.event('https_stop_queue_read_only_and_lifecycle_transitions_verified')
         body,_=self.http('/api/ads/requests/'+ad['id'],cookie=fresh)
         final_placement=json.loads(body)['placement']
         check(final_placement['state']=='finished' and final_placement['remaining_seconds']>0,'Early placement finish mismatch')
