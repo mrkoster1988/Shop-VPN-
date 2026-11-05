@@ -1,4 +1,4 @@
-"""Probe a configured VLESS panel without creating or changing client records."""
+"""Проверяет доступность API VLESS-панели без создания или изменения клиентских записей."""
 import argparse
 import asyncio
 import json
@@ -43,8 +43,8 @@ def registered_profile(server_id):
 
 
 def base_report():
-    return {'format':1,'status':'invalid_input','api_mode':None,
-            'checks':{'authentication':False,'vless_inbound':False,'supported_schema':False,'inbound_id':False},
+    return {'format':1,'status':'invalid_input','api_mode':None,'not_applicable_checks':[],
+            'checks':{'authentication':False,'vless_inbound':False,'supported_schema':False,'inbound_id':False,'user_api':False},
             'scope':{'client_records_modified':False,'real_vpn_traffic':False,'payment_checked':False,'vps_install_checked':False}}
 
 
@@ -62,13 +62,21 @@ async def probe(profile,ca_file=None,client_factory=None):
         # Never send credentials through environment proxies or follow panel redirects.
         async with factory(timeout=20,follow_redirects=False,trust_env=False,verify=context) as client:
             adapter=panel.adapter(profile)
-            inbound=await adapter.check(client)
-        report['checks'].update(authentication=True,vless_inbound=True,supported_schema=True)
-        identity=inbound.get('id')
-        report['checks']['inbound_id']=type(identity) is int and identity==profile['inbound_id']
-        if not report['checks']['inbound_id']:
-            report.update(status='needs_attention',error_code='InboundIdentityNotReturned')
-        else:report['status']='api_checks_ok'
+            result=await adapter.check(client)
+        report['checks']['authentication']=True
+        report['checks']['supported_schema']=True
+        if profile.get('api') == 'remnawave':
+            report['checks']['user_api']=True
+            report['not_applicable_checks']=['vless_inbound','inbound_id']
+            report['status']='api_checks_ok'
+        else:
+            report['not_applicable_checks']=['user_api']
+            report['checks']['vless_inbound']=True
+            identity=result.get('id')
+            report['checks']['inbound_id']=type(identity) is int and identity==profile['inbound_id']
+            if not report['checks']['inbound_id']:
+                report.update(status='needs_attention',error_code='InboundIdentityNotReturned')
+            else:report['status']='api_checks_ok'
     except httpx.HTTPStatusError as error:
         status=error.response.status_code
         code='AuthenticationRejected' if status in (401,403) else 'RedirectRefused' if 300<=status<400 else 'PanelHTTPError'
@@ -91,7 +99,7 @@ class SafeParser(argparse.ArgumentParser):
 
 
 def main(argv=None):
-    parser=SafeParser(description='Проверка API VLESS-панели без создания/изменения клиентов')
+    parser=SafeParser(description='Проверка API VLESS-панели без изменения записей клиентов')
     source=parser.add_mutually_exclusive_group(required=True)
     source.add_argument('--server',help='ID VLESS-сервера из реестра текущего магазина')
     source.add_argument('--profile-file',type=Path,help='JSON профиля, владелец текущий пользователь, права 0600')

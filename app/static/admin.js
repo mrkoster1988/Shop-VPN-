@@ -8,14 +8,14 @@ let adsBookingIntents=new Map(),adsBookingRequest=0,adsBookingPage=1;
 let adsStopRequest=0,adsStopPage=1;
 let adsSitesCache=[],adsPrivateSites=[],adsSitesRequest=0,adsSiteEditor=null,adsSiteMutation=0,adsPlacementIntents=new Map();
 let adsPolicy=null,adsPage=1,adsRequest=0,adsPaymentIntents=new Map();
-let token = '', authEpoch = 0, usersPage = 1, usersQuery = '', usersRequest = 0;
+let token = '', role = '', authEpoch = 0, usersPage = 1, usersQuery = '', usersRequest = 0, shopSettingsVersion = 0;
 let selectedUser = null, profilePage = 1, profileRequest = 0;
 let serverCache = [], editingServer = null;
 let ordersPage = 1, ordersRequest = 0, ordersFilters = {q:'', status:'', method:'', protocol:''};
 async function api(path, {method = 'GET', data} = {}) {
   const epoch = authEpoch;
   const response = await fetch(basePath + '/api/admin/' + path, {
-    method, headers: {Authorization: 'Bearer ' + token, ...(data ? {'Content-Type':'application/json'} : {})},
+    method, credentials: 'same-origin', headers: {...(data ? {'Content-Type':'application/json'} : {})},
     body: data ? JSON.stringify(data) : undefined,
   });
   const result = await response.json();
@@ -38,22 +38,101 @@ function planForm(plan) {
     <button type="submit" class="small">Сохранить тариф</button>
   </form>`;
 }
-async function refresh({plans = true} = {}) {
-  const [data, catalog] = await Promise.all([api('overview'), plans ? api('plans') : Promise.resolve(null)]);
+async function refreshShopSettings(){
+ const section=$('shop-settings');if(role!=='owner'){section.hidden=true;return}section.hidden=false;
+ try{
+  const data=await api('shop-settings');shopSettingsVersion=data.version;
+  $('shop-support-text').value=data.support_text;$('shop-terms-text').value=data.terms_text;
+  $('shop-settings-status').textContent='Настройки загружены. Версия '+data.version+'.';
+ }catch(error){$('shop-settings-status').textContent=error.message}
+}
+$('shop-settings-form').onsubmit=async event=>{
+ event.preventDefault();const button=$('shop-settings-save');button.disabled=true;
+ try{
+  const data=await api('shop-settings',{method:'PUT',data:{
+   support_text:$('shop-support-text').value,terms_text:$('shop-terms-text').value,version:shopSettingsVersion
+  }});
+  shopSettingsVersion=data.version;$('shop-settings-status').textContent='Настройки сохранены. Новые значения уже доступны покупателям и Telegram-боту.';
+ }catch(error){$('shop-settings-status').textContent=error.message}
+ finally{button.disabled=false}
+};
+async function refreshStaff(){
+ const section=$('staff-management');if(role!=='owner'){section.hidden=true;return}section.hidden=false;
+ try{
+  const out=await Promise.all([api('staff'),api('audit?limit=50')]),data=out[0],audit=out[1];
+  $('staff-list').innerHTML=data.staff.map(s=>'<article class="admin-order"><b>'+esc(s.email)+'</b><p>'+esc(s.role_label)+' · '+(s.enabled?'активен':'отключён')+' · последний вход: '+(s.last_login?esc(dateTime(s.last_login)):'—')+'</p>'+((s.role==='owner'&&data.staff.filter(x=>x.enabled&&x.role==='owner').length<=1)?'':'<button class="small secondary" data-staff-id="'+s.id+'" data-enabled="'+(!s.enabled)+'">'+(s.enabled?'Отключить':'Включить')+'</button>')+'</article>').join('');
+  $('audit-list').innerHTML=audit.events.map(e=>'<article class="admin-order"><b>'+esc(e.actor_email)+' · '+esc(e.role)+'</b><p>'+esc(e.action)+' '+esc(e.resource)+' · HTTP '+e.status+' · '+esc(dateTime(e.created))+'</p></article>').join('')||'<p>Записей пока нет.</p>';
+ }catch(error){$('staff-error').textContent=error.message}
+}
+$('staff-create').onsubmit=async event=>{
+ event.preventDefault();const form=event.target,values=new FormData(form);
+ try{await api('staff',{method:'POST',data:{email:values.get('email'),password:values.get('password'),role:values.get('role')}});form.reset();$('staff-error').textContent='Сотрудник добавлен.';await refreshStaff()}
+ catch(error){$('staff-error').textContent=error.message}
+};
+$('staff-list').onclick=async event=>{
+ const button=event.target.closest('[data-staff-id]');if(!button)return;
+ try{await api('staff/'+button.dataset.staffId,{method:'PATCH',data:{enabled:button.dataset.enabled==='true'}});await refreshStaff()}
+ catch(error){$('staff-error').textContent=error.message}
+};
+
+let selectedAdminCase=null,adminCaseVersion=0;
+async function refreshSupportAdmin(){
+ const panel=$('support-admin');if(role!=='owner'&&role!=='support'){panel.hidden=true;return}panel.hidden=false;
+ try{
+  const q=$('support-admin-filter').value,listing=await api('support/tickets?page=1'+(q?'&status='+encodeURIComponent(q):''));
+  $('support-admin-list').innerHTML=listing.cases.map(c=>'<article class="admin-order"><b>'+esc(c.subject)+'</b><p>'+esc(c.status)+' · клиент № '+c.user_id+(c.order_id?' · заказ '+esc(c.order_id):'')+'</p><p>'+esc(c.last_message||'')+'</p><button class="small secondary" data-admin-case="'+esc(c.id)+'">Открыть</button></article>').join('')||'<p>Обращений нет.</p>';
+  $('support-admin-error').textContent='';
+ }catch(error){$('support-admin-error').textContent=error.message}
+}
+async function openAdminCase(id){
+ selectedAdminCase=id;const c=await api('support/tickets/'+encodeURIComponent(id));adminCaseVersion=c.version;
+ $('support-admin-thread').innerHTML='<article class="admin-order"><h3>'+esc(c.subject)+' · '+esc(c.status)+'</h3>'+c.messages.map(m=>'<p><b>'+esc(m.author)+' · '+esc(dateTime(m.created))+'</b><br>'+esc(m.body)+'</p>').join('')+'</article>';
+ $('support-admin-reply').hidden=false;
+}
+$('support-admin-list').onclick=event=>{const b=event.target.closest('[data-admin-case]');if(b)openAdminCase(b.dataset.adminCase).catch(e=>$('support-admin-error').textContent=e.message)};
+$('support-admin-refresh').onclick=()=>refreshSupportAdmin();
+$('support-admin-filter').onchange=()=>refreshSupportAdmin();
+$('support-admin-reply').onsubmit=async event=>{
+ event.preventDefault();if(!selectedAdminCase)return;const form=event.target,body=new FormData(form).get('body'),button=form.querySelector('button[type=submit]');if(!body.trim()){$('support-admin-error').textContent='Введите ответ.';return}button.disabled=true;
+ try{await api('support/tickets/'+selectedAdminCase+'/messages',{body,version:adminCaseVersion});form.reset();await openAdminCase(selectedAdminCase);await refreshSupportAdmin();$('support-admin-error').textContent='Ответ отправлен.'}
+ catch(error){$('support-admin-error').textContent=error.message}finally{button.disabled=false}
+};
+$('support-admin-close').onclick=async()=>{
+ if(!selectedAdminCase)return;
+ try{await api('support/tickets/'+selectedAdminCase,{status:'closed',version:adminCaseVersion},'PATCH');$('support-admin-reply').hidden=true;$('support-admin-thread').replaceChildren();await refreshSupportAdmin()}
+ catch(error){$('support-admin-error').textContent=error.message}
+};
+
+async function refresh({plans = role==='owner'} = {}) {
+  const data = role==='mtproxy_manager' ? {users:'—',active:'—',revenue:'—',stars:'—'} : await api('overview');
+  const catalog = plans ? await api('plans') : null;
   $('stats').innerHTML = `<div>Пользователи<strong>${data.users}</strong></div><div>Подписки<strong>${data.active}</strong></div><div>Подтверждено<strong>${data.revenue} ₽ / ${data.stars} ★</strong></div>`;
   if (catalog) $('plan-editors').innerHTML = catalog.plans.map(planForm).join('');
-  await Promise.all([refreshAdsAdmin(),refreshDiagnostics(),refreshOrders(), refreshUsers(), plans ? refreshServers() : Promise.resolve(), plans ? refreshTrialPolicy() : Promise.resolve(), plans ? refreshCoupons() : Promise.resolve(), plans ? refreshReferralPolicy() : Promise.resolve()]);
+  if(role==='owner') await Promise.all([refreshAdsAdmin(),refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers(),refreshTrialPolicy(),refreshCoupons(),refreshReferralPolicy()]);
+  else if(role==='mtproxy_manager') await refreshAdsAdmin();
+  else if(role==='finance') await Promise.all([refreshAdsAdmin(),refreshOrders()]);
+  else if(role==='panel_operator') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers()]);
+  else if(role==='support') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshSupportAdmin()]);
+  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings()]);}
 }
 $('admin-login').onsubmit = async event => {
-  event.preventDefault();
-  const button = event.target.querySelector('button'); button.disabled = true;
-  authEpoch++; token = $('key').value;
-  try { await refresh(); $('key').value = ''; $('admin-login').hidden = true; $('dashboard').hidden = false; $('error').textContent = ''; }
-  catch (error) { authEpoch++; token = ''; $('error').textContent = error.message; }
-  finally { button.disabled = false; }
+  event.preventDefault(); const button=event.target.querySelector('button'); button.disabled=true; authEpoch++;
+  const credentials={email:$('staff-email').value,password:$('staff-password').value};
+  try {
+    let response=await fetch(basePath+'/api/admin/auth/login',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify(credentials)});
+    let result=await response.json();
+    if(!response.ok&&$('key').value){
+      response=await fetch(basePath+'/api/admin/auth/bootstrap',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json',Authorization:'Bearer '+$('key').value},body:JSON.stringify(credentials)});
+      result=await response.json();
+    }
+    if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'Не удалось войти');
+    role=result.role;token='';await refresh();
+    $('key').value='';$('staff-password').value='';$('admin-login').hidden=true;$('dashboard').hidden=false;$('error').textContent='';
+  } catch(error){authEpoch++;token='';$('error').textContent=error.message}
+  finally{button.disabled=false}
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
-$('exit').onclick = () => {
+$('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{}); role='';
   adsFinanceRequest++;adsFinancePage=1;adsExpenseIntents.clear();
   for(const id of ['ads-finance-summary','ads-finance-obligations','ads-finance-error','ads-expense-list','ads-expense-status','ads-finance-page'])$(id).replaceChildren();
   for(const id of ['ads-finance-start','ads-finance-end','ads-expense-amount','ads-expense-date','ads-expense-reference','ads-expense-note'])$(id).value='';
@@ -242,7 +321,7 @@ $('orders-reset').onclick = () => { $('orders-search').reset(); ordersFilters = 
 $('orders-prev').onclick = () => showOrders(Math.max(1, ordersPage-1));
 $('orders-next').onclick = () => showOrders(ordersPage+1);
 
-const serverProfileLabel = {legacy_vless:'Legacy API', clients_vless:'Clients JSON API', wireguard_agent:'WG-агент'};
+const serverProfileLabel = {legacy_vless:'Legacy API', clients_vless:'Clients JSON API', remnawave_vless:'Bearer API', wireguard_agent:'WG-агент'};
 const serverState = {active:'Принимать новых', draining:'Только продления', maintenance:'Обслуживание', disabled:'Выдача выключена'};
 function serverCard(server) {
   const health = server.health === 'ok' ? 'API доступен' : server.health === 'error' ? 'Ошибка API' : 'Ещё не проверен';
@@ -256,9 +335,13 @@ async function refreshServers() {
 }
 function showServerFields() {
   const xui = $('server-protocol').value === 'xui';
+  const mode = $('server-api').value;
   $('server-xui-fields').hidden = !xui; $('server-wg-fields').hidden = xui;
-  const modern = $('server-api').value === 'clients';
-  $('server-legacy-auth').hidden = modern; $('server-clients-auth').hidden = !modern;
+  $('server-legacy-auth').hidden = mode !== 'legacy';
+  $('server-clients-auth').hidden = mode !== 'clients';
+  $('server-remnawave-auth').hidden = mode !== 'remnawave';
+  $('server-vless-link-fields').hidden = mode === 'remnawave';
+  $('server-remnawave-help').hidden = mode !== 'remnawave';
 }
 $('server-protocol').onchange = showServerFields;
 $('server-api').onchange = showServerFields;
@@ -267,7 +350,7 @@ function openServer(server = null) {
   const form = $('server-form'); form.reset();
   form.elements.name.value = server?.name || ''; form.elements.location.value = server?.location || '';
   form.elements.capacity.value = server?.capacity || 0; form.elements.protocol.value = server?.protocol || 'xui';
-  form.elements.api.value = server?.profile === 'clients_vless' ? 'clients' : 'legacy';
+  form.elements.api.value = server?.profile === 'clients_vless' ? 'clients' : server?.profile === 'remnawave_vless' ? 'remnawave' : 'legacy';
   form.elements.protocol.disabled = !!server; form.elements.url.required = !server;
   $('server-title').textContent = server ? 'Профиль сервера' : 'Новый сервер';
   $('server-form-error').textContent = ''; showServerFields(); $('server-dialog').showModal();
@@ -283,10 +366,14 @@ $('server-form').onsubmit = async event => {
   try {
     const url = String(values.get('url') || '').trim();
     const mode = String(values.get('api') || 'legacy');
-    const fields = protocol === 'xui' ? ['username','password','api_token','inbound_id','link_template','flow'] : ['token'];
-    if (original?.protocol === 'xui' && !url && mode !== (original.profile === 'clients_vless' ? 'clients' : 'legacy')) throw new Error('Для смены режима API введите полный профиль.');
+    const originalMode = original?.profile === 'clients_vless' ? 'clients' : original?.profile === 'remnawave_vless' ? 'remnawave' : 'legacy';
+    const fields = protocol !== 'xui' ? ['token'] : mode === 'remnawave' ? ['remnawave_token','squad_uuids'] : mode === 'clients' ? ['api_token','inbound_id','link_template','flow'] : ['username','password','inbound_id','link_template','flow'];
+    if (original?.protocol === 'xui' && !url && mode !== originalMode) throw new Error('Для смены режима API введите полный профиль.');
     if (!url && fields.some(key=>values.get(key))) throw new Error('Для замены профиля укажите адрес и все данные подключения.');
-    const profile = url ? protocol === 'xui' ? {url,api:mode,...(mode === 'clients' ? {token:String(values.get('api_token') || '')} : {username:String(values.get('username') || ''),password:String(values.get('password') || '')}),inbound_id:Number(values.get('inbound_id')),link_template:String(values.get('link_template') || ''),flow:String(values.get('flow') || '')} : {url,token:String(values.get('token') || '')} : null;
+    const profile = url ? protocol === 'xui' ? mode === 'remnawave'
+      ? {url,api:mode,token:String(values.get('remnawave_token') || ''),squad_uuids:String(values.get('squad_uuids') || '').split(/[\n,]+/).map(x=>x.trim()).filter(Boolean)}
+      : {url,api:mode,...(mode === 'clients' ? {token:String(values.get('api_token') || '')} : {username:String(values.get('username') || ''),password:String(values.get('password') || '')}),inbound_id:Number(values.get('inbound_id')),link_template:String(values.get('link_template') || ''),flow:String(values.get('flow') || '')}
+      : {url,token:String(values.get('token') || '')} : null;
     const data = {name:String(values.get('name')),location:String(values.get('location') || ''),capacity:Number(values.get('capacity'))};
     if (original) { data.version=original.version; data.state=profile ? 'disabled' : original.state; if (profile) data.settings=profile; }
     else { data.protocol=protocol; data.settings=profile; }

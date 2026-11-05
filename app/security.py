@@ -42,9 +42,8 @@ def current_user(request: Request):
     return user
 
 def admin(request: Request):
-    token = request.headers.get('authorization', '')
-    if not c.ADMIN_TOKEN or not hmac.compare_digest(token, 'Bearer ' + c.ADMIN_TOKEN):
-        raise HTTPException(403, 'Нет доступа')
+    from .staff import authorize
+    return authorize(request)
 
 def telegram_user(raw):
     try:

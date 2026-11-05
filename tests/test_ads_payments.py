@@ -90,8 +90,8 @@ def test_refund_requires_receipt_and_distinct_global_reference(client):
 
 def test_access_csrf_and_unknown_requests(client):
     row=approved(client);path='/api/admin/ads/requests/'+row['id']+'/payments'
-    assert client.get(path).status_code==403
-    assert client.post(path+'/receipt',json={}).status_code==403
+    assert client.get(path).status_code==401
+    assert client.post(path+'/receipt',json={}).status_code==401
     assert client.post(path+'/receipt',json={},headers={**admin_headers(),'Origin':'https://evil.example'}).status_code==403
     missing={**row,'id':str(uuid.uuid4())}
     assert record(client,missing).status_code==404

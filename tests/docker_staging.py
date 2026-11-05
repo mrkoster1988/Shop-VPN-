@@ -100,7 +100,16 @@ class Staging:
             raise StageError('upgrade '+command+' '+json.dumps(phase)+' '+self.scrub(detail)) from None
         result=json.loads(output.getvalue());check(result['phase']==expected,'Unexpected controller phase');return result
     def compare(self,expected,*,cleared):
-        current=self.snapshot();check(current['digest']==expected['digest'],'Application data changed across snapshot/upgrade')
+        current=self.snapshot()
+        old=expected.get('table_digests',{});new=current.get('table_digests',{})
+        changed=[name for name in set(old)&set(new) if old[name]!=new[name]]
+        missing=sorted(set(old)-set(new))
+        allowed_new={'admin_audit','password_reset_tokens','staff_sessions','staff_users',
+                     'store_settings','support_cases','support_messages'}
+        added=sorted(set(new)-set(old))
+        check(not changed and not missing and set(added)<=allowed_new,
+              'Application data changed across snapshot/upgrade: changed='+','.join(sorted(changed))+
+              '; missing='+','.join(missing)+'; added='+','.join(added))
         check(current['counts']['sessions']==(0 if cleared else 1) and current['counts']['tickets']==(0 if cleared else 1),'Session cleanup mismatch')
         if cleared:check(current['db_uid']==10001 and current['db_gid']==10001 and current['db_mode']==0o600 and current['directory_mode']==0o700,'Restored file permissions mismatch')
         return current
@@ -179,6 +188,10 @@ class Staging:
         self.controller(self.args.source,'rollback','rolled_back');self.compare(managed,cleared=managed_origin)
         self.event('managed_prepare_and_rollback_verified' if managed_origin else 'direct_prepare_and_rollback_verified')
         self.controller(self.args.source,'prepare','ready');self.controller(self.args.source,'activate','committed');self.compare(managed,cleared=True)
+        managed=self.snapshot()
+        settings=self.data('settings')
+        check(settings=={'support_text':'Disposable CI fixture','terms_configured':False},
+              'Store settings were not initialized from the installation environment')
         check({'ads_policy','ads_requests','ads_events','ads_payment_entries','ads_sites','ads_placements','ads_placement_actions','ads_bookings','ads_booking_actions','ads_expenses','ads_expense_actions'}<=set(self.snapshot()['tables']),'Missing advertising migration tables')
         self.event('target_activated_data_preserved')
         login,headers=self.http('/api/auth/login',body={'email':'fixture1@example.invalid','password':self.fixture['password']})
@@ -191,7 +204,18 @@ class Staging:
         self.json('create backup',base+['create','--env-stdin','--output','/tmp/final.pvb'],input=(self.root/'.env').read_bytes(),env=env)
         self.json('verify backup',base+['verify','/tmp/final.pvb'],env=env)
         self.json('restore backup',base+['restore','/tmp/final.pvb','--target','/tmp/final-restore'],env=env)
-        restored=self.data('snapshot',database='/tmp/final-restore/shop.db');check(restored['digest']==managed['digest'] and restored['counts']['sessions']==0,'Backup restore mismatch')
+        restored=self.data('snapshot',database='/tmp/final-restore/shop.db')
+        old=managed.get('table_digests',{});new=restored.get('table_digests',{})
+        changed=[name for name in set(old)&set(new) if old[name]!=new[name]]
+        missing=sorted(set(old)-set(new));added=sorted(set(new)-set(old))
+        allowed_new={'admin_audit','password_reset_tokens','staff_sessions','staff_users',
+                     'store_settings','support_cases','support_messages'}
+        check(not changed and not missing and set(added)<=allowed_new and restored['counts']['sessions']==0,
+              'Backup restore mismatch: changed='+','.join(sorted(changed))+
+              '; missing='+','.join(missing)+'; added='+','.join(added))
+        restored_settings=self.data('settings',database='/tmp/final-restore/shop.db')
+        check(restored_settings=={'support_text':'Disposable CI fixture','terms_configured':False},
+              'Store settings were not preserved by backup restore')
         self.run('refuse overwrite',base+['restore','/tmp/final.pvb','--target','/tmp/final-restore'],env=env,ok=(1,))
         diagnostic=self.json('status CLI',['docker','exec',cid,'python','scripts/status.py','--url',self.backend_url],ok=(0,1))
         check(diagnostic['scope']['external_requests'] is False and diagnostic['release']==version(self.args.source),'Diagnostic scope/version mismatch')

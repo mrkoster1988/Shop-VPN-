@@ -68,8 +68,13 @@ def snapshot(database=None):
                     columns=[item[1] for item in conn.execute('PRAGMA table_info(users)')]
                     index=columns.index('password')
                     rows=[tuple(None if i==index else value for i,value in enumerate(row)) for row in rows]
-                business[name]=sorted(json.dumps(row,ensure_ascii=True) for row in rows)
-        return {'digest':hashlib.sha256(json.dumps(records,sort_keys=True).encode()).hexdigest(),
+                if name!='admin_audit':
+                    business[name]=sorted(json.dumps(row,ensure_ascii=True) for row in rows)
+        table_digests={name:hashlib.sha256(json.dumps(rows,sort_keys=True).encode()).hexdigest()
+            for name,rows in records.items()}
+        observable={name:rows for name,rows in records.items() if name!='admin_audit'}
+        return {'table_digests':table_digests,'digest':hashlib.sha256(json.dumps(observable,sort_keys=True).encode()).hexdigest(),
+            'full_digest':hashlib.sha256(json.dumps(records,sort_keys=True).encode()).hexdigest(),
             'business_digest':hashlib.sha256(json.dumps(business,sort_keys=True).encode()).hexdigest(),'counts':counts,'tables':tables,
             'db_uid':path.stat().st_uid,'db_gid':path.stat().st_gid,'db_mode':stat.S_IMODE(path.stat().st_mode),
             'directory_mode':stat.S_IMODE(path.parent.stat().st_mode)}
@@ -84,6 +89,10 @@ def main():
         from app.db import execute
         from app.security import digest
         execute('INSERT INTO tickets VALUES (?,?,?)',(digest(json.load(sys.stdin)['ticket']),1,int(time.time())+600));result={'written':True}
+    elif command=='settings':
+        path=Path(sys.argv[2]) if len(sys.argv)>2 else Path(os.environ.get('DATA_DIR','data'))/'shop.db'
+        with sqlite3.connect(path) as conn:row=conn.execute('SELECT support_text,terms_text FROM store_settings WHERE id=1').fetchone()
+        result={'support_text':row[0],'terms_configured':bool(row[1].strip())} if row else {}
     elif command=='sentinel':
         from app.db import execute
         execute("INSERT INTO meta(key,value) VALUES ('docker_staging_sentinel',?)",(json.load(sys.stdin)['value'],));result={'written':True}

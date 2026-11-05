@@ -120,9 +120,9 @@ def test_private_site_notes_and_actions_are_not_customer_data(client):
     for path in ['/api/ads/requests','/api/ads/requests/'+row['id']]:
         response=client.get(path)
         assert 'private-site-check' not in response.text and 'private-placement-check' not in response.text and s['id'] not in response.text
-    assert client.get('/api/admin/ads/sites').status_code==403
-    assert client.put('/api/admin/ads/sites/'+s['id'],json={}).status_code==403
-    assert client.post('/api/admin/ads/requests/'+row['id']+'/placement/pause',json={}).status_code==403
+    assert client.get('/api/admin/ads/sites').status_code==401
+    assert client.put('/api/admin/ads/sites/'+s['id'],json={}).status_code==401
+    assert client.post('/api/admin/ads/requests/'+row['id']+'/placement/pause',json={}).status_code==401
     assert client.post('/api/admin/ads/requests/'+row['id']+'/placement/pause',json={},headers={**admin_headers(),'Origin':'https://evil.example'}).status_code==403
     client.cookies.clear();register(client,'other@example.com')
     assert client.get('/api/ads/requests/'+row['id']).status_code==404

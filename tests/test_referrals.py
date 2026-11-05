@@ -59,7 +59,7 @@ def redeem(client,sid,days=7,request=None):
 
 
 def test_disabled_defaults_auth_and_version(client):
-    assert client.get('/api/admin/referrals').status_code==403
+    assert client.get('/api/admin/referrals').status_code==401
     for path in ('code','bind','redeem'):assert client.post('/api/referrals/'+path,json={}).status_code==401
     p=client.get('/api/admin/referrals',headers=admin()).json()
     assert not p['enabled'] and (p['days'],p['used'],p['min_rub'],p['min_stars'])==(7,0,199,150)

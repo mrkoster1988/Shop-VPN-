@@ -21,6 +21,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(providers,'available',lambda _,user_id=None:True)
     service.lock=asyncio.Lock()
     hits.clear()
+    monkeypatch.setenv('TERMS_TEXT','Тестовые условия продажи')
     with TestClient(app) as test:
         for protocol, profile in [('xui',{'url':'https://panel.example','username':'test','password':'private','inbound_id':1,'link_template':'vless://{uuid}@vpn.example','flow':''}),
                                   ('wg',{'url':'https://agent.example','token':'a'*32})]:
@@ -60,8 +61,8 @@ def test_password_and_duplicates(client):
 def test_csrf_and_admin_boundary(client):
     register(client)
     assert client.post('/api/orders',json={'plan':'month','protocol':'xui'},headers={'Origin':'https://evil.example'}).status_code==403
-    assert client.get('/api/admin/overview').status_code==403
-    assert client.get('/api/admin/overview',headers={'Authorization':'Bearer wrong'}).status_code==403
+    assert client.get('/api/admin/overview').status_code==401
+    assert client.get('/api/admin/overview',headers={'Authorization':'Bearer wrong'}).status_code==401
 
 def test_catalog_and_unconfigured_provider(client,monkeypatch):
     assert client.get('/api/catalog').json()['plans'][0]['price']==199
@@ -181,7 +182,7 @@ def test_frontend(client):
 
 def test_stars_verified_checkout_and_replay(client,monkeypatch):
     monkeypatch.setattr(c,'BOT_TOKEN','telegram-token')
-    monkeypatch.setenv('TERMS_TEXT','Test merchant terms')
+    execute('UPDATE store_settings SET terms_text=? WHERE id=1', ('Test merchant terms',))
     user=service.telegram_account(777)
     url=service.ticket(user['id']); client.get(url)
     async def invoice(order): return 'https://t.me/$testinvoice'
@@ -311,9 +312,9 @@ def save_plan(client, data, plan_id='month'):
 
 def test_tariff_admin_access_and_origin(client):
     payload = plan_edit(client, price=349)
-    assert client.get('/api/admin/plans').status_code == 403
+    assert client.get('/api/admin/plans').status_code==401
     register(client)
-    assert client.put('/api/admin/plans/month', json=payload).status_code == 403
+    assert client.put('/api/admin/plans/month', json=payload).status_code==401
     result = client.put('/api/admin/plans/month', json=payload,
         headers={'Authorization': 'Bearer ' + c.ADMIN_TOKEN, 'Origin': 'https://evil.example'})
     assert result.status_code == 403
@@ -402,7 +403,7 @@ def test_hidden_tariffs_keep_pending_orders_payable(client):
 
 def test_telegram_uses_edited_stars_price(client, monkeypatch):
     monkeypatch.setattr(c, 'BOT_TOKEN', 'telegram-token')
-    monkeypatch.setenv('TERMS_TEXT', 'Merchant terms')
+    execute('UPDATE store_settings SET terms_text=? WHERE id=1', ('Merchant terms',))
     assert save_plan(client, plan_edit(client, stars=271, days=15)).status_code == 200
     user = service.telegram_account(123456)
     client.get(service.ticket(user['id']))
@@ -467,9 +468,9 @@ def test_custom_tariff_starts_hidden_survives_restart_and_has_audit(client):
 
 def test_custom_tariff_creation_requires_admin_and_same_origin(client):
     payload = {'id': 'day', 'name': 'На день', 'days': 1, 'price': 300, 'stars': 200}
-    assert client.post('/api/admin/plans', json=payload).status_code == 403
+    assert client.post('/api/admin/plans', json=payload).status_code==401
     register(client)
-    assert client.post('/api/admin/plans', json=payload).status_code == 403
+    assert client.post('/api/admin/plans', json=payload).status_code==401
     assert client.post('/api/admin/plans', json=payload,
         headers={'Authorization':'Bearer '+c.ADMIN_TOKEN, 'Origin':'https://evil.example'}).status_code == 403
     assert one('SELECT count(*) AS n FROM plans')['n'] == 3
@@ -515,7 +516,7 @@ def test_custom_tariff_can_be_purchased_and_fulfilled(client, monkeypatch):
 def test_custom_tariff_stars_uses_its_own_price(client, monkeypatch):
     assert new_plan(client, enabled=True).status_code == 201
     monkeypatch.setattr(c, 'BOT_TOKEN', 'telegram-token')
-    monkeypatch.setenv('TERMS_TEXT', 'Merchant terms')
+    execute('UPDATE store_settings SET terms_text=? WHERE id=1', ('Merchant terms',))
     user = service.telegram_account(87654)
     client.get(service.ticket(user['id']))
     assert client.get('/api/catalog').json()['plans'][-1]['price'] == 75
@@ -540,10 +541,10 @@ def add_customer(email=None, telegram_id=None, created=100):
 def test_admin_users_require_admin_access(client):
     uid = add_customer('customer@example.com')
     for path in ('/api/admin/users', '/api/admin/users/' + str(uid)):
-        assert client.get(path).status_code == 403
-        assert client.get(path, headers={'Authorization':'Bearer wrong'}).status_code == 403
+        assert client.get(path).status_code==401
+        assert client.get(path, headers={'Authorization':'Bearer wrong'}).status_code==401
     register(client)
-    assert client.get('/api/admin/users/' + str(uid)).status_code == 403
+    assert client.get('/api/admin/users/' + str(uid)).status_code==401
 
 
 def test_admin_user_search_email_ids_and_literal_characters(client):
@@ -639,9 +640,9 @@ def add_admin_order(uid, oid, status='pending', method='manual', protocol='xui',
 def test_admin_orders_require_admin_and_hide_payment_details(client):
     uid = add_customer('buyer@example.com')
     add_admin_order(uid,'private-order',method='yookassa',payment_id='private-provider-id')
-    assert client.get('/api/admin/orders').status_code == 403
+    assert client.get('/api/admin/orders').status_code==401
     register(client)
-    assert client.get('/api/admin/orders').status_code == 403
+    assert client.get('/api/admin/orders').status_code==401
     response = client.get('/api/admin/orders',headers=admin_headers())
     assert response.status_code == 200
     assert response.headers['cache-control'] == 'no-store'
@@ -781,11 +782,11 @@ def test_server_registry_encrypted_and_hidden_from_responses(registry_client):
 
 
 def test_server_registry_authentication_and_validation_redact_secrets(client):
-    assert client.get('/api/admin/servers').status_code==403
-    assert client.post('/api/admin/servers',json=server_body()).status_code==403
+    assert client.get('/api/admin/servers').status_code==401
+    assert client.post('/api/admin/servers',json=server_body()).status_code==401
     row=server_create(client).json()
-    assert client.put('/api/admin/servers/'+row['id'],json={}).status_code==403
-    assert client.post('/api/admin/servers/'+row['id']+'/check').status_code==403
+    assert client.put('/api/admin/servers/'+row['id'],json={}).status_code==401
+    assert client.post('/api/admin/servers/'+row['id']+'/check').status_code==401
     invalid=server_body(settings=[{'password':'never-echo-this-password'}])
     response=client.post('/api/admin/servers',json=invalid,headers=admin_headers())
     assert response.status_code==422 and 'never-echo' not in response.text

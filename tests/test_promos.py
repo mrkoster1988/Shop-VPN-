@@ -113,7 +113,7 @@ def test_invoice_failure_retries_same_coupon_order_at_saved_amount(buyer,monkeyp
 
 
 def test_stars_invoice_uses_discount_and_completed_replay_never_reissues(client,monkeypatch):
-    monkeypatch.setattr(c,'BOT_TOKEN','123:test');monkeypatch.setenv('TERMS_TEXT','Terms')
+    monkeypatch.setattr(c,'BOT_TOKEN','123:test');execute('UPDATE store_settings SET terms_text=? WHERE id=1',('Terms',))
     user=service.telegram_account(123);client.get(service.ticket(user['id']),follow_redirects=False)
     row=coupon(client);q=quote(client).json();assert q['currency']=='XTR' and q['amount']==135 and q['discount']==15
     calls=[]
@@ -130,8 +130,8 @@ def test_small_price_never_becomes_free(buyer):
 
 
 def test_admin_authorization_origin_identity_and_audit(buyer):
-    assert buyer.get('/api/admin/coupons').status_code==403
-    assert buyer.post('/api/admin/coupons',json={'code':'SAVE10','percent':10}).status_code==403
+    assert buyer.get('/api/admin/coupons').status_code==401
+    assert buyer.post('/api/admin/coupons',json={'code':'SAVE10','percent':10}).status_code==401
     assert buyer.post('/api/admin/coupons',headers={**admin_headers(),'Origin':'https://evil.example'},json={'code':'SAVE10','percent':10}).status_code==403
     row=coupon(buyer,code='save10');assert row['code']=='SAVE10'
     assert buyer.post('/api/admin/coupons',headers=admin_headers(),json={'code':'SaVe10','percent':20}).status_code==409

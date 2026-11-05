@@ -1,3 +1,4 @@
+import os
 import sqlite3
 from contextlib import contextmanager
 from . import config as c
@@ -27,6 +28,22 @@ def init_db():
           token TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), expires INTEGER);
         CREATE TABLE IF NOT EXISTS tickets (
           token TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), expires INTEGER);
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+          token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          created INTEGER NOT NULL, expires INTEGER NOT NULL, consumed INTEGER);
+        CREATE INDEX IF NOT EXISTS password_reset_user ON password_reset_tokens(user_id,created);
+        CREATE TABLE IF NOT EXISTS support_cases (
+          id TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id),
+          order_id TEXT REFERENCES orders(id), request_id TEXT NOT NULL, fingerprint TEXT NOT NULL,
+          subject TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('open','waiting_staff','waiting_customer','closed')),
+          version INTEGER NOT NULL DEFAULT 1, created INTEGER NOT NULL, updated INTEGER NOT NULL,
+          UNIQUE(user_id,request_id));
+        CREATE INDEX IF NOT EXISTS support_cases_queue ON support_cases(status,updated,id);
+        CREATE TABLE IF NOT EXISTS support_messages (
+          id INTEGER PRIMARY KEY, case_id TEXT NOT NULL REFERENCES support_cases(id) ON DELETE CASCADE,
+          actor_type TEXT NOT NULL CHECK(actor_type IN ('customer','staff')), actor_id INTEGER,
+          body TEXT NOT NULL, created INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS support_messages_case ON support_messages(case_id,id);
         CREATE TABLE IF NOT EXISTS ads_policy (
           id INTEGER PRIMARY KEY CHECK(id=1), accepting INTEGER NOT NULL CHECK(accepting IN (0,1)),
           amount INTEGER NOT NULL CHECK(amount>0), hours INTEGER NOT NULL CHECK(hours>0),
@@ -195,8 +212,24 @@ def init_db():
           UNIQUE(device_id,request_id));
         CREATE INDEX IF NOT EXISTS rotations_queue ON device_rotations(state,next_attempt);
         CREATE INDEX IF NOT EXISTS devices_subscription ON devices(subscription_id,state);
+        CREATE TABLE IF NOT EXISTS staff_users (
+          id INTEGER PRIMARY KEY, email TEXT NOT NULL UNIQUE, password TEXT NOT NULL,
+          role TEXT NOT NULL CHECK(role IN ('owner','panel_operator','mtproxy_manager','finance','support')),
+          enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)), created INTEGER NOT NULL,
+          updated INTEGER NOT NULL, created_by INTEGER REFERENCES staff_users(id), last_login INTEGER);
+        CREATE TABLE IF NOT EXISTS staff_sessions (
+          token_hash TEXT PRIMARY KEY, staff_id INTEGER NOT NULL REFERENCES staff_users(id) ON DELETE CASCADE,
+          created INTEGER NOT NULL, expires INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS staff_sessions_expiry ON staff_sessions(expires);
+        CREATE TABLE IF NOT EXISTS admin_audit (
+          id INTEGER PRIMARY KEY, created INTEGER NOT NULL, staff_id INTEGER,
+          actor_email TEXT NOT NULL, role TEXT NOT NULL, action TEXT NOT NULL, resource TEXT NOT NULL, status INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS admin_audit_created ON admin_audit(created,id);
         CREATE TABLE IF NOT EXISTS audit (
           id INTEGER PRIMARY KEY, created INTEGER NOT NULL, action TEXT NOT NULL, order_id TEXT);
+        CREATE TABLE IF NOT EXISTS store_settings (
+          id INTEGER PRIMARY KEY CHECK(id=1), support_text TEXT NOT NULL, terms_text TEXT NOT NULL,
+          version INTEGER NOT NULL DEFAULT 1, updated INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
         CREATE INDEX IF NOT EXISTS orders_user ON orders(user_id, created);
         CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires);
@@ -240,6 +273,8 @@ def init_db():
         for position, plan in enumerate(c.PLANS):
             conn.execute('INSERT OR IGNORE INTO plans(id,name,days,price,stars,position) VALUES (?,?,?,?,?,?)',
                          (plan['id'], plan['name'], plan['days'], plan['price'], plan['stars'], position))
+        conn.execute('INSERT OR IGNORE INTO store_settings(id,support_text,terms_text,version,updated) VALUES (1,?,?,1,0)',
+                     (os.getenv('SUPPORT_TEXT','Напишите администратору магазина.'),os.getenv('TERMS_TEXT','')))
         conn.execute('UPDATE orders SET plan_name=(SELECT name FROM plans WHERE plans.id=orders.plan) WHERE plan_name IS NULL')
 
 def one(sql, args=()):

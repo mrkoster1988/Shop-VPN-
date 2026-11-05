@@ -33,8 +33,8 @@ def order(uid,status='paid',**fields):
 
 
 def test_admin_boundary_and_safe_snapshot_without_remote_calls(client,monkeypatch):
-    assert client.get('/api/admin/diagnostics').status_code==403
-    assert client.get('/api/admin/diagnostics',headers={'Authorization':'Bearer wrong'}).status_code==403
+    assert client.get('/api/admin/diagnostics').status_code==401
+    assert client.get('/api/admin/diagnostics',headers={'Authorization':'Bearer wrong'}).status_code==401
     uid=user();oid=order(uid,error='private-provider-url-and-key')
     before=list(sqlite3.connect(c.DB).iterdump())
     def forbidden(*a,**kw):raise AssertionError('Unexpected remote mutation')
@@ -43,7 +43,9 @@ def test_admin_boundary_and_safe_snapshot_without_remote_calls(client,monkeypatc
     for secret in (oid,'private-customer@example.com','private-provider-url-and-key','https://panel.example',c.ADMIN_TOKEN,os.environ['ENCRYPTION_KEY']):assert secret not in text
     assert data['scope']=={'external_requests':False,'ciphertext_scan':False,'vpn_traffic_verified':False,'real_payments_verified':False,'backup_verified':False,'worker_process_only':True}
     assert data['queues']['issuance']['pending']==1 and data['queues']['issuance']['with_error']==1
-    assert list(sqlite3.connect(c.DB).iterdump())==before
+    after=list(sqlite3.connect(c.DB).iterdump())
+    assert [line for line in after if not line.startswith('INSERT INTO "admin_audit"')]==before
+    assert one('SELECT count(*) AS n FROM admin_audit')['n']==1
     assert client.get('/api/admin/diagnostics',headers=headers()).headers['cache-control']=='no-store'
 
 
@@ -112,7 +114,7 @@ def test_server_capacity_and_probe_age_are_not_live_vpn_checks(client):
 def test_setting_failures_only_reveal_booleans(client,monkeypatch):
     monkeypatch.setenv('ENCRYPTION_KEY','private-invalid-key');monkeypatch.setattr(c,'PAYMENT_MODE','yookassa')
     monkeypatch.delenv('YOOKASSA_SECRET',raising=False);monkeypatch.setenv('YOOKASSA_SHOP_ID','private-shop-id')
-    monkeypatch.setattr(c,'BOT_TOKEN','private-bot-token');monkeypatch.setattr(c,'BOT_USERNAME','');monkeypatch.delenv('TERMS_TEXT',raising=False)
+    monkeypatch.setattr(c,'BOT_TOKEN','private-bot-token');monkeypatch.setattr(c,'BOT_USERNAME','');monkeypatch.delenv('TERMS_TEXT',raising=False);execute('UPDATE store_settings SET terms_text=? WHERE id=1',('',))
     data=report(client);text=json.dumps(data)
     assert {'encryption_key_invalid','payment_settings_incomplete','telegram_sales_settings_incomplete'}<=set(data['warnings'])
     assert 'private-' not in text

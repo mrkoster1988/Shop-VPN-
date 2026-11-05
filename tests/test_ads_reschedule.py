@@ -102,7 +102,7 @@ def test_move_vs_start_cannot_move_used_booking(client,monkeypatch):
 def test_access_and_invalid_input_cannot_touch_original(client,monkeypatch):
     row,s,_=setup(client,monkeypatch);reserve(client,row,s);before=state()
     path='/api/admin/ads/requests/'+row['id']+'/booking/reschedule'
-    assert client.post(path,json={}).status_code==403
+    assert client.post(path,json={}).status_code==401
     assert client.post(path,json={},headers={**admin_headers(),'Origin':'https://evil.example'}).status_code==403
     assert move(client,row,s,extra='private-secret').status_code==422
     assert state()==before

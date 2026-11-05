@@ -30,7 +30,7 @@ test('logout rejects an in-flight response with customer data', async () => {
   const page = adminPage();
   const request = page.run("api('users')");
   page.run("$('exit').onclick()");
-  page.reply({users:[{email:'customer@example.com'}]});
+  page.replyAt(0,{users:[{email:'customer@example.com'}]});
   await assert.rejects(request, /Сессия администратора завершена/);
   assert.equal(page.element('users-list').innerHTML, '');
 });
@@ -181,7 +181,7 @@ test('diagnostics escapes unknown codes and shows cached rather than live eviden
 
 test('logout rejects and clears a pending diagnostics report',async()=>{
   const p=adminPage();const request=p.run('refreshDiagnostics()');p.run("$('exit').onclick()");
-  p.reply(diagnosticReport());await request;
+  p.replyAt(0,diagnosticReport());await request;
   assert.equal(p.element('diagnostics-report').innerHTML,'');assert.equal(p.element('diagnostics-json').value,'');assert.equal(p.element('diagnostics-error').textContent,'');
 });
 
@@ -243,7 +243,7 @@ test('выход администратора очищает платёжное 
   const request=p.run('saveAdsPayment('+paymentFormSource+')');p.run("$('exit').onclick()");
   p.replyAt(0,{status:'confirmed'});await request;
   assert.equal(p.run('adsPaymentIntents.size'),0);assert.equal(p.element('ads-admin-list').innerHTML,'');
-  assert.equal(p.element('ads-admin-error').textContent,'');assert.equal(p.requests.length,1);
+  assert.equal(p.element('ads-admin-error').textContent,'');assert.equal(p.requests.length,2);assert.equal(p.requests[1],'/shop/api/admin/auth/logout');
 });
 
 test('успешный ручной учёт обновляет очередь без повторного сохранения',async()=>{
