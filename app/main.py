@@ -30,7 +30,7 @@ from . import shop_settings
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, mail
+from . import staff, mail, partner
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -69,6 +69,8 @@ async def lifespan(app):
 app = FastAPI(title='Pushok VPN', lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 @app.exception_handler(RequestValidationError)
 async def safe_validation(request, exc):
+    if request.url.path.removeprefix(c.BASE_PATH).startswith('/api/partner/'):
+        return JSONResponse({'detail':'Проверьте подпись и данные события партнёра.'},status_code=422)
     if request.url.path.removeprefix(c.BASE_PATH).startswith('/api/admin/servers'):
         return JSONResponse({'detail':'Проверьте поля сервера и профиль подключения.'},status_code=422)
     if request.url.path.removeprefix(c.BASE_PATH).startswith(('/api/ads/','/api/admin/ads/')):
@@ -598,6 +600,26 @@ async def order_status(order_id: str, user=Depends(current_user)):
         'progress': order_progress.public(order),
         'instructions': os.getenv('MANUAL_PAYMENT_TEXT', 'Свяжитесь с поддержкой и сообщите номер заказа.')
         if order['method'] == 'manual' and order['status'] in ('pending','checkout') else ''}
+
+@app.post('/api/partner/events')
+async def partner_event(request: Request):
+    content_type=request.headers.get('content-type','').split(';',1)[0].strip().lower()
+    if content_type!='application/json':
+        raise HTTPException(415,'Ожидается application/json')
+    length=request.headers.get('content-length')
+    if length:
+        try:
+            if int(length)>4096:raise HTTPException(413,'Событие партнёра слишком большое')
+        except ValueError:
+            raise HTTPException(400,'Некорректная длина запроса')
+    chunks=[];total=0
+    async for chunk in request.stream():
+        total+=len(chunk)
+        if total>4096:raise HTTPException(413,'Событие партнёра слишком большое')
+        chunks.append(chunk)
+    body=b''.join(chunks)
+    return partner.accept(request.headers,body)
+
 
 @app.post('/api/quote')
 async def order_quote(data: promos.Quote,user=Depends(current_user)):

@@ -6,6 +6,7 @@ import uuid
 from typing import Literal
 from fastapi import HTTPException
 from pydantic import BaseModel,Field,field_validator
+from . import config as c
 from .db import db,all_rows
 
 class CouponFields(BaseModel):
@@ -87,6 +88,10 @@ def quote_locked(conn,data,user):
         raw=conn.execute('SELECT * FROM coupons WHERE code=?',(code,)).fetchone()
         if not raw:raise HTTPException(409,'Промокод недоступен или исчерпан')
         coupon=dict(raw)
+        if code==c.PARTNER_PROMO_CODE:
+            grant=conn.execute('SELECT 1 FROM partner_events WHERE telegram_id=? AND promo_code=? AND expires_at>? LIMIT 1',
+                (user['telegram_id'] or 0,code,int(time.time()))).fetchone() if user['telegram_id'] else None
+            if not grant:raise HTTPException(409,'Промокод недоступен или исчерпан')
         if (not coupon['enabled'] or (coupon['expires_at'] and coupon['expires_at']<=time.time())
             or coupon['plan_id'] not in (None,plan['id']) or coupon['protocol'] not in ('all',data.protocol)
             or conn.execute('SELECT count(*) FROM coupon_uses WHERE coupon_id=?',(coupon['id'],)).fetchone()[0]>=coupon['max_uses']):

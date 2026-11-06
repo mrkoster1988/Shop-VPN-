@@ -22,6 +22,10 @@ BOT_TOKEN = os.getenv('BOT_TOKEN', '')
 BOT_USERNAME = os.getenv('BOT_USERNAME', '').lstrip('@')
 ADMIN_TOKEN = os.getenv('ADMIN_TOKEN', '')
 PAYMENT_MODE = os.getenv('PAYMENT_MODE', 'manual')
+PARTNER_WEBHOOK_SECRET = os.getenv('PARTNER_WEBHOOK_SECRET', '')
+PARTNER_PROMO_CODE = os.getenv('PARTNER_PROMO_CODE', '').strip().upper()
+if PARTNER_PROMO_CODE and not re.fullmatch(r'[A-Z0-9][A-Z0-9_-]{3,31}', PARTNER_PROMO_CODE):
+    raise RuntimeError('PARTNER_PROMO_CODE must be 4–32 ASCII letters, digits, hyphens or underscores')
 PLANS = [
     {'id': 'month', 'name': 'На месяц', 'days': 30, 'price': 199, 'stars': 150},
     {'id': 'quarter', 'name': 'На три месяца', 'days': 90, 'price': 499, 'stars': 350},

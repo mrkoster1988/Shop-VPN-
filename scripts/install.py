@@ -19,7 +19,7 @@ import time
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 
-VERSION = 'v0.044'
+VERSION = 'v0.045'
 
 
 def run(args, **kwargs):
@@ -98,6 +98,7 @@ def environment(settings, bot_token='',bot_username='',terms=''):
     values={'PUBLIC_URL':settings['url'],'ADMIN_TOKEN':secrets.token_urlsafe(48),
         'ENCRYPTION_KEY':base64.urlsafe_b64encode(secrets.token_bytes(32)).decode(),
         'BOT_TOKEN':bot_token,'BOT_USERNAME':bot_username,'TERMS_TEXT':terms,
+        'PARTNER_PROMO_CODE':'','PARTNER_WEBHOOK_SECRET':'',
         'SUPPORT_TEXT':settings['support'],'PAYMENT_MODE':'manual',
         'MANUAL_PAYMENT_TEXT':'Обратитесь в поддержку и сообщите номер заказа. '+settings['support'],
         'YOOKASSA_RECEIPTS':'false','WG_AGENT_TOKEN':secrets.token_urlsafe(48)}
