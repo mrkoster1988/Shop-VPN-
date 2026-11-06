@@ -52,4 +52,5 @@ def test_bootstrap_accepts_normal_email(client):
         json={"email": "owner@example.com", "password": "long-owner-password"},
     )
     assert response.status_code == 200
-    assert response.json()["email"] == "owner@example.com"
+    assert response.json()["role"] == "owner"
+    assert one("SELECT email FROM staff_users")["email"] == "owner@example.com"
