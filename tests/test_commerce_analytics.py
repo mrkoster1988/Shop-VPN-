@@ -63,13 +63,14 @@ def test_commerce_report_counts_order_cohort_and_trial_conversion(client, monkey
 
 def test_commerce_report_defaults_to_thirty_days_and_requires_valid_period(client, monkeypatch):
     from app import commerce_analytics
-    monkeypatch.setattr(commerce_analytics.time, "time", lambda: 10000)
+    now = 30 * 86400 + 10000
+    monkeypatch.setattr(commerce_analytics.time, "time", lambda: now)
     result = client.get(
         "/api/admin/commerce-analytics",
         headers={"Authorization": "Bearer " + c.ADMIN_TOKEN},
     )
     assert result.status_code == 200
-    assert result.json()["period"] == {"start": 10000 - 30 * 86400, "end": 10001}
+    assert result.json()["period"] == {"start": 10000, "end": now + 1}
     assert client.get(
         "/api/admin/commerce-analytics?start=1",
         headers={"Authorization": "Bearer " + c.ADMIN_TOKEN},
