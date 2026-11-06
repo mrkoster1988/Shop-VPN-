@@ -73,7 +73,7 @@ def report(start=None, end=None):
             (start, end),
         ).fetchall())
         recording_started = conn.execute(
-            "SELECT value FROM meta WHERE key='order_milestones_started_at'"
+            "SELECT recorded_since FROM order_history_state WHERE id=1"
         ).fetchone()
 
         return {

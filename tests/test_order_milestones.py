@@ -49,8 +49,8 @@ def test_migration_does_not_invent_history(client):
     uid = buyer(client)
     execute("DROP TRIGGER order_issued_insert")
     order("legacy", uid, status="active")
-    started = one("SELECT value FROM meta WHERE key='order_milestones_started_at'")["value"]
+    started = one("SELECT recorded_since FROM order_history_state WHERE id=1")["recorded_since"]
     init_db()
     init_db()
     assert all_rows("SELECT * FROM order_milestones") == []
-    assert one("SELECT value FROM meta WHERE key='order_milestones_started_at'")["value"] == started
+    assert one("SELECT recorded_since FROM order_history_state WHERE id=1")["recorded_since"] == started

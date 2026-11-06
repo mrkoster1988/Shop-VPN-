@@ -290,8 +290,10 @@ def init_db():
           recorded_at INTEGER NOT NULL,
           PRIMARY KEY(order_id,event));
         CREATE INDEX IF NOT EXISTS order_milestones_period ON order_milestones(recorded_at,event);
-        INSERT OR IGNORE INTO meta(key,value)
-          VALUES ('order_milestones_started_at',CAST(strftime('%s','now') AS TEXT));
+        CREATE TABLE IF NOT EXISTS order_history_state (
+          id INTEGER PRIMARY KEY CHECK(id=1), recorded_since INTEGER NOT NULL);
+        INSERT OR IGNORE INTO order_history_state(id,recorded_since)
+          VALUES (1,CAST(strftime('%s','now') AS INTEGER));
         CREATE TRIGGER IF NOT EXISTS order_paid_insert AFTER INSERT ON orders
         WHEN NEW.status='paid' AND NEW.kind='purchase' AND NEW.method IN ('manual','yookassa','stars')
         BEGIN
