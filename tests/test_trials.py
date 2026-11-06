@@ -198,6 +198,11 @@ def test_old_database_marks_existing_orders_and_access_as_purchase(issued):
     from app.db import db
     client,issue,_=issued;sub=issue();original=client.get('/api/subscriptions/'+sub['id']+'/config').json()
     with db() as conn:
+        # В старой схеме не было журнала этапов и его триггеров.
+        for trigger in ('order_paid_insert','order_paid_update','order_issued_insert','order_issued_update'):
+            conn.execute('DROP TRIGGER IF EXISTS '+trigger)
+        conn.execute('DROP TABLE IF EXISTS order_milestones')
+        conn.execute('DROP TABLE IF EXISTS order_history_state')
         conn.execute('ALTER TABLE orders DROP COLUMN kind');conn.execute('ALTER TABLE subscriptions DROP COLUMN access_source')
     init_db();init_db()
     assert one('SELECT kind FROM orders')['kind']=='purchase' and one('SELECT access_source FROM subscriptions')['access_source']=='purchase'

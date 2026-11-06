@@ -105,7 +105,8 @@ class Staging:
         changed=[name for name in set(old)&set(new) if old[name]!=new[name]]
         missing=sorted(set(old)-set(new))
         allowed_new={'admin_audit','password_reset_tokens','staff_sessions','staff_users',
-                     'store_settings','support_cases','support_messages','partner_events'}
+                     'store_settings','support_cases','support_messages','partner_events',
+                     'order_history_state','order_milestones'}
         added=sorted(set(new)-set(old))
         check(not changed and not missing and set(added)<=allowed_new,
               'Application data changed across snapshot/upgrade: changed='+','.join(sorted(changed))+

@@ -66,11 +66,27 @@ def report(start=None, end=None):
         issued_trials = [row for row in trial_rows if row["status"] == "active"]
         converted_trials = sum(bool(row["converted"]) for row in issued_trials)
 
+        milestones = dict(conn.execute(
+            "SELECT m.event,count(*) FROM order_milestones m JOIN orders o ON o.id=m.order_id "
+            "WHERE m.recorded_at>=? AND m.recorded_at<? AND o.kind='purchase' "
+            "AND o.method IN ('manual','yookassa','stars') GROUP BY m.event",
+            (start, end),
+        ).fetchall())
+        recording_started = conn.execute(
+            "SELECT recorded_since FROM order_history_state WHERE id=1"
+        ).fetchone()
+
         return {
             "generated_at": now,
             "source": "order_creation_cohort_current_state",
             "period": {"start": start, "end": end},
             "accounts_registered": accounts,
+            "events": {
+                "source": "first_observed_transition",
+                "recording_started_at": int(recording_started[0]) if recording_started else None,
+                "paid": milestones.get("paid", 0),
+                "issued": milestones.get("issued", 0),
+            },
             "orders": {
                 "created": len(rows),
                 "paid": len(paid_rows),
