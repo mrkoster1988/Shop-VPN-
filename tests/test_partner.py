@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 
-from app import config as c
+from app import config as c, providers
 from app.db import one,execute
 from test_shop import client,register,admin_headers
 
@@ -57,6 +57,9 @@ def link_telegram_id(telegram_id):
 
 def test_signed_partner_event_grants_discount_once_to_matching_telegram_user(buyer,monkeypatch):
     set_partner(monkeypatch);coupon(buyer);link_telegram_id(123456789)
+    monkeypatch.setattr(c,'BOT_TOKEN','123456:fake')
+    async def fake_invoice(order):return 'https://t.me/$test'
+    monkeypatch.setattr(providers,'stars_invoice',fake_invoice)
     assert quote(buyer).status_code==409
     event=make_event()
     first=event_request(buyer,event);assert first.status_code==200 and first.json()['accepted']
