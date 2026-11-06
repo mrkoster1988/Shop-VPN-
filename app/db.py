@@ -281,6 +281,40 @@ def init_db():
                      (os.getenv('SUPPORT_TEXT','Напишите администратору магазина.'),os.getenv('TERMS_TEXT','')))
         conn.execute('UPDATE orders SET plan_name=(SELECT name FROM plans WHERE plans.id=orders.plan) WHERE plan_name IS NULL')
 
+        # Записываем первые подтверждения атомарно с изменением заказа.
+        # Историю старых заказов не восстанавливаем из текущих статусов.
+        conn.executescript("""
+        CREATE TABLE IF NOT EXISTS order_milestones (
+          order_id TEXT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+          event TEXT NOT NULL CHECK(event IN ('paid','issued')),
+          recorded_at INTEGER NOT NULL,
+          PRIMARY KEY(order_id,event));
+        CREATE INDEX IF NOT EXISTS order_milestones_period ON order_milestones(recorded_at,event);
+        INSERT OR IGNORE INTO meta(key,value)
+          VALUES ('order_milestones_started_at',CAST(strftime('%s','now') AS TEXT));
+        CREATE TRIGGER IF NOT EXISTS order_paid_insert AFTER INSERT ON orders
+        WHEN NEW.status='paid' AND NEW.kind='purchase' AND NEW.method IN ('manual','yookassa','stars')
+        BEGIN
+          INSERT OR IGNORE INTO order_milestones VALUES (NEW.id,'paid',CAST(strftime('%s','now') AS INTEGER));
+        END;
+        CREATE TRIGGER IF NOT EXISTS order_paid_update AFTER UPDATE OF status ON orders
+        WHEN NEW.status='paid' AND OLD.status!='paid' AND NEW.kind='purchase'
+          AND NEW.method IN ('manual','yookassa','stars')
+        BEGIN
+          INSERT OR IGNORE INTO order_milestones VALUES (NEW.id,'paid',CAST(strftime('%s','now') AS INTEGER));
+        END;
+        CREATE TRIGGER IF NOT EXISTS order_issued_insert AFTER INSERT ON orders
+        WHEN NEW.status='active'
+        BEGIN
+          INSERT OR IGNORE INTO order_milestones VALUES (NEW.id,'issued',CAST(strftime('%s','now') AS INTEGER));
+        END;
+        CREATE TRIGGER IF NOT EXISTS order_issued_update AFTER UPDATE OF status ON orders
+        WHEN NEW.status='active' AND OLD.status!='active'
+        BEGIN
+          INSERT OR IGNORE INTO order_milestones VALUES (NEW.id,'issued',CAST(strftime('%s','now') AS INTEGER));
+        END;
+        """)
+
 def one(sql, args=()):
     with db() as conn:
         row = conn.execute(sql, args).fetchone()
