@@ -274,6 +274,50 @@ async def worker():
         await asyncio.sleep(15)
 
 
+def bot_menu(user_id):
+    return {'inline_keyboard': [
+        [{'text': 'Купить / продлить VPN', 'web_app': {'url': c.PUBLIC_URL}}],
+        [{'text': 'Открыть кабинет в браузере', 'url': ticket(user_id)}],
+        [{'text': 'Поддержка', 'callback_data': 'shop:support'},
+         {'text': 'Условия продажи', 'callback_data': 'shop:terms'}],
+    ]}
+
+
+async def send_shop_info(tg_id, section):
+    settings = shop_settings.public()
+    text = settings['support'] if section == 'support' else (
+        settings['terms'] or 'Условия продажи ещё не заполнены владельцем магазина.')
+    # Не более 4000 единиц UTF-16, включая emoji.
+    for start in range(0, len(text), 2000):
+        await send(tg_id, text[start:start + 2000])
+
+
+async def answer_info_callback(query):
+    sender = query.get('from') or {}
+    message = query.get('message') or {}
+    chat = message.get('chat') or {}
+    tg_id = sender.get('id')
+    action = query.get('data')
+    valid = (type(tg_id) is int and tg_id > 0 and not sender.get('is_bot')
+             and chat.get('type') == 'private' and chat.get('id') == tg_id
+             and message.get('date') != 0 and action in ('shop:support', 'shop:terms'))
+    if query.get('id') and c.BOT_TOKEN:
+        try:
+            async with httpx.AsyncClient(timeout=8) as client:
+                response = await client.post(
+                    'https://api.telegram.org/bot' + c.BOT_TOKEN + '/answerCallbackQuery',
+                    json={'callback_query_id': query['id'],
+                          **({} if valid else {'text': 'Откройте меню командой /start.'})})
+                response.raise_for_status()
+                if not response.json().get('ok'):
+                    raise RuntimeError('Telegram callback acknowledgement failed')
+        except Exception as exc:
+            # Просроченное подтверждение кнопки не блокирует следующие обновления.
+            log.warning('Callback acknowledgement error=%s', type(exc).__name__)
+    if valid:
+        await send_shop_info(tg_id, action.split(':')[1])
+
+
 async def bot_loop():
     saved = one("SELECT value FROM meta WHERE key='bot_offset'")
     offset = int(saved['value']) if saved else 0
@@ -281,7 +325,7 @@ async def bot_loop():
         try:
             async with httpx.AsyncClient(timeout=40) as client:
                 r = await client.post('https://api.telegram.org/bot' + c.BOT_TOKEN + '/getUpdates',
-                                      json={'offset': offset, 'timeout': 25, 'allowed_updates': ['message', 'pre_checkout_query']})
+                                      json={'offset': offset, 'timeout': 25, 'allowed_updates': ['message', 'pre_checkout_query', 'callback_query']})
                 r.raise_for_status()
                 data = r.json()
                 if not data.get('ok'):
@@ -291,6 +335,8 @@ async def bot_loop():
                     if 'pre_checkout_query' in update:
                         await answer_checkout(update['pre_checkout_query'])
                 for update in data['result']:
+                    if 'callback_query' in update:
+                        await answer_info_callback(update['callback_query'])
                     msg = update.get('message', {})
                     if msg.get('chat', {}).get('type') == 'private' and not msg.get('from', {}).get('is_bot'):
                         tg_id = msg['from']['id']
@@ -305,15 +351,12 @@ async def bot_loop():
                             continue
                         text = msg.get('text', '').split('@')[0].split(' ')[0]
                         if text in ('/start', '/buy', '/account'):
-                            url = ticket(user['id'])
-                            buttons = [[{'text': 'Купить / продлить VPN', 'web_app': {'url': c.PUBLIC_URL}}],
-                                       [{'text': 'Открыть кабинет в браузере', 'url': url}]]
                             await send(tg_id, 'Pushok VPN 🐾\nВыберите тариф, оплатите и получите подключение.\nСсылка входа в браузере одноразовая и действует 5 минут.',
-                                       reply_markup={'inline_keyboard': buttons})
+                                       reply_markup=bot_menu(user['id']))
                         elif text in ('/support', '/paysupport'):
-                            await send(tg_id, shop_settings.public()['support'])
+                            await send_shop_info(tg_id, 'support')
                         elif text == '/terms':
-                            await send(tg_id, shop_settings.public()['terms'] or 'Условия продажи ещё не заполнены владельцем магазина.')
+                            await send_shop_info(tg_id, 'terms')
                         else:
                             await send(tg_id, 'Команды: /buy — купить VPN, /account — личный кабинет, /support — поддержка')
                     offset = update['update_id'] + 1
