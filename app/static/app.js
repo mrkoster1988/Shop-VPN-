@@ -567,6 +567,8 @@ $('logout').onclick = async () => {
     const tg=window.Telegram?.WebApp;
     if(tg?.initData) { tg.ready(); tg.expand(); await api('/api/auth/telegram',{init_data:tg.initData}); }
     await refreshMe();
+    // Переход из уведомления не даёт прав: вход уже проверен выше.
+    if(new URLSearchParams(location.search).get('view')==='account')show(me?'account-dialog':'auth-dialog');
     // Ссылка передаёт только код: процент и право на скидку проверяет сервер после явного применения.
     const incomingPromos=new URLSearchParams(location.search).getAll('promo');
     const incomingPromo=incomingPromos.length===1?incomingPromos[0].trim().toUpperCase():'';

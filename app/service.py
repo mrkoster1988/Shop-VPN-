@@ -5,6 +5,7 @@ import secrets
 import time
 import uuid
 from decimal import Decimal, InvalidOperation
+from urllib.parse import parse_qsl, urlencode, urlsplit
 import httpx
 from . import config as c, providers, servers, referrals, shop_settings
 from .db import db, one, all_rows, execute
@@ -223,6 +224,14 @@ async def process_devices():
                 log.warning('Device retry id=%s error=%s',device['id'],type(exc).__name__)
 
 
+def notification_button(label):
+    # Только навигация: URL не содержит учётных данных или одноразового билета.
+    parts = urlsplit(c.PUBLIC_URL)
+    query = [(key, value) for key, value in parse_qsl(parts.query) if key != 'view']
+    url = parts._replace(query=urlencode(query + [('view', 'account')])).geturl()
+    return {'inline_keyboard': [[{'text': label, 'web_app': {'url': url}}]]}
+
+
 async def tick():
     now = int(time.time())
     for order in all_rows("SELECT * FROM orders WHERE status='pending' AND method='yookassa' AND payment_id IS NOT NULL AND next_attempt<=? ORDER BY next_attempt,created LIMIT 50", (now,)):
@@ -248,15 +257,21 @@ async def tick():
             except Exception as exc:
                 log.warning('Expiry retry subscription=%s error=%s', sub['id'], type(exc).__name__)
     await process_devices()
-    for order in all_rows("SELECT o.*,u.telegram_id FROM orders o JOIN users u ON u.id=o.user_id WHERE o.status='active' AND o.notified=0"):
+    for order in all_rows("SELECT o.*,u.telegram_id FROM orders o JOIN users u ON u.id=o.user_id WHERE o.status='active' AND o.notified=0 AND u.telegram_id IS NOT NULL"):
+        if not c.BOT_TOKEN:
+            continue
         try:
-            await send(order['telegram_id'], 'Пробный VPN готов! Настройки находятся в личном кабинете.' if order['kind']=='trial' else 'Бонусные дни добавлены к подписке.' if order['kind']=='referral' else 'Оплата подтверждена. VPN готов! Подключение находится в личном кабинете.')
+            await send(order['telegram_id'], 'Пробный VPN готов! Настройки находятся в личном кабинете.' if order['kind']=='trial' else 'Бонусные дни добавлены к подписке.' if order['kind']=='referral' else 'Оплата подтверждена. VPN готов! Подключение находится в личном кабинете.',
+                       reply_markup=notification_button('Открыть кабинет'))
             execute('UPDATE orders SET notified=1 WHERE id=?', (order['id'],))
         except Exception:
             pass
-    for sub in all_rows("SELECT s.*,u.telegram_id FROM subscriptions s JOIN users u ON u.id=s.user_id WHERE s.state='active' AND s.expires>? AND s.expires<? AND s.reminder=0", (now, now + 86400)):
+    for sub in all_rows("SELECT s.*,u.telegram_id FROM subscriptions s JOIN users u ON u.id=s.user_id WHERE s.state='active' AND s.expires>? AND s.expires<? AND s.reminder=0 AND u.telegram_id IS NOT NULL", (now, now + 86400)):
+        if not c.BOT_TOKEN:
+            continue
         try:
-            await send(sub['telegram_id'], 'Подписка Pushok VPN закончится менее чем через сутки. Продлите её в магазине.')
+            await send(sub['telegram_id'], 'Подписка Pushok VPN закончится менее чем через сутки. Продлите её в магазине.',
+                       reply_markup=notification_button('Продлить VPN'))
             execute('UPDATE subscriptions SET reminder=1 WHERE id=?', (sub['id'],))
         except Exception:
             pass
