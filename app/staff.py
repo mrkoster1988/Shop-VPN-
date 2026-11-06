@@ -6,7 +6,7 @@ from .db import db
 from .security import digest, password_hash, password_valid
 ROLES=("owner","panel_operator","mtproxy_manager","finance","support")
 ROLE_LABELS={"owner":"Владелец","panel_operator":"Оператор панелей","mtproxy_manager":"Менеджер MTProxy","finance":"Финансовый сотрудник","support":"Поддержка"}
-EMAIL_RE=re.compile(r"^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$")
+EMAIL_RE=re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 def clean_email(v):
     v=v.strip().lower()
     if not EMAIL_RE.fullmatch(v): raise HTTPException(422,"Укажите корректный email")
