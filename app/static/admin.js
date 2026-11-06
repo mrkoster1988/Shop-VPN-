@@ -103,6 +103,24 @@ $('support-admin-close').onclick=async()=>{
  catch(error){$('support-admin-error').textContent=error.message}
 };
 
+// Счётчики событий относятся к времени записи, а не к когорте оформленных заказов.
+function commerceEventsMarkup(result){
+ const events=result.events;
+ if(!events||events.source!=='first_observed_transition'||
+    !Number.isSafeInteger(events.recording_started_at)||events.recording_started_at<0||
+    !Number.isSafeInteger(events.paid)||events.paid<0||
+    !Number.isSafeInteger(events.issued)||events.issued<0){
+  return '<h3>События за период</h3><p>История событий недоступна. Обновите отчёт позже.</p>';
+ }
+ const since=events.recording_started_at;
+ const coverage=result.period.end<=since?'Выбранный период целиком предшествует началу истории. Нулевые счётчики не означают отсутствие прежних оплат и выдач.':
+  result.period.start<since?'История покрывает только часть выбранного периода. События до начала записи неизвестны.':
+  'Выбранный период находится в пределах записываемой истории.';
+ return '<h3>События за период</h3><div class="stats"><div>Подтверждения оплаты<strong>'+esc(events.paid)+
+  '</strong></div><div>Выдачи доступа<strong>'+esc(events.issued)+
+  '</strong></div></div><p>История записывается с '+esc(bookingTime(since))+'. '+esc(coverage)+
+  '</p><p>Счётчики отражают первые события коммерческих заказов по времени записи магазином. Они могут относиться к разным заказам, поэтому их отношение не является конверсией. Старые события не восстанавливаются по статусам. Время записи может отличаться от времени банковского платежа.</p>';
+}
 async function refreshCommerceAnalytics(){
  const section=$('commerce-analytics');
  if(role!=='owner'&&role!=='finance'){section.hidden=true;return}
@@ -130,7 +148,7 @@ async function refreshCommerceAnalytics(){
   const currencies=result.orders.confirmed_amount_by_currency;
   const currencyText=Object.entries(currencies).map(([key,value])=>esc(key==='RUB'?value+' ₽':key==='XTR'?value+' ★':value+' '+key)).join(' · ')||'нет';
   const statuses=Object.entries(result.orders.by_status).map(([key,value])=>esc(key)+': '+value).join(' · ')||'нет';
-  $('commerce-analytics-details').innerHTML='<p>Пробные заявки: '+result.trials.claimed+' · выдано: '+result.trials.issued+'. Заказы по статусам: '+statuses+'.</p><p>Сумма заказов с подтверждённой оплатой по валютам: '+currencyText+'. Это не банковская сверка и не прибыль.</p><p>Период: '+esc(bookingTime(result.period.start))+' — '+esc(bookingTime(result.period.end))+' (конец не включается). Статусы отражают момент отчёта.</p>';
+  $('commerce-analytics-details').innerHTML='<p>Пробные заявки: '+result.trials.claimed+' · выдано: '+result.trials.issued+'. Заказы по статусам: '+statuses+'.</p><p>Сумма заказов с подтверждённой оплатой по валютам: '+currencyText+'. Это не банковская сверка и не прибыль.</p><p>Период: '+esc(bookingTime(result.period.start))+' — '+esc(bookingTime(result.period.end))+' (конец не включается). Статусы отражают момент отчёта.</p>'+commerceEventsMarkup(result);
  }catch(error){
   if(epoch!==authEpoch||request!==commerceAnalyticsRequest)return;
   $('commerce-analytics-cards').replaceChildren();$('commerce-analytics-details').replaceChildren();$('commerce-analytics-error').textContent=error.message;

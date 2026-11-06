@@ -501,3 +501,29 @@ test('ответ сохранения не стирает новые измен�
   p.element('ads-expense-note').value='Новая ещё не сохранённая запись';p.replyAt(0,{id:'e1'});await new Promise(setImmediate);
   p.replyAt(1,financeFixture());await pending;assert.equal(p.element('ads-expense-note').value,'Новая ещё не сохранённая запись');
 });
+
+function commerceFixture(events={source:'first_observed_transition',recording_started_at:100,paid:2,issued:1}){
+ return {accounts_registered:0,orders:{created:0,paid:0,issued:0,renewals:0,payment_rate_percent:null,issuance_rate_percent:null,confirmed_amount_by_currency:{},by_status:{}},trials:{claimed:0,issued:0,converted_to_paid:0,conversion_rate_percent:null},period:{start:50,end:200},events};
+}
+test('аналитика показывает события отдельно и предупреждает о неполной истории',async()=>{
+ const p=adminPage();const pending=p.run("role='finance';refreshCommerceAnalytics()");
+ p.reply(commerceFixture());await pending;
+ const html=p.element('commerce-analytics-details').innerHTML;
+ assert.match(html,/Подтверждения оплаты<strong>2/);assert.match(html,/Выдачи доступа<strong>1/);
+ assert.match(html,/только часть/);assert.match(html,/не является конверсией/);
+ assert.match(p.element('commerce-analytics-cards').innerHTML,/Коммерческие заказы<strong>0/);
+});
+test('период до начала истории и отсутствие данных не выдаются за полную историю',()=>{
+ const p=adminPage();
+ assert.match(p.run("commerceEventsMarkup({period:{start:0,end:100},events:{source:'first_observed_transition',recording_started_at:100,paid:0,issued:0}})"),/целиком предшествует/);
+ assert.match(p.run("commerceEventsMarkup({period:{start:100,end:200},events:{source:'first_observed_transition',recording_started_at:100,paid:0,issued:0}})"),/в пределах/);
+ assert.match(p.run("commerceEventsMarkup({period:{start:0,end:200}})"),/недоступна/);
+ assert.match(p.run("commerceEventsMarkup({period:{start:0,end:200},events:{source:'first_observed_transition',recording_started_at:100,paid:'<img>',issued:0}})"),/недоступна/);
+});
+test('устаревший ответ аналитики и ошибка не оставляют прежние события',async()=>{
+ const p=adminPage();const first=p.run("role='owner';refreshCommerceAnalytics()");const second=p.run("refreshCommerceAnalytics()");
+ const newer=commerceFixture();newer.events.paid=8;p.replyAt(1,newer);await second;
+ p.replyAt(0,commerceFixture());await first;assert.match(p.element('commerce-analytics-details').innerHTML,/оплаты<strong>8/);
+ const failed=p.run("refreshCommerceAnalytics()");p.replyAt(2,{detail:'Нет связи'},503);await failed;
+ assert.equal(p.element('commerce-analytics-details').innerHTML,'');
+});
