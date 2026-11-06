@@ -19,7 +19,7 @@ import time
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 
-VERSION = 'v0.050'
+VERSION = 'v0.051'
 
 
 def run(args, **kwargs):

@@ -653,3 +653,13 @@ test('рекламодатель видит период своей брони �
   await p.element('ads-open').onclick();const html=p.element('ads-list').innerHTML;
   assert.match(html,/Забронировано владельцем/);assert.match(html,/Размещение не запущено/);assert.match(html,/&lt;Площадка&gt;/);assert.ok(!html.includes('data-ads-booking'));
 });
+
+test('ссылка уведомления открывает кабинет только после определения аккаунта',async()=>{
+ const signed=await customerPage({search:'?view=account'});
+ assert.equal(signed.element('account-dialog').open,true);
+ const anonymous=await customerPage({search:'?view=account',anonymous:true});
+ assert.equal(anonymous.element('account-dialog').open,false);
+ assert.equal(anonymous.element('auth-dialog').open,true);
+ const unknown=await customerPage({search:'?view=untrusted'});
+ assert.equal(unknown.element('account-dialog').open,false);
+});
