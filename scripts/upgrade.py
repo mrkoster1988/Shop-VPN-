@@ -20,8 +20,8 @@ from urllib.parse import urlsplit
 
 spec=importlib.util.spec_from_file_location('shop_installer',Path(__file__).with_name('install.py'))
 i=importlib.util.module_from_spec(spec);spec.loader.exec_module(i)
-VERSION='v0.046'
-SUPPORTED={'v0.021','v0.022','v0.023','v0.024','v0.025','v0.026','v0.027','v0.028','v0.029','v0.030','v0.031','v0.032','v0.033','v0.034','v0.035','v0.036','v0.037','v0.038','v0.039','v0.040','v0.041','v0.042','v0.043','v0.044','v0.045'}
+VERSION='v0.047'
+SUPPORTED={'v0.021','v0.022','v0.023','v0.024','v0.025','v0.026','v0.027','v0.028','v0.029','v0.030','v0.031','v0.032','v0.033','v0.034','v0.035','v0.036','v0.037','v0.038','v0.039','v0.040','v0.041','v0.042','v0.043','v0.044','v0.045','v0.046'}
 IGNORE=shutil.ignore_patterns('.git','.env','.env.*','data','wg-data','.venv','__pycache__','.pytest_cache','backups','upgrades','*.pvb','*.db','*.db-wal','*.db-shm','*.zip')
 CHECK_KEY="""import os,sys
 from scripts.backup import environment

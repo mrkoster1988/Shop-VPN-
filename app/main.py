@@ -30,7 +30,7 @@ from . import shop_settings
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, mail, partner
+from . import staff, mail, partner, commerce_analytics
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -959,6 +959,13 @@ async def update_plan(plan_id: str, data: PlanUpdate):
 async def diagnostic_report():
     try:return diagnostics.report(dict(service.worker_health))
     except sqlite3.Error:raise HTTPException(503,'Не удалось прочитать локальное состояние магазина') from None
+
+@app.get('/api/admin/commerce-analytics', dependencies=[Depends(admin)])
+async def commerce_analytics_report(
+        start: int | None = Query(default=None, ge=0, le=commerce_analytics.MAX_TIME),
+        end: int | None = Query(default=None, ge=1, le=commerce_analytics.MAX_TIME)):
+    return commerce_analytics.report(start, end)
+
 
 @app.get('/api/admin/overview', dependencies=[Depends(admin)])
 async def overview():
