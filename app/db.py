@@ -149,6 +149,10 @@ def init_db():
           coupon_id TEXT NOT NULL REFERENCES coupons(id), user_id INTEGER NOT NULL REFERENCES users(id),
           order_id TEXT NOT NULL UNIQUE REFERENCES orders(id), created INTEGER NOT NULL,
           PRIMARY KEY(coupon_id,user_id));
+        CREATE TABLE IF NOT EXISTS partner_events (
+          event_id TEXT PRIMARY KEY, telegram_id INTEGER NOT NULL, promo_code TEXT NOT NULL,
+          payload_hash TEXT NOT NULL, received_at INTEGER NOT NULL, expires_at INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS partner_events_lookup ON partner_events(telegram_id,promo_code,expires_at);
         CREATE TABLE IF NOT EXISTS coupon_changes (
           id INTEGER PRIMARY KEY, coupon_id TEXT NOT NULL REFERENCES coupons(id), created INTEGER NOT NULL,
           before_data TEXT NOT NULL, after_data TEXT NOT NULL);

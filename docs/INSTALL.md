@@ -5,16 +5,16 @@
 Python 3 уже установлен. Скрипт проверяет поддерживаемую ОС до установки магазина.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.038/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.045/install.sh | bash
 ```
 
-Команда устанавливает фиксированную версию v0.038. Скрипт скачивает архив этого
+Команда устанавливает фиксированную версию v0.045. Скрипт скачивает архив этого
 же тега по HTTPS, проверяет пути/типы файлов и размер до распаковки. Вопросы читает
 из терминала, поэтому запуск через pipe не мешает диалогу. При обычном пользователе
 запрашивается sudo. Для просмотра действий без установки:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.038/install.sh | bash -s -- --plan
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.045/install.sh | bash -s -- --plan
 ```
 
 ## Диалог и режимы
@@ -101,7 +101,7 @@ docker compose --project-name PROJECT --env-file .env -f compose.install.json lo
 бот остаётся ненастроенным. Для nginx также нужен --nginx-config:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.038/install.sh | bash -s -- --yes --url https://example.com/shop --mode caddy --support '@support'
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.045/install.sh | bash -s -- --yes --url https://example.com/shop --mode caddy --support '@support'
 ```
 
 При следующем релизе VERSION в install.sh и scripts/install.py должен совпадать с
