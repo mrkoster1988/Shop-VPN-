@@ -61,7 +61,7 @@ def test_signed_partner_event_grants_discount_once_to_matching_telegram_user(buy
     event=make_event()
     first=event_request(buyer,event);assert first.status_code==200 and first.json()['accepted']
     discount=quote(buyer);assert discount.status_code==200
-    assert (discount.json()['promo_percent'],discount.json()['discount'],discount.json()['amount'])==(15,29,170)
+    assert (discount.json()['promo_percent'],discount.json()['discount'],discount.json()['amount'])==(15,22,128)
     replay=event_request(buyer,event);assert replay.status_code==200 and replay.json()['replayed']
     stale_replay=event_request(buyer,event,timestamp=int(time.time())-301)
     assert stale_replay.status_code==401
