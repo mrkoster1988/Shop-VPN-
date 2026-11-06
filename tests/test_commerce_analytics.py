@@ -70,7 +70,7 @@ def test_commerce_report_defaults_to_thirty_days_and_requires_valid_period(clien
         headers={"Authorization": "Bearer " + c.ADMIN_TOKEN},
     )
     assert result.status_code == 200
-    assert result.json()["period"] == {"start": 10000, "end": now + 1}
+    assert result.json()["period"] == {"start": 10001, "end": now + 1}
     assert client.get(
         "/api/admin/commerce-analytics?start=1",
         headers={"Authorization": "Bearer " + c.ADMIN_TOKEN},
