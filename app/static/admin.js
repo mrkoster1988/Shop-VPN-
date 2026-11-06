@@ -8,7 +8,7 @@ let adsBookingIntents=new Map(),adsBookingRequest=0,adsBookingPage=1;
 let adsStopRequest=0,adsStopPage=1;
 let adsSitesCache=[],adsPrivateSites=[],adsSitesRequest=0,adsSiteEditor=null,adsSiteMutation=0,adsPlacementIntents=new Map();
 let adsPolicy=null,adsPage=1,adsRequest=0,adsPaymentIntents=new Map();
-let token = '', role = '', authEpoch = 0, usersPage = 1, usersQuery = '', usersRequest = 0, shopSettingsVersion = 0;
+let token = '', role = '', authEpoch = 0, usersPage = 1, usersQuery = '', usersRequest = 0, shopSettingsVersion = 0, commerceAnalyticsRequest = 0;
 let selectedUser = null, profilePage = 1, profileRequest = 0;
 let serverCache = [], editingServer = null;
 let ordersPage = 1, ordersRequest = 0, ordersFilters = {q:'', status:'', method:'', protocol:''};
@@ -103,14 +103,49 @@ $('support-admin-close').onclick=async()=>{
  catch(error){$('support-admin-error').textContent=error.message}
 };
 
+async function refreshCommerceAnalytics(){
+ const section=$('commerce-analytics');
+ if(role!=='owner'&&role!=='finance'){section.hidden=true;return}
+ section.hidden=false;
+ const epoch=authEpoch,request=++commerceAnalyticsRequest;
+ const start=$('commerce-analytics-start').value,end=$('commerce-analytics-end').value;
+ $('commerce-analytics-error').textContent='';
+ try{
+  if(Boolean(start)!==Boolean(end))throw new Error('Укажите обе границы периода');
+  const query=new URLSearchParams();
+  if(start){const a=expenseDate(start),b=expenseDate(end);if(a===null||b===null||a>=b)throw new Error('Проверьте границы периода');query.set('start',String(a));query.set('end',String(b));}
+  const suffix=query.toString()?('?'+query.toString()):'';
+  const result=await api('commerce-analytics'+suffix);
+  if(epoch!==authEpoch||request!==commerceAnalyticsRequest)return;
+  const percent=value=>value===null?'—':String(value)+'%';
+  const cards=[
+   ['Регистрации',result.accounts_registered],
+   ['Коммерческие заказы',result.orders.created],
+   ['Оплата подтверждена',result.orders.paid+' · '+percent(result.orders.payment_rate_percent)],
+   ['Доступ выдан',result.orders.issued+' · '+percent(result.orders.issuance_rate_percent)],
+   ['Повторные покупки',result.orders.renewals],
+   ['Пробный → платный',result.trials.converted_to_paid+' из '+result.trials.issued+' · '+percent(result.trials.conversion_rate_percent)]
+  ];
+  $('commerce-analytics-cards').innerHTML=cards.map(([label,value])=>'<div>'+esc(label)+'<strong>'+esc(value)+'</strong></div>').join('');
+  const currencies=result.orders.confirmed_amount_by_currency;
+  const currencyText=Object.entries(currencies).map(([key,value])=>esc(key==='RUB'?value+' ₽':key==='XTR'?value+' ★':value+' '+key)).join(' · ')||'нет';
+  const statuses=Object.entries(result.orders.by_status).map(([key,value])=>esc(key)+': '+value).join(' · ')||'нет';
+  $('commerce-analytics-details').innerHTML='<p>Пробные заявки: '+result.trials.claimed+' · выдано: '+result.trials.issued+'. Заказы по статусам: '+statuses+'.</p><p>Сумма заказов с подтверждённой оплатой по валютам: '+currencyText+'. Это не банковская сверка и не прибыль.</p><p>Период: '+esc(bookingTime(result.period.start))+' — '+esc(bookingTime(result.period.end))+' (конец не включается). Статусы отражают момент отчёта.</p>';
+ }catch(error){
+  if(epoch!==authEpoch||request!==commerceAnalyticsRequest)return;
+  $('commerce-analytics-cards').replaceChildren();$('commerce-analytics-details').replaceChildren();$('commerce-analytics-error').textContent=error.message;
+ }
+}
+$('commerce-analytics-period').onsubmit=event=>{event.preventDefault();return refreshCommerceAnalytics();};
+
 async function refresh({plans = role==='owner'} = {}) {
   const data = role==='mtproxy_manager' ? {users:'—',active:'—',revenue:'—',stars:'—'} : await api('overview');
   const catalog = plans ? await api('plans') : null;
   $('stats').innerHTML = `<div>Пользователи<strong>${data.users}</strong></div><div>Подписки<strong>${data.active}</strong></div><div>Подтверждено<strong>${data.revenue} ₽ / ${data.stars} ★</strong></div>`;
   if (catalog) $('plan-editors').innerHTML = catalog.plans.map(planForm).join('');
-  if(role==='owner') await Promise.all([refreshAdsAdmin(),refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers(),refreshTrialPolicy(),refreshCoupons(),refreshReferralPolicy()]);
+  if(role==='owner') await Promise.all([refreshAdsAdmin(),refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers(),refreshTrialPolicy(),refreshCoupons(),refreshReferralPolicy(),refreshCommerceAnalytics()]);
   else if(role==='mtproxy_manager') await refreshAdsAdmin();
-  else if(role==='finance') await Promise.all([refreshAdsAdmin(),refreshOrders()]);
+  else if(role==='finance') await Promise.all([refreshAdsAdmin(),refreshOrders(),refreshCommerceAnalytics()]);
   else if(role==='panel_operator') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers()]);
   else if(role==='support') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshSupportAdmin()]);
   if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings()]);}
@@ -133,7 +168,9 @@ $('admin-login').onsubmit = async event => {
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{}); role='';
-  adsFinanceRequest++;adsFinancePage=1;adsExpenseIntents.clear();
+  adsFinanceRequest++;adsFinancePage=1;adsExpenseIntents.clear();commerceAnalyticsRequest++;
+  for(const id of ['commerce-analytics-cards','commerce-analytics-details','commerce-analytics-error'])$(id).replaceChildren();
+  for(const id of ['commerce-analytics-start','commerce-analytics-end'])$(id).value='';$('commerce-analytics').hidden=true;
   for(const id of ['ads-finance-summary','ads-finance-obligations','ads-finance-error','ads-expense-list','ads-expense-status','ads-finance-page'])$(id).replaceChildren();
   for(const id of ['ads-finance-start','ads-finance-end','ads-expense-amount','ads-expense-date','ads-expense-reference','ads-expense-note'])$(id).value='';
   $('ads-expense-category').value='server';$('ads-expense-save').disabled=false;$('ads-finance-prev').disabled=true;$('ads-finance-next').disabled=true;

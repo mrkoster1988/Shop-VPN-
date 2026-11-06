@@ -32,7 +32,7 @@ def authorize(request: Request):
         if r in ("panel_operator","support"):
             ok=path in ("/api/admin/overview","/api/admin/diagnostics") or path.startswith(("/api/admin/orders","/api/admin/users")) or (r=="panel_operator" and path.startswith("/api/admin/servers")) or (r=="support" and path.startswith("/api/admin/support/tickets"))
         elif r=="finance":
-            ok=path in ("/api/admin/overview",) or path.startswith("/api/admin/orders") or path.startswith("/api/admin/ads/finance") or path.startswith("/api/admin/ads/expenses") or path in ("/api/admin/ads/policy","/api/admin/ads/requests") or bool(re.fullmatch(r"/api/admin/ads/requests/[^/]+/payments",path))
+            ok=path in ("/api/admin/overview","/api/admin/commerce-analytics") or path.startswith("/api/admin/orders") or path.startswith("/api/admin/ads/finance") or path.startswith("/api/admin/ads/expenses") or path in ("/api/admin/ads/policy","/api/admin/ads/requests") or bool(re.fullmatch(r"/api/admin/ads/requests/[^/]+/payments",path))
         elif r=="mtproxy_manager":
             ok=path.startswith("/api/admin/ads/") and not any(x in path for x in ("/finance","/expenses","/payments"))
         else: ok=False
