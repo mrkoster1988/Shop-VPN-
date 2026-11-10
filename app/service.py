@@ -55,15 +55,16 @@ async def send(tg_id, text, **kwargs):
 
 
 async def reconcile_payment(order):
-    if not order['payment_id'] or order['status'] != 'pending' or order['method'] != 'yookassa':
+    if not order['payment_id'] or order['status'] != 'pending' or order['method'] not in ('yookassa', 'sbp'):
         return
     payment = await providers.get_payment(order['payment_id'])
     try:
         valid = (payment['id'] == order['payment_id']
                  and payment['metadata']['order_id'] == order['id']
                  and payment['amount']['currency'] == 'RUB'
-                 and Decimal(payment['amount']['value']) == Decimal(order['amount']))
-    except (KeyError, InvalidOperation, TypeError):
+                 and Decimal(payment['amount']['value']) == Decimal(order['amount'])
+                 and (order['method'] != 'sbp' or payment['payment_method']['type'] == 'sbp'))
+    except (KeyError, InvalidOperation, TypeError, ValueError):
         valid = False
     if not valid:
         raise RuntimeError('Payment verification mismatch')
@@ -234,7 +235,7 @@ def notification_button(label):
 
 async def tick():
     now = int(time.time())
-    for order in all_rows("SELECT * FROM orders WHERE status='pending' AND method='yookassa' AND payment_id IS NOT NULL AND next_attempt<=? ORDER BY next_attempt,created LIMIT 50", (now,)):
+    for order in all_rows("SELECT * FROM orders WHERE status='pending' AND method IN ('yookassa','sbp') AND payment_id IS NOT NULL AND next_attempt<=? ORDER BY next_attempt,created LIMIT 50", (now,)):
         execute('UPDATE orders SET next_attempt=? WHERE id=?', (now + 60, order['id']))
         try:
             await reconcile_payment(order)
