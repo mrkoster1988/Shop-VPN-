@@ -126,6 +126,8 @@ def test_webhook_ignores_unknown_ids_and_rejects_bad_input(client, monkeypatch):
         headers={'Content-Type':'application/json'}).status_code==400
     assert client.post('/api/payments/yookassa/notify',json={'type':'notification',
         'event':'payment.succeeded','object':{'id':'https://evil.test/'}}).status_code==400
+    assert client.post('/api/payments/yookassa/notify',json={'type':'notification',
+        'event':['payment.succeeded'],'object':{'id':'payment-id'}}).status_code==400
     assert client.post('/api/payments/yookassa/notify',content='x'*4097,
         headers={'Content-Type':'application/json'}).status_code==413
     assert client.post('/api/payments/yookassa/notify',content='{}',
