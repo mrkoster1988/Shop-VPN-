@@ -26,7 +26,7 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 from . import ads_bookings as bookings, ads_finance as finance
 from . import support as support_cases
-from . import shop_settings, platforms, bot_menu as menu_editor
+from . import shop_settings, platforms, bot_menu as menu_editor, payment_events
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
@@ -45,9 +45,9 @@ async def lifespan(app):
     mail.validate_configuration()
     if len(c.ADMIN_TOKEN) < 32:
         raise RuntimeError('ADMIN_TOKEN must contain at least 32 characters')
-    if c.PAYMENT_MODE not in ('manual', 'yookassa'):
-        raise RuntimeError('PAYMENT_MODE must be manual or yookassa')
-    if c.PAYMENT_MODE == 'yookassa' and not all(os.getenv(k) for k in ('YOOKASSA_SHOP_ID', 'YOOKASSA_SECRET')):
+    if c.PAYMENT_MODE not in ('manual', 'yookassa', 'sbp'):
+        raise RuntimeError('PAYMENT_MODE must be manual, yookassa or sbp')
+    if c.PAYMENT_MODE in ('yookassa', 'sbp') and not all(os.getenv(k) for k in ('YOOKASSA_SHOP_ID', 'YOOKASSA_SECRET')):
         raise RuntimeError('Configure YooKassa credentials')
     try:
         servers.import_environment()
@@ -587,7 +587,7 @@ async def purchase(data: Purchase, user=Depends(current_user)):
     if method == 'stars' and not data.accept_terms:
         raise HTTPException(422, 'Подтвердите согласие с условиями продажи')
     email = email_address(data.receipt_email) if data.receipt_email else user['email']
-    if method == 'yookassa' and os.getenv('YOOKASSA_RECEIPTS') == 'true' and not email:
+    if method in ('yookassa', 'sbp') and os.getenv('YOOKASSA_RECEIPTS') == 'true' and not email:
         raise HTTPException(422, 'Укажите email для чека')
     async with service.lock:
         order = promos.make_order(data,user,method,email)
@@ -598,7 +598,7 @@ async def purchase(data: Purchase, user=Depends(current_user)):
             except Exception as exc:
                 logging.warning('Stars invoice order=%s error=%s', order['id'], type(exc).__name__)
                 raise HTTPException(502, 'Не удалось создать счёт Telegram. Повторите запрос.')
-        if method == 'yookassa' and order['status']=='pending' and not order['payment_id']:
+        if method in ('yookassa', 'sbp') and order['status']=='pending' and not order['payment_id']:
             try:
                 result = await providers.payment(order, order['receipt_email'])
                 execute('UPDATE orders SET payment_id=?,payment_url=? WHERE id=?',
@@ -617,6 +617,10 @@ async def order_status(order_id: str, user=Depends(current_user)):
         'progress': order_progress.public(order),
         'instructions': os.getenv('MANUAL_PAYMENT_TEXT', 'Свяжитесь с поддержкой и сообщите номер заказа.')
         if order['method'] == 'manual' and order['status'] in ('pending','checkout') else ''}
+
+@app.post('/api/payments/yookassa/notify')
+async def yookassa_notify(request: Request):
+    return await payment_events.receive(request)
 
 @app.post('/api/partner/events')
 async def partner_event(request: Request):
@@ -1038,7 +1042,7 @@ async def admin_user(user_id: int = APIPath(ge=1, le=9223372036854775807),
 @app.get('/api/admin/orders', dependencies=[Depends(admin)])
 async def admin_orders(q: str = Query(default='', max_length=100),
                        status: Literal['', 'pending', 'checkout', 'paid', 'active', 'canceled'] = '',
-                       method: Literal['', 'manual', 'yookassa', 'stars','trial','referral'] = '',
+                       method: Literal['', 'manual', 'yookassa', 'sbp', 'stars','trial','referral'] = '',
                        protocol: Literal['', 'xui', 'wg'] = '',
                        page: int = Query(default=1, ge=1, le=1000000),
                        page_size: int = Query(default=25, ge=1, le=100)):
