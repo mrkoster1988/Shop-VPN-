@@ -60,11 +60,15 @@ async def disable(sub):
 
 
 async def payment(order, email=None):
+    if order['method'] not in ('yookassa', 'sbp'):
+        raise ValueError('UnsupportedPaymentMethod')
     async with httpx.AsyncClient(timeout=25,
                                  auth=(os.environ['YOOKASSA_SHOP_ID'], os.environ['YOOKASSA_SECRET'])) as client:
         data = {'amount': {'value': f"{order['amount']}.00", 'currency': 'RUB'},
                 'capture': True, 'confirmation': {'type': 'redirect', 'return_url': c.PUBLIC_URL + '/?payment=return'},
                 'description': 'Pushok VPN / ' + order['id'], 'metadata': {'order_id': order['id']}}
+        if order['method'] == 'sbp':
+            data['payment_method_data'] = {'type': 'sbp'}
         # Receipt parameters depend on merchant taxation; configured explicitly.
         if os.getenv('YOOKASSA_RECEIPTS') == 'true':
             if not email:
