@@ -5,10 +5,10 @@ import sqlite3
 from contextlib import closing
 from . import config as c, shop_settings
 
-VERSION='v0.053'
+VERSION='v0.054'
 QUEUE_SPECS={
     'issuance':('orders',"status='paid'"),
-    'payment_poll':('orders',"status='pending' AND method='yookassa' AND payment_id IS NOT NULL"),
+    'payment_poll':('orders',"status='pending' AND method IN ('yookassa','sbp') AND payment_id IS NOT NULL"),
     'devices':('devices',"state IN ('pending','revoking') AND NOT EXISTS (SELECT 1 FROM device_rotations r WHERE r.device_id=devices.id AND r.state NOT IN ('completed','canceled'))"),
     'device_rotations':('device_rotations',"state NOT IN ('completed','canceled')"),
     'primary_rotations':('primary_rotations',"state NOT IN ('completed','canceled')")}
@@ -61,8 +61,8 @@ def report(worker):
         plans=conn.execute('SELECT count(*) FROM plans WHERE enabled=1').fetchone()[0]
         if plans==0:warn('no_active_plans')
         if not any(p['assignable'] for p in protocols.values()):warn('no_assignable_servers')
-    mode=c.PAYMENT_MODE if c.PAYMENT_MODE in ('manual','yookassa') else 'invalid'
-    payment_configured=mode=='manual' or (mode=='yookassa' and bool(os.getenv('YOOKASSA_SHOP_ID') and os.getenv('YOOKASSA_SECRET')))
+    mode=c.PAYMENT_MODE if c.PAYMENT_MODE in ('manual','yookassa','sbp') else 'invalid'
+    payment_configured=mode=='manual' or (mode in ('yookassa','sbp') and bool(os.getenv('YOOKASSA_SHOP_ID') and os.getenv('YOOKASSA_SECRET')))
     if not payment_configured:warn('payment_settings_incomplete')
     telegram=bool(c.BOT_TOKEN);stars_ready=bool(telegram and c.BOT_USERNAME and shop_settings.terms_configured())
     if telegram and not stars_ready:warn('telegram_sales_settings_incomplete')

@@ -157,6 +157,7 @@ async function beginCheckout(id) {
   $('promo-controls').hidden=false;renderCheckoutAmount();
   if(promoIntent){$('promo-code').value=promoIntent;$('promo-status').textContent='Промокод из ссылки. Нажмите «Применить», чтобы проверить скидку и итоговую цену.';}
   clearPayment(); $('checkout-form').hidden = false;
+  $('checkout-submit').textContent=catalog.payment_mode==='sbp'?'Создать счёт СБП →':'Оформить заказ →';
   $('terms-text').textContent=catalog.terms; $('accept-terms').checked=false; $('accept-terms').required=catalog.payment_mode==='stars';
   $('receipt-label').hidden = !catalog.receipts; $('receipt-label').querySelector('input').required = catalog.receipts;
   $('receipt-label').querySelector('input').value = me.email || '';
@@ -172,7 +173,7 @@ function paymentResult(order) {
   if (order.payment_url && order.status === 'pending') {
     const link = document.createElement('a');
     let url;try{url=new URL(order.payment_url);}catch{}
-    if (url?.protocol === 'https:') { link.href = url.href; link.textContent = 'Перейти к оплате ↗'; link.className = 'button'; link.target = '_blank'; link.rel = 'noopener noreferrer'; if(order.method==='stars' && window.Telegram?.WebApp?.initData) { link.onclick=event=>{event.preventDefault(); window.Telegram.WebApp.openInvoice(url.href,()=>refreshMe());}; } $('payment-result').append(link); }
+    if (url?.protocol === 'https:') { link.href = url.href; link.textContent = order.method==='sbp'?'Оплатить через СБП ↗':'Перейти к оплате ↗'; link.className = 'button'; link.target = '_blank'; link.rel = 'noopener noreferrer'; if(order.method==='stars' && window.Telegram?.WebApp?.initData) { link.onclick=event=>{event.preventDefault(); window.Telegram.WebApp.openInvoice(url.href,()=>refreshMe());}; } $('payment-result').append(link); }
   }
   const button = document.createElement('button'); button.className = 'text-link'; button.textContent = 'Проверить статус';
   button.disabled=paymentBusy; button.onclick=async()=>{button.disabled=true;try{await refreshPaymentOrder();}finally{button.disabled=false;}};

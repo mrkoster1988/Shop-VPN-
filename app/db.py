@@ -302,14 +302,16 @@ def init_db():
           id INTEGER PRIMARY KEY CHECK(id=1), recorded_since INTEGER NOT NULL);
         INSERT OR IGNORE INTO order_history_state(id,recorded_since)
           VALUES (1,CAST(strftime('%s','now') AS INTEGER));
+        DROP TRIGGER IF EXISTS order_paid_insert;
+        DROP TRIGGER IF EXISTS order_paid_update;
         CREATE TRIGGER IF NOT EXISTS order_paid_insert AFTER INSERT ON orders
-        WHEN NEW.status='paid' AND NEW.kind='purchase' AND NEW.method IN ('manual','yookassa','stars')
+        WHEN NEW.status='paid' AND NEW.kind='purchase' AND NEW.method IN ('manual','yookassa','sbp','stars')
         BEGIN
           INSERT OR IGNORE INTO order_milestones VALUES (NEW.id,'paid',CAST(strftime('%s','now') AS INTEGER));
         END;
         CREATE TRIGGER IF NOT EXISTS order_paid_update AFTER UPDATE OF status ON orders
         WHEN NEW.status='paid' AND OLD.status!='paid' AND NEW.kind='purchase'
-          AND NEW.method IN ('manual','yookassa','stars')
+          AND NEW.method IN ('manual','yookassa','sbp','stars')
         BEGIN
           INSERT OR IGNORE INTO order_milestones VALUES (NEW.id,'paid',CAST(strftime('%s','now') AS INTEGER));
         END;
