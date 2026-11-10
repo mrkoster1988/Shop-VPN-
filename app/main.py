@@ -26,7 +26,7 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 from . import ads_bookings as bookings, ads_finance as finance
 from . import support as support_cases
-from . import shop_settings
+from . import shop_settings, platforms
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
@@ -216,6 +216,11 @@ def email_address(raw):
 async def health():
     one('SELECT 1 AS ok')
     return {'status': 'ok'}
+
+@app.get('/api/platforms')
+async def platform_catalog():
+    """Read-only code/config inventory, not live platform verification."""
+    return platforms.public_catalog()
 
 def html_page(name):
     html = (STATIC / name).read_text().replace('__BASE_PATH__', c.BASE_PATH)
