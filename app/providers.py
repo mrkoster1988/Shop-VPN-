@@ -5,10 +5,18 @@ import httpx
 from . import config as c, servers, panel
 
 
+def _require_vpn_protocol(protocol):
+    """Reject channels and unknown drivers before any network calls."""
+    if protocol not in ('xui', 'wg'):
+        raise ValueError('UnsupportedVpnProtocol')
+    return protocol
+
+
 def available(protocol, user_id=None):
     return servers.available(protocol, user_id)
 
 async def probe_server(row):
+    _require_vpn_protocol(row['protocol'])
     profile = servers.decode(row)
     async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
         if row['protocol']=='xui':
@@ -27,6 +35,7 @@ async def xui_client(sub, enabled=True):
 
 
 async def provision(sub):
+    _require_vpn_protocol(sub['protocol'])
     if sub['protocol'] == 'xui':
         return await xui_client(sub)
     _, profile = servers.for_subscription(sub)
@@ -39,6 +48,7 @@ async def provision(sub):
 
 
 async def disable(sub):
+    _require_vpn_protocol(sub['protocol'])
     if sub['protocol'] == 'xui':
         await xui_client(sub, enabled=False)
     else:
