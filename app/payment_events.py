@@ -27,6 +27,8 @@ async def receive(request: Request):
         if not isinstance(event, dict) or event.get('type') != 'notification':
             raise ValueError()
         notification_type = event['event']
+        if not isinstance(notification_type, str):
+            raise ValueError()
         details = event['object']
         if not isinstance(details, dict):
             raise ValueError()
