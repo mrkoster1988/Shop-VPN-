@@ -7,7 +7,7 @@ import uuid
 from decimal import Decimal, InvalidOperation
 from urllib.parse import parse_qsl, urlencode, urlsplit
 import httpx
-from . import config as c, providers, servers, referrals, shop_settings
+from . import config as c, providers, servers, referrals, shop_settings, bot_menu as menu_editor
 from .db import db, one, all_rows, execute
 from .security import digest
 
@@ -290,12 +290,7 @@ async def worker():
 
 
 def bot_menu(user_id):
-    return {'inline_keyboard': [
-        [{'text': 'Купить / продлить VPN', 'web_app': {'url': c.PUBLIC_URL}}],
-        [{'text': 'Открыть кабинет в браузере', 'url': ticket(user_id)}],
-        [{'text': 'Поддержка', 'callback_data': 'shop:support'},
-         {'text': 'Условия продажи', 'callback_data': 'shop:terms'}],
-    ]}
+    return menu_editor.keyboard(user_id, ticket)
 
 
 async def send_shop_info(tg_id, section):
