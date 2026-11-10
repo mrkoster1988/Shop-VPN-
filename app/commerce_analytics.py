@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from .db import db
 
 MAX_TIME = 32503680000
-PAID_METHODS = ("manual", "yookassa", "stars")
+PAID_METHODS = ("manual", "yookassa", "sbp", "stars")
 PAID_STATUSES = ("paid", "active")
 
 
@@ -30,7 +30,7 @@ def report(start=None, end=None):
         ).fetchone()[0]
         rows = conn.execute(
             "SELECT id,user_id,protocol,kind,method,status,amount,currency,created "
-            "FROM orders WHERE created>=? AND created<? AND method IN ('manual','yookassa','stars') "
+            "FROM orders WHERE created>=? AND created<? AND method IN ('manual','yookassa','sbp','stars') "
             "ORDER BY created,id",
             (start, end),
         ).fetchall()
@@ -44,11 +44,11 @@ def report(start=None, end=None):
 
         renewals = conn.execute(
             "SELECT count(*) FROM orders o WHERE o.created>=? AND o.created<? "
-            "AND o.kind='purchase' AND o.method IN ('manual','yookassa','stars') "
+            "AND o.kind='purchase' AND o.method IN ('manual','yookassa','sbp','stars') "
             "AND o.status IN ('paid','active') AND EXISTS ("
             "SELECT 1 FROM orders previous WHERE previous.user_id=o.user_id "
             "AND previous.protocol=o.protocol AND previous.kind='purchase' "
-            "AND previous.method IN ('manual','yookassa','stars') "
+            "AND previous.method IN ('manual','yookassa','sbp','stars') "
             "AND previous.status IN ('paid','active') AND previous.created<o.created)",
             (start, end),
         ).fetchone()[0]
@@ -57,7 +57,7 @@ def report(start=None, end=None):
             "SELECT tc.user_id,tc.created,t.status,"
             "EXISTS (SELECT 1 FROM orders p WHERE p.user_id=tc.user_id "
             "AND p.protocol=tc.protocol AND p.kind='purchase' "
-            "AND p.method IN ('manual','yookassa','stars') "
+            "AND p.method IN ('manual','yookassa','sbp','stars') "
             "AND p.status IN ('paid','active') AND p.created>tc.created) AS converted "
             "FROM trial_claims tc JOIN orders t ON t.id=tc.order_id "
             "WHERE tc.created>=? AND tc.created<? ORDER BY tc.created,tc.order_id",
@@ -69,7 +69,7 @@ def report(start=None, end=None):
         milestones = dict(conn.execute(
             "SELECT m.event,count(*) FROM order_milestones m JOIN orders o ON o.id=m.order_id "
             "WHERE m.recorded_at>=? AND m.recorded_at<? AND o.kind='purchase' "
-            "AND o.method IN ('manual','yookassa','stars') GROUP BY m.event",
+            "AND o.method IN ('manual','yookassa','sbp','stars') GROUP BY m.event",
             (start, end),
         ).fetchall())
         recording_started = conn.execute(
