@@ -26,7 +26,7 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 from . import ads_bookings as bookings, ads_finance as finance
 from . import support as support_cases
-from . import shop_settings, platforms
+from . import shop_settings, platforms, bot_menu as menu_editor
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
@@ -273,6 +273,18 @@ async def shop_settings_update(data: shop_settings.SettingsUpdate, request: Requ
     if request.state.admin_actor['role']!='owner':
         raise HTTPException(403,'Изменять настройки магазина может только владелец')
     return shop_settings.update(data)
+
+@app.get('/api/admin/bot-menu',dependencies=[Depends(admin)])
+async def bot_menu_get(request: Request):
+    if request.state.admin_actor['role'] != 'owner':
+        raise HTTPException(403, 'Редактор Telegram-меню доступен только владельцу')
+    return menu_editor.get()
+
+@app.put('/api/admin/bot-menu',dependencies=[Depends(admin)])
+async def bot_menu_put(data: menu_editor.MenuUpdate, request: Request):
+    if request.state.admin_actor['role'] != 'owner':
+        raise HTTPException(403, 'Изменять Telegram-меню может только владелец')
+    return menu_editor.update(data)
 
 @app.get('/api/admin/staff',dependencies=[Depends(admin)])
 async def staff_list():
