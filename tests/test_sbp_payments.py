@@ -103,7 +103,7 @@ def test_fake_webhook_never_trusts_client_amount_or_paid_flag(client, monkeypatc
         current['payment_method']['type']=method
         current['status']=status
         res=notify(client,payment_id,paid=True,amount={'value':'199.00','currency':'RUB'})
-        assert res.status_code == 503 if status == 'pending' and method == 'sbp' else res.status_code == 503
+        assert res.status_code == 503
         assert one('SELECT status FROM orders')['status']=='pending'
     assert len(sent)==3
     current.update(external_payment(purchase['id']))
