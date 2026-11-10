@@ -56,6 +56,63 @@ $('shop-settings-form').onsubmit=async event=>{
  }catch(error){$('shop-settings-status').textContent=error.message}
  finally{button.disabled=false}
 };
+// Настройки меню бот получает из базы при отправке очередного /start.
+let botMenuVersion=0,botMenuButtons=[],botMenuRequest=0;
+function menuFields(){
+ return botMenuButtons.map(b=>({
+  id:b.id,
+  text:$('bot-menu-text-'+b.id).value,
+  enabled:$('bot-menu-enabled-'+b.id).checked,
+  row:Number($('bot-menu-row-'+b.id).value),
+  url:(b.id.startsWith('link')?$('bot-menu-url-'+b.id).value:'')
+ }));
+}
+function menuPreview(buttons){
+ const rows=new Map();
+ for(const b of buttons){
+  if(!b.enabled)continue;
+  if(!rows.has(b.row))rows.set(b.row,[]);
+  rows.get(b.row).push(b.text);
+ }
+ $('bot-menu-preview').innerHTML=[...rows].sort((a,b)=>a[0]-b[0])
+   .map(([,texts])=>'<div class="bot-menu-preview-row">'+texts.map(t=>'<span class="bot-menu-preview-button">'+esc(t)+'</span>').join('')+'</div>').join('') || '<p>Кнопки скрыты.</p>';
+}
+function renderBotMenu(){
+ const titles={buy:'Покупка / продление',account:'Браузерный кабинет',support:'Поддержка',terms:'Условия продажи',link1:'Дополнительная ссылка № 1',link2:'Дополнительная ссылка № 2'};
+ $('bot-menu-rows').innerHTML=botMenuButtons.map(b=>'<div class="bot-menu-editor-row"><h3>'+esc(titles[b.id]||b.id)+'</h3>'+
+  '<label>Название кнопки<input id="bot-menu-text-'+esc(b.id)+'" maxlength="60" value="'+esc(b.text)+'" required></label>'+
+  '<label><input id="bot-menu-enabled-'+esc(b.id)+'" type="checkbox" '+(b.enabled?'checked ':'')+(b.id==='buy'?'disabled ':'')+'> Показывать кнопку'+(b.id==='buy'?' (обязательная)':'')+'</label>'+
+  '<label>Номер строки<select id="bot-menu-row-'+esc(b.id)+'">'+[1,2,3,4,5,6].map(n=>'<option value="'+n+'" '+(n===b.row?'selected':'')+'>'+n+'</option>').join('')+'</select></label>'+
+  (b.id.startsWith('link')?'<label>Публичная HTTPS-ссылка<input type="url" id="bot-menu-url-'+esc(b.id)+'" maxlength="512" placeholder="https://t.me/..." value="'+esc(b.url||'')+'"></label>':'')+
+  '</div>').join('');
+ menuPreview(botMenuButtons);
+}
+async function refreshBotMenu(){
+ const section=$('bot-menu-panel');
+ if(role!=='owner'){section.hidden=true;return}
+ section.hidden=false;
+ const epoch=authEpoch,request=++botMenuRequest;
+ try{
+  const data=await api('bot-menu');
+  if(epoch!==authEpoch||request!==botMenuRequest)return;
+  botMenuVersion=data.version;botMenuButtons=data.buttons;renderBotMenu();
+  $('bot-menu-status').textContent='Меню загружено. Версия '+data.version+'.';
+ }catch(error){if(epoch===authEpoch&&request===botMenuRequest)$('bot-menu-status').textContent=error.message}
+}
+$('bot-menu-rows').oninput=()=>menuPreview(menuFields());
+$('bot-menu-rows').onchange=()=>menuPreview(menuFields());
+$('bot-menu-form').onsubmit=async event=>{
+ event.preventDefault();if(role!=='owner')return;
+ const button=$('bot-menu-save'),epoch=authEpoch;
+ button.disabled=true;
+ try{
+  const data=await api('bot-menu',{method:'PUT',data:{buttons:menuFields(),version:botMenuVersion}});
+  if(epoch!==authEpoch)return;
+  botMenuVersion=data.version;botMenuButtons=data.buttons;renderBotMenu();
+  $('bot-menu-status').textContent='Меню сохранено. Для проверки откройте /start в Telegram.';
+ }catch(error){if(epoch===authEpoch)$('bot-menu-status').textContent=error.message}
+ finally{if(epoch===authEpoch)button.disabled=false}
+};
 async function refreshStaff(){
  const section=$('staff-management');if(role!=='owner'){section.hidden=true;return}section.hidden=false;
  try{
@@ -166,7 +223,7 @@ async function refresh({plans = role==='owner'} = {}) {
   else if(role==='finance') await Promise.all([refreshAdsAdmin(),refreshOrders(),refreshCommerceAnalytics()]);
   else if(role==='panel_operator') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers()]);
   else if(role==='support') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshSupportAdmin()]);
-  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings()]);}
+  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu()]);}
 }
 $('admin-login').onsubmit = async event => {
   event.preventDefault(); const button=event.target.querySelector('button'); button.disabled=true; authEpoch++;
@@ -205,6 +262,8 @@ $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method
   for(const id of ['ads-price','ads-hours','ads-instructions'])$(id).value='';
   $('ads-accepting').checked=false;$('ads-policy-save').disabled=false;$('ads-filter').value='';$('ads-admin-prev').disabled=true;$('ads-admin-next').disabled=true;
   diagnosticsRequest++;$('diagnostics-report').replaceChildren();$('diagnostics-error').textContent='';$('diagnostics-json').value='';
+  botMenuRequest++;botMenuVersion=0;botMenuButtons=[];
+  $('bot-menu-rows').replaceChildren();$('bot-menu-preview').replaceChildren();$('bot-menu-status').textContent='';$('bot-menu-panel').hidden=true;
   authEpoch++; token = ''; usersRequest++; usersPage = 1; usersQuery = '';
   ordersRequest++; ordersPage = 1; ordersFilters = {q:'', status:'', method:'', protocol:''};
   serverCache = []; editingServer = null; $('server-list').replaceChildren(); $('servers-notice').textContent = '';

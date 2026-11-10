@@ -20,3 +20,14 @@ input[type=checkbox]{display:inline-block;width:auto;margin-right:8px;accent-col
 .table-scroll{overflow-x:auto} .table-scroll table{width:100%;border-collapse:collapse} .table-scroll th,.table-scroll td{padding:12px;text-align:left;border-bottom:1px solid #deded6} #diagnostics-json{width:100%;box-sizing:border-box;font-family:monospace;min-height:120px}
 
 .status.retrying{background:#f3e8bc}.status.help{background:#ecd7d0}
+
+
+/* Редактор меню: одинаковая сетка на телефоне и в десктопной админке. */
+.bot-menu-editor-row{border:1px solid var(--line);border-radius:14px;padding:14px;margin:10px 0}
+.bot-menu-editor-row h3{margin:0 0 10px;font-size:17px}
+.bot-menu-editor-row label{display:block;margin:10px 0}
+.bot-menu-editor-row input[type="url"],.bot-menu-editor-row input:not([type]),.bot-menu-editor-row select{width:100%;max-width:100%;box-sizing:border-box}
+#bot-menu-preview{max-width:440px;margin:14px auto;padding:16px;border:1px solid var(--line);border-radius:18px;background:#f3f7f7}
+.bot-menu-preview-row{display:flex;gap:8px;margin:7px 0}
+.bot-menu-preview-button{flex:1;text-align:center;padding:10px 8px;border-radius:9px;background:#d4ebee;color:#173744;font-size:14px;font-weight:600;overflow-wrap:anywhere}
+@media(max-width:520px){.bot-menu-preview-row{flex-wrap:wrap}.bot-menu-preview-button{flex-basis:40%}}

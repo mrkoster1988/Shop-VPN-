@@ -234,6 +234,9 @@ def init_db():
         CREATE TABLE IF NOT EXISTS store_settings (
           id INTEGER PRIMARY KEY CHECK(id=1), support_text TEXT NOT NULL, terms_text TEXT NOT NULL,
           version INTEGER NOT NULL DEFAULT 1, updated INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS bot_menu_settings (
+          id INTEGER PRIMARY KEY CHECK(id=1), content TEXT NOT NULL,
+          version INTEGER NOT NULL DEFAULT 1, updated INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
         CREATE INDEX IF NOT EXISTS orders_user ON orders(user_id, created);
         CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires);
@@ -279,6 +282,11 @@ def init_db():
                          (plan['id'], plan['name'], plan['days'], plan['price'], plan['stars'], position))
         conn.execute('INSERT OR IGNORE INTO store_settings(id,support_text,terms_text,version,updated) VALUES (1,?,?,1,0)',
                      (os.getenv('SUPPORT_TEXT','Напишите администратору магазина.'),os.getenv('TERMS_TEXT','')))
+        # Меню создаётся один раз; будущие обновления кода не переписывают выбор владельца.
+        from .bot_menu import DEFAULT_BUTTONS
+        import json
+        conn.execute('INSERT OR IGNORE INTO bot_menu_settings(id,content,version,updated) VALUES (1,?,1,0)',
+                     (json.dumps(DEFAULT_BUTTONS,ensure_ascii=False),))
         conn.execute('UPDATE orders SET plan_name=(SELECT name FROM plans WHERE plans.id=orders.plan) WHERE plan_name IS NULL')
 
         # Записываем первые подтверждения атомарно с изменением заказа.
