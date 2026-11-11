@@ -254,6 +254,7 @@ def parser():
     p.add_argument('--source',type=Path,default=Path(__file__).resolve().parents[1]);p.add_argument('--dir',default='/opt/pushok-vpn')
     p.add_argument('--url');p.add_argument('--mode',choices=['caddy','nginx','external']);p.add_argument('--nginx-config')
     p.add_argument('--port',type=int);p.add_argument('--support');p.add_argument('--yes',action='store_true')
+    p.add_argument('--panels',choices=['none','xui','wgdashboard','both'],default='none',help='Дополнительно установить новые панели; потребуются digest образов и свободные порты')
     p.add_argument('--plan',action='store_true',help='Показать план без изменений и секретов')
     return p
 
@@ -296,6 +297,8 @@ def main(argv=None):
                   'support':args.support if args.support is not None else (ask('Контакт поддержки','Поддержка уточняется') if not args.yes else 'Поддержка уточняется'),
                   'project':'pushok-'+hashlib.sha256(str(root).encode()).hexdigest()[:10]}
     print('Shop VPN '+VERSION+' → '+settings['url']+'\nКаталог: '+str(root)+'\nРежим: '+settings['mode']+'; порт: '+str(settings['port']))
+    if args.panels != 'none':
+        print('Дополнительные панели: '+args.panels+'. Отдельный мастер после запуска Shop; нужны digest образов. Инструкция: docs/PANELS_SETUP.md')
     if args.plan:return 0
     if os.geteuid()!=0:raise ValueError('Нужны права root')
     if not (args.source/'scripts/install.py').is_file() or not (args.source/'Dockerfile').is_file():
@@ -340,6 +343,8 @@ def main(argv=None):
         command=['docker','compose','--project-name',settings['project'],'--env-file',str(root/'.env'),'-f',str(root/'compose.install.json')]
         run(command+['up','-d','--build','--wait','--wait-timeout','120'])
         wait_health(f'http://127.0.0.1:{settings["port"]}{path}/health')
+        if args.panels != 'none':
+            run([__import__('sys').executable,str(args.source/'scripts/install_panels.py'),'--panels',args.panels])
         if settings['mode']=='nginx':attach_nginx(settings['nginx_config'],settings,root)
         if settings['mode']=='external':
             print('Магазин запущен локально. HTTPS пока не подключён.\nДобавьте маршруты из '+str(root/'nginx.shop.conf')+' в существующий прокси.\nПосле настройки проверьте '+settings['url']+'/health')
