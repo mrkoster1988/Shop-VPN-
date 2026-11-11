@@ -740,3 +740,14 @@ $('ads-list').onclick=async event=>{
   catch(e){if(epoch===sessionEpoch && request===adsRequest && $('ads-dialog').open)$('ads-status').textContent=e.message;}
   finally{b.disabled=false;}
 };
+
+// Быстрые переходы внутри прокручиваемого кабинета.
+document.querySelectorAll('[data-account-section]').forEach(button => {
+  button.addEventListener('click', () => {
+    const section = $(button.dataset.accountSection);
+    if (!section || !$('account-dialog').open) return;
+    section.setAttribute('tabindex', '-1');
+    section.scrollIntoView({block: 'start', behavior: 'instant'});
+    section.focus({preventScroll: true});
+  });
+});

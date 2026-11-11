@@ -59,3 +59,7 @@ html[data-telegram-theme] .miniapp-nav a>span,html[data-telegram-theme] .miniapp
 html[data-telegram-theme] .miniapp-nav [aria-current="page"]{background:#e8f0d9;color:var(--ink)}
 html[data-telegram-theme="dark"] .miniapp-nav:not([hidden]){background:#111a15f2;box-shadow:0 -8px 30px #0005}
 html[data-telegram-theme="dark"] .miniapp-nav [aria-current="page"]{background:#233329;color:var(--ink)}
+
+.account-shortcuts{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 24px}
+.account-shortcuts button{flex:1;padding:10px 12px;font-size:12px;min-height:44px}
+#subscriptions,#orders,#support-panel{scroll-margin-top:16px}
