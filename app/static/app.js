@@ -33,18 +33,21 @@ function syncTelegramTheme() {
 function setMiniappActive(route) {
   const nav = $('miniapp-nav');
   if (!nav) return;
+  if (!['home', 'plans', 'help', 'account'].includes(route)) route = 'home';
+  if (route !== 'account') miniappCurrentRoute = route;
+  if ($('account-dialog').open) route = 'account';
   nav.querySelectorAll('[data-miniapp-route]').forEach(item => {
     if (item.dataset.miniappRoute === route) item.setAttribute('aria-current', 'page');
     else item.removeAttribute('aria-current');
   });
-  if (route !== 'account') miniappCurrentRoute = route;
 }
 function setupMiniappNavigation() {
   const nav = $('miniapp-nav');
   if (!nav) return;
   nav.hidden = false;
+  document.documentElement.dataset.miniappReady = 'true';
   nav.querySelectorAll('a[data-miniapp-route]').forEach(link => link.addEventListener('click', () => setMiniappActive(link.dataset.miniappRoute)));
-  $('miniapp-account').addEventListener('click', () => { setMiniappActive('account'); $('account-btn').click(); });
+  $('miniapp-account').addEventListener('click', () => $('account-btn').click());
   window.addEventListener('hashchange', () => {
     const hash = location.hash.slice(1);
     const route = hash === 'how' ? 'plans' : hash;
@@ -81,6 +84,8 @@ function closeTelegramDialog() {
 if (typeof telegramApp?.BackButton?.onClick === 'function') {
   telegramApp.BackButton.onClick(closeTelegramDialog);
   document.querySelectorAll('dialog').forEach(dialog => dialog.addEventListener('close', () => {
+    // Событие close может прийти после повторного открытия того же окна.
+    if (dialog.open) return;
     const index = telegramDialogStack.indexOf(dialog);
     if (index !== -1) telegramDialogStack.splice(index, 1);
     syncTelegramBackButton();
