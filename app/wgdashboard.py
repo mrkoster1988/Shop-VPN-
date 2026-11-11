@@ -113,3 +113,82 @@ class WGDashboard:
             json={'peers':[public_key]})
         if await self.peer(client, public_key) is not None:
             raise PanelError('WGDashboardPeerDeleteNotConfirmed')
+
+    async def download_config(self, client, private_key):
+        """Получает конфиг только для подтверждённого активного peer этого ключа."""
+        import configparser
+        import ipaddress
+        from urllib.parse import quote
+        public_key = self.identity(private_key)
+        await self.check(client)
+        existing = await self.peer(client, public_key)
+        if existing is None or existing[0] != 'configurationPeers':
+            raise PanelError('WGDashboardPeerUnavailable')
+        data = await self.request(client, 'GET',
+            'downloadPeer/' + quote(self.profile['configuration'], safe=''), params={'id':public_key})
+        if not isinstance(data, dict) or not isinstance(data.get('file'), str):
+            raise PanelError('UnsupportedWGDashboardConfig')
+        raw = data['file']
+        if len(raw) > 16384 or '\x00' in raw:
+            raise PanelError('UnsupportedWGDashboardConfig')
+        parser = configparser.ConfigParser(interpolation=None, strict=True)
+        parser.optionxform = str
+        try:
+            parser.read_string(raw)
+            if set(parser.sections()) != {'Interface', 'Peer'} or parser.defaults():
+                raise ValueError()
+            interface, peer = parser['Interface'], parser['Peer']
+            # Не выдаём исполняемые hooks из удалённого шаблона панели.
+            if (set(interface) - {'PrivateKey','Address','DNS','MTU','ListenPort'}
+                    or set(peer) - {'PublicKey','PresharedKey','AllowedIPs','Endpoint','PersistentKeepalive'}):
+                raise ValueError()
+            if interface['PrivateKey'] != private_key:
+                raise ValueError()
+            for value in interface['Address'].split(','):
+                ipaddress.ip_interface(value.strip())
+            for value in peer['AllowedIPs'].split(','):
+                ipaddress.ip_network(value.strip(), strict=False)
+            import base64
+            if len(base64.b64decode(peer['PublicKey'], validate=True)) != 32:
+                raise ValueError()
+            endpoint = peer['Endpoint']
+            from urllib.parse import urlsplit
+            parsed = urlsplit('//' + endpoint)
+            if (not parsed.hostname or not parsed.port or parsed.username or parsed.password
+                    or parsed.path or parsed.query or parsed.fragment
+                    or any(ch.isspace() for ch in endpoint)):
+                raise ValueError()
+        except (configparser.Error, KeyError, ValueError, TypeError):
+            raise PanelError('WGDashboardConfigMismatch') from None
+        return raw
+
+
+def stored_private_key(server_id, credential_id):
+    """Фиксирует зашифрованный ключ до сети; повторы и перезапуски получают тот же."""
+    import base64
+    import uuid
+    from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+    from cryptography.hazmat.primitives.serialization import Encoding, PrivateFormat, NoEncryption
+    from . import config as c
+    from .db import db
+    try:
+        if str(uuid.UUID(credential_id)) != credential_id:
+            raise ValueError()
+    except (ValueError, TypeError, AttributeError):
+        raise PanelError('InvalidSubscriptionIdentity') from None
+    with db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        server = conn.execute('SELECT protocol FROM servers WHERE id=?', (server_id,)).fetchone()
+        if server is None or server['protocol'] != 'wg':
+            raise PanelError('WireGuardServerRequired')
+        row = conn.execute('SELECT private_key FROM wgdashboard_keys WHERE server_id=? AND credential_id=?',
+                           (server_id, credential_id)).fetchone()
+        if row is not None:
+            private_key = c.decrypt(row['private_key'])
+            WGDashboard.identity(private_key)
+            return private_key
+        private_key = base64.b64encode(X25519PrivateKey.generate().private_bytes(
+            Encoding.Raw, PrivateFormat.Raw, NoEncryption())).decode()
+        conn.execute('INSERT INTO wgdashboard_keys(server_id,credential_id,private_key) VALUES (?,?,?)',
+                     (server_id, credential_id, c.encrypt(private_key)))
+    return private_key
