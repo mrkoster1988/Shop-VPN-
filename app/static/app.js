@@ -25,6 +25,10 @@ async function api(path, data, method) {
   return result;
 }
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 6000); }
+function syncTelegramTheme() {
+  if (!telegramApp?.initData) return;
+  document.documentElement.dataset.telegramTheme = telegramApp.colorScheme === 'dark' ? 'dark' : 'light';
+}
 function syncTelegramBackButton() {
   const button = telegramApp?.BackButton;
   if (!button) return;
@@ -599,7 +603,7 @@ $('logout').onclick = async () => {
     catalog=await api('/api/catalog'); protocol=catalog.protocols.find(p=>p.available)?.id || 'xui'; renderPlans(); $('support').textContent=catalog.support;
     if(catalog.bot_username) { for(const id of ['bot-link','auth-bot']) { $(id).href='https://t.me/'+encodeURIComponent(catalog.bot_username); $(id).hidden=false; } }
     const tg=window.Telegram?.WebApp;
-    if(tg?.initData) { tg.ready(); tg.expand(); await api('/api/auth/telegram',{init_data:tg.initData}); }
+    if(tg?.initData) { tg.ready(); tg.expand(); syncTelegramTheme(); tg.onEvent?.('themeChanged',syncTelegramTheme); await api('/api/auth/telegram',{init_data:tg.initData}); }
     await refreshMe();
     // Переход из уведомления не даёт прав: вход уже проверен выше.
     if(new URLSearchParams(location.search).get('view')==='account')show(me?'account-dialog':'auth-dialog');
