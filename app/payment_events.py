@@ -55,6 +55,7 @@ async def receive(request: Request):
         # A non-200 asks YooKassa to retry without exposing provider internals.
         raise HTTPException(503, 'Подтверждение временно недоступно') from None
     current = one('SELECT status FROM orders WHERE id=?', (order['id'],))
-    if notification_type == 'payment.succeeded' and current['status'] == 'pending':
+    # Оба конечных события требуют повтора, пока Merchant API ещё показывает pending.
+    if current['status'] == 'pending':
         raise HTTPException(503, 'Подтверждение пока не получено')
     return {'ok': True, 'handled': True}

@@ -149,6 +149,27 @@ def test_verified_cancellation_never_makes_paid_order_active(client, monkeypatch
     assert one('SELECT status FROM orders')['status']=='canceled'
 
 
+@pytest.mark.parametrize('event', ['payment.succeeded', 'payment.canceled'])
+def test_notification_retries_until_merchant_confirms_terminal_state(client, monkeypatch, event):
+    register(client)
+    purchase = order(client)
+    payment_id = 'provider-' + purchase['id']
+    execute("UPDATE orders SET method='sbp',payment_id=? WHERE id=?", (payment_id, purchase['id']))
+    verified = external_payment(purchase['id'], status='pending', paid=False)
+    calls = []
+    async def gateway(identity):
+        calls.append(identity)
+        return verified
+    monkeypatch.setattr(providers, 'get_payment', gateway)
+    assert notify(client, payment_id, event=event).status_code == 503
+    assert one('SELECT status FROM orders')['status'] == 'pending'
+    verified.update(status='canceled', paid=False)
+    assert notify(client, payment_id, event=event).status_code == 200
+    assert one('SELECT status FROM orders')['status'] == 'canceled'
+    assert notify(client, payment_id, event=event).status_code == 200
+    assert calls == [payment_id, payment_id]
+
+
 def test_sbp_history_and_diagnostics_can_find_paid_order(client, monkeypatch):
     from app import diagnostics, commerce_analytics
     register(client)
