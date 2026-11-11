@@ -238,3 +238,17 @@ def test_install_persists_selected_owner_domain_and_repeat_never_replaces_it(sys
     args[args.index('--url')+1]='https://different-owner.example/shop'
     with pytest.raises(ValueError):i.main(args)
     assert (root/'.env').read_bytes()==saved
+
+
+def test_panel_dialog_retries_and_selects_both(monkeypatch):
+    answers=iter(['bad','3'])
+    monkeypatch.setattr(i,'ask',lambda *a,**kw:next(answers))
+    assert i.choose_panels()=='both'
+
+
+def test_panel_dialog_skips_existing_and_unattended(monkeypatch):
+    monkeypatch.setattr(i,'ask',lambda *a,**kw:pytest.fail('Unexpected prompt'))
+    assert i.choose_panels(existing=True)=='none'
+    assert i.choose_panels(unattended=True)=='none'
+    assert i.choose_panels('xui')=='xui'
+    with pytest.raises(ValueError):i.choose_panels('both',unattended=True)

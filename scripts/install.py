@@ -238,6 +238,20 @@ def ask(label,default='',secret=False):
         return answer.strip() or default
 
 
+def choose_panels(value=None, unattended=False, existing=False):
+    if unattended and value not in (None, 'none'):
+        raise ValueError('--yes не совместим с установкой панелей: отдельному мастеру нужны digest образов. Запустите install_panels.py отдельно.')
+    if value is not None:return value
+    if unattended or existing:return 'none'
+    print('Панели уже работают? Выберите 0: их можно подключить по API в админке.')
+    print('1 — новая 3x-ui; 2 — новая WGDashboard; 3 — обе. Нужны свободные порты и digest образов.')
+    choices={'0':'none','1':'xui','2':'wgdashboard','3':'both'}
+    while True:
+        answer=ask('Установить дополнительные панели: 0/1/2/3','0')
+        if answer in choices:return choices[answer]
+        print('Введите 0, 1, 2 или 3.')
+
+
 def wait_health(url,timeout=120):
     deadline=time.monotonic()+timeout
     while time.monotonic()<deadline:
@@ -254,7 +268,7 @@ def parser():
     p.add_argument('--source',type=Path,default=Path(__file__).resolve().parents[1]);p.add_argument('--dir',default='/opt/pushok-vpn')
     p.add_argument('--url');p.add_argument('--mode',choices=['caddy','nginx','external']);p.add_argument('--nginx-config')
     p.add_argument('--port',type=int);p.add_argument('--support');p.add_argument('--yes',action='store_true')
-    p.add_argument('--panels',choices=['none','xui','wgdashboard','both'],default='none',help='Дополнительно установить новые панели; потребуются digest образов и свободные порты')
+    p.add_argument('--panels',choices=['none','xui','wgdashboard','both'],default=None,help='Дополнительно установить новые панели; потребуются digest образов и свободные порты')
     p.add_argument('--plan',action='store_true',help='Показать план без изменений и секретов')
     return p
 
@@ -297,6 +311,7 @@ def main(argv=None):
                   'support':args.support if args.support is not None else (ask('Контакт поддержки','Поддержка уточняется') if not args.yes else 'Поддержка уточняется'),
                   'project':'pushok-'+hashlib.sha256(str(root).encode()).hexdigest()[:10]}
     print('Shop VPN '+VERSION+' → '+settings['url']+'\nКаталог: '+str(root)+'\nРежим: '+settings['mode']+'; порт: '+str(settings['port']))
+    args.panels=choose_panels(args.panels,args.yes,marker.exists())
     if args.panels != 'none':
         print('Дополнительные панели: '+args.panels+'. Отдельный мастер после запуска Shop; нужны digest образов. Инструкция: docs/PANELS_SETUP.md')
     if args.plan:return 0
