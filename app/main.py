@@ -204,6 +204,8 @@ class ServerUpdate(ServerFields):
     state: Literal['active','draining','maintenance','disabled']
     version: int = Field(ge=1, strict=True)
     settings: dict | None = None
+    schedule_expiry: bool | None = None
+    panel_timezone: str | None = Field(default=None, max_length=100)
 
 
 def email_address(raw):

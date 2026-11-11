@@ -135,6 +135,10 @@ def init_db():
         CREATE TABLE IF NOT EXISTS wgdashboard_keys (
           server_id TEXT NOT NULL REFERENCES servers(id), credential_id TEXT NOT NULL,
           private_key TEXT NOT NULL, PRIMARY KEY(server_id,credential_id));
+        CREATE TABLE IF NOT EXISTS wgdashboard_expirations (
+          server_id TEXT NOT NULL REFERENCES servers(id), credential_id TEXT NOT NULL,
+          job_id TEXT NOT NULL, target_expires INTEGER NOT NULL, updated INTEGER NOT NULL,
+          PRIMARY KEY(server_id,credential_id), UNIQUE(server_id,job_id));
         CREATE TABLE IF NOT EXISTS server_changes (
           id INTEGER PRIMARY KEY, server_id TEXT NOT NULL REFERENCES servers(id), created INTEGER NOT NULL,
           action TEXT NOT NULL, version INTEGER NOT NULL);

@@ -46,6 +46,9 @@ async def provision(sub):
         async with httpx.AsyncClient(timeout=25, follow_redirects=False, trust_env=False) as client:
             adapter = wgdashboard.WGDashboard(profile)
             await adapter.ensure_peer(client, private_key, 'pushok_' + sub['id'])
+            if profile.get('schedule_expiry'):
+                await adapter.ensure_expiration(
+                    client, private_key, sub['expires'], row['id'], sub['id'])
             return await adapter.download_config(client, private_key)
     async with httpx.AsyncClient(timeout=25, follow_redirects=False, trust_env=False) as client:
         r = await client.put(profile['url'] + '/peers/' + sub['id'],

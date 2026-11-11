@@ -6,6 +6,7 @@ import time
 import uuid
 from urllib.parse import urlsplit
 from typing import Literal
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel, Field, field_validator
 from fastapi import HTTPException
 from . import config as c
@@ -92,6 +93,25 @@ class WGProfile(Profile):
 class WGDashboardProfile(WGProfile):
     api: Literal['wgdashboard'] = 'wgdashboard'
     configuration: str = Field(min_length=1, max_length=64, pattern=r'^[A-Za-z0-9_=+.-]+$')
+    panel_timezone: str | None = Field(default=None, max_length=100)
+    schedule_expiry: bool = False
+
+    @field_validator('panel_timezone')
+    @classmethod
+    def valid_panel_timezone(cls, value):
+        if value is not None:
+            try:
+                ZoneInfo(value)
+            except (ZoneInfoNotFoundError, ValueError):
+                raise ValueError('Укажите часовой пояс панели из базы IANA, например Europe/Moscow') from None
+        return value
+
+    @field_validator('schedule_expiry')
+    @classmethod
+    def timezone_required_for_panel_expiry(cls, value, info):
+        if value and not info.data.get('panel_timezone'):
+            raise ValueError('Для срока на панели укажите её часовой пояс')
+        return value
 
 
 class ClientsProfile(VLESSProfile):
@@ -129,7 +149,10 @@ def public(row):
     if row['protocol'] == 'xui':
         result['profile'] = {'legacy':'legacy_vless','clients':'clients_vless','remnawave':'remnawave_vless'}.get(decode(row).get('api','legacy'),'legacy_vless')
     else:
-        result['profile'] = 'wgdashboard' if decode(row).get('api') == 'wgdashboard' else 'wireguard_agent'
+        profile = decode(row)
+        result['profile'] = 'wgdashboard' if profile.get('api') == 'wgdashboard' else 'wireguard_agent'
+        result['schedule_expiry'] = bool(profile.get('schedule_expiry', False))
+        result['panel_timezone'] = profile.get('panel_timezone')
     result['bound_subscriptions'] = row.get('bound_subscriptions', 0)
     result['occupied'] = row.get('occupied', 0)
     return result
@@ -198,19 +221,36 @@ def update(sid, data):
         if before['version'] != data.version:
             raise HTTPException(409,'Сервер уже изменён. Обновите список.')
         profile = decode(before)
-        replacement = validated(before['protocol'], data.settings) if data.settings is not None else profile
+        if ((data.schedule_expiry is not None or data.panel_timezone is not None)
+                and not (before['protocol'] == 'wg' and profile.get('api') == 'wgdashboard')):
+            raise HTTPException(422, 'Настройки задания срока доступны только для WGDashboard.')
+        if data.settings is not None:
+            settings = dict(data.settings)
+            if before['protocol'] == 'wg' and settings.get('api') == 'wgdashboard':
+                for key, default in (('schedule_expiry', False), ('panel_timezone', None)):
+                    settings.setdefault(key, profile.get(key, default))
+            replacement = validated(before['protocol'], settings)
+        else:
+            replacement = profile
+        if before['protocol'] == 'wg' and profile.get('api') == 'wgdashboard':
+            if data.schedule_expiry is not None:
+                replacement['schedule_expiry'] = data.schedule_expiry
+            if data.panel_timezone is not None:
+                replacement['panel_timezone'] = data.panel_timezone
+            replacement = validated(before['protocol'], replacement)
         bound = conn.execute('SELECT count(*) FROM subscriptions WHERE server_id=?',(sid,)).fetchone()[0]
         identity = (('url','api','squad_uuids') if profile.get('api') == 'remnawave'
                     else ('url','api','inbound_id','link_template','flow')) if before['protocol']=='xui' else ('url','api','configuration')
         if bound and any(profile.get(k)!=replacement.get(k) for k in identity):
             raise HTTPException(409,'У сервера есть подписки. Для другого endpoint создайте отдельный сервер.')
-        credentials_changed = replacement != profile
-        health = 'unknown' if credentials_changed else before['health']
-        if data.state == 'active' and (credentials_changed or before['state']!='active') and health != 'ok':
+        requires_recheck = any(profile.get(key) != replacement.get(key)
+                               for key in ('url','api','token','configuration','username','password'))
+        health = 'unknown' if requires_recheck else before['health']
+        if data.state == 'active' and (requires_recheck or before['state']!='active') and health != 'ok':
             raise HTTPException(409,'Сначала сохраните настройки и успешно проверьте сервер, затем включите продажи.')
         conn.execute('UPDATE servers SET name=?,location=?,state=?,capacity=?,settings=?,health=?,checked_at=?,error_code=?,version=version+1 WHERE id=?',
             (data.name,data.location,data.state,data.capacity,c.encrypt(json.dumps(replacement)),health,
-             None if credentials_changed else before['checked_at'],None if credentials_changed else before['error_code'],sid))
+             None if requires_recheck else before['checked_at'],None if requires_recheck else before['error_code'],sid))
         row = dict(conn.execute('SELECT * FROM servers WHERE id=?',(sid,)).fetchone())
         conn.execute('INSERT INTO server_changes(server_id,created,action,version) VALUES (?,?,?,?)', (sid,int(time.time()),'updated',row['version']))
     return public(row)

@@ -113,6 +113,90 @@ class WGDashboard:
         if await self.peer(client, public_key) is not None:
             raise PanelError('WGDashboardPeerDeleteNotConfirmed')
 
+    async def ensure_expiration(self, client, private_key, expires_at, server_id, credential_id):
+        """Create/update the panel's delete job and confirm it before returning access."""
+        import time
+        import uuid
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        from .db import db
+
+        if not self.profile.get('schedule_expiry') or not self.profile.get('panel_timezone'):
+            raise PanelError('WGDashboardExpiryNotConfigured')
+        if not isinstance(expires_at, int) or expires_at <= int(time.time()):
+            raise PanelError('WGDashboardExpiryInvalid')
+        public_key = self.identity(private_key)
+        current = await self.peer(client, public_key)
+        if current is None or current[0] != 'configurationPeers':
+            raise PanelError('WGDashboardPeerUnavailable')
+        peer = current[1]
+        jobs = peer.get('jobs')
+        if not isinstance(jobs, list) or any(not isinstance(job, dict) for job in jobs):
+            raise PanelError('UnsupportedWGDashboardJobsSchema')
+        zone = ZoneInfo(self.profile['panel_timezone'])
+        local_expiry = datetime.fromtimestamp(expires_at, zone)
+        local_value = local_expiry.strftime('%Y-%m-%d %H:%M:%S')
+        # WGDashboard stores a naive wall-clock value. On the second occurrence
+        # of a DST fall-back hour that representation would expire an hour early.
+        parsed_local = datetime.strptime(local_value, '%Y-%m-%d %H:%M:%S')
+        if int(parsed_local.replace(tzinfo=zone, fold=0).timestamp()) != expires_at:
+            raise PanelError('WGDashboardExpiryAmbiguousLocalTime')
+        now = int(time.time())
+        with db() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            record = conn.execute(
+                'SELECT job_id,target_expires FROM wgdashboard_expirations WHERE server_id=? AND credential_id=?',
+                (server_id, credential_id)).fetchone()
+            remote_ids = {job.get('JobID') for job in jobs if isinstance(job.get('JobID'), str)}
+            if record is None:
+                job_id = str(uuid.uuid4())
+                conn.execute('INSERT INTO wgdashboard_expirations(server_id,credential_id,job_id,target_expires,updated) VALUES (?,?,?,?,?)',
+                             (server_id, credential_id, job_id, expires_at, now))
+            else:
+                job_id = record['job_id']
+                if job_id not in remote_ids and record['target_expires'] <= now:
+                    job_id = str(uuid.uuid4())
+                conn.execute('UPDATE wgdashboard_expirations SET job_id=?,target_expires=?,updated=? WHERE server_id=? AND credential_id=?',
+                             (job_id, expires_at, now, server_id, credential_id))
+
+        payload = {'JobID':job_id, 'Configuration':self.profile['configuration'], 'Peer':public_key,
+                   'Field':'date', 'Operator':'lgt', 'Value':local_value, 'Action':'delete'}
+        method = 'PUT' if job_id in remote_ids else 'POST'
+        try:
+            await self.request(client, method, 'PeerScheduleJob', json=payload)
+        except Exception as exc:
+            # The panel can commit a job and lose the HTTP response. Re-read before retrying.
+            refreshed = await self.peer(client, public_key)
+            refreshed_jobs = refreshed[1].get('jobs', []) if refreshed else []
+            if not isinstance(refreshed_jobs, list):
+                raise PanelError('UnsupportedWGDashboardJobsSchema')
+            confirmed = next((job for job in refreshed_jobs
+                              if isinstance(job, dict) and job.get('JobID') == job_id), None)
+            if confirmed is None and getattr(getattr(exc, 'response', None), 'status_code', None) in (404, 409):
+                job_id = str(uuid.uuid4())
+                with db() as conn:
+                    conn.execute('UPDATE wgdashboard_expirations SET job_id=?,updated=? WHERE server_id=? AND credential_id=?',
+                                 (job_id, int(time.time()), server_id, credential_id))
+                payload['JobID'] = job_id
+                await self.request(client, 'POST', 'PeerScheduleJob', json=payload)
+            elif confirmed is None:
+                raise
+
+        confirmed_peer = await self.peer(client, public_key)
+        if confirmed_peer is None or confirmed_peer[0] != 'configurationPeers':
+            raise PanelError('WGDashboardPeerUnavailable')
+        confirmed_jobs = confirmed_peer[1].get('jobs')
+        if not isinstance(confirmed_jobs, list) or any(not isinstance(job, dict) for job in confirmed_jobs):
+            raise PanelError('UnsupportedWGDashboardJobsSchema')
+        confirmed = [job for job in confirmed_jobs
+                     if isinstance(job, dict) and job.get('JobID') == job_id]
+        if len(confirmed) != 1:
+            raise PanelError('WGDashboardExpiryWriteNotConfirmed')
+        job = confirmed[0]
+        if any(job.get(key) != value for key, value in payload.items()):
+            raise PanelError('WGDashboardExpiryMismatch')
+        return {'scheduled': True}
+
     async def download_config(self, client, private_key):
         """Получает конфиг только для подтверждённого активного peer этого ключа."""
         import configparser
