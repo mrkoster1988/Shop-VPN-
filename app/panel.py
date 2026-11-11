@@ -23,7 +23,13 @@ class Legacy:
         self.inbound_id = profile['inbound_id']
 
     async def inbound(self, client):
-        obj = result(await client.get(self.base + f'/panel/api/inbounds/get/{self.inbound_id}'))
+        response = await client.get(self.base + f'/panel/api/inbounds/get/{self.inbound_id}')
+        obj = result(response)
+        # Новые панели выдают CSRF-токен при чтении; передаём его при записи.
+        # Старые версии без заголовка продолжают работать по прежнему контракту.
+        csrf = response.headers.get('X-CSRF-Token')
+        if csrf and isinstance(self, Legacy) and not isinstance(self, Clients):
+            client.headers['X-CSRF-Token'] = csrf
         if (not isinstance(obj, dict) or obj.get('protocol') != 'vless'
                 or ('id' in obj and (type(obj['id']) is not int or obj['id'] != self.inbound_id))):
             raise PanelError('VLESSInboundUnavailable')
