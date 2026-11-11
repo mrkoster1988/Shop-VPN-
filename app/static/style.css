@@ -31,3 +31,23 @@ input[type=checkbox]{display:inline-block;width:auto;margin-right:8px;accent-col
 .bot-menu-preview-row{display:flex;gap:8px;margin:7px 0}
 .bot-menu-preview-button{flex:1;text-align:center;padding:10px 8px;border-radius:9px;background:#d4ebee;color:#173744;font-size:14px;font-weight:600;overflow-wrap:anywhere}
 @media(max-width:520px){.bot-menu-preview-row{flex-wrap:wrap}.bot-menu-preview-button{flex-basis:40%}}
+
+/* Telegram Mini App follows the Telegram palette without changing the browser site. */
+html[data-telegram-theme="dark"]{color-scheme:dark;--bg:#111a15;--ink:#e8f0e8;--muted:#a0aea2;--green:#caed91;--line:#304036;--white:#1c2921}
+html[data-telegram-theme="dark"] .lead{color:#bdc9be}
+html[data-telegram-theme="dark"] .hero-note{color:#a9b6ab}
+html[data-telegram-theme="dark"] .visual{background:radial-gradient(ellipse,#26392b 0,transparent 67%)}
+html[data-telegram-theme="dark"] .floating{background:#1d2a22e6;border-color:#435547;color:var(--ink)}
+html[data-telegram-theme="dark"] .plan{background:#18241d;border-color:var(--line)}
+html[data-telegram-theme="dark"] .plan.featured,html[data-telegram-theme="dark"] .subscription{background:#233329;border-color:#3a4c3e}
+html[data-telegram-theme="dark"] .plan p,html[data-telegram-theme="dark"] dialog p{color:#b2c0b5}
+html[data-telegram-theme="dark"] .stripe>span:not(:first-child){color:#a1b59b}
+html[data-telegram-theme="dark"] input,html[data-telegram-theme="dark"] textarea{background:#18241d;border-color:#526258;color:var(--ink)}
+html[data-telegram-theme="dark"] .secondary{border-color:#58675b;color:var(--ink)}
+html[data-telegram-theme="dark"] button:not(.secondary):not(.text-link):not(.close),html[data-telegram-theme="dark"] .button{background:var(--green);color:#17251a}
+html[data-telegram-theme="dark"] .status{background:#31452f;color:#e8f0e8}
+html[data-telegram-theme="dark"] .status.pending{background:#51472a}
+html[data-telegram-theme="dark"] .status.canceled{background:#4b3330}
+html[data-telegram-theme="dark"] #toast{background:#26392d;color:#fff}
+#toast{bottom:calc(24px + var(--tg-content-safe-area-inset-bottom,0px))}
+dialog{max-height:min(90vh,calc(var(--tg-viewport-stable-height,100vh) - var(--tg-content-safe-area-inset-top,0px) - var(--tg-content-safe-area-inset-bottom,0px) - 24px))}
