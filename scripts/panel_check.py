@@ -48,21 +48,29 @@ def base_report():
             'scope':{'client_records_modified':False,'real_vpn_traffic':False,'payment_checked':False,'vps_install_checked':False}}
 
 
-async def probe(profile,ca_file=None,client_factory=None):
+async def probe(profile,ca_file=None,client_factory=None,*,wgdashboard=False):
     import httpx
     from app import panel,servers
     report=base_report()
-    try:profile=servers.validated('xui',profile)
+    from app.wgdashboard import CheckProfile, WGDashboard
+    if wgdashboard:
+        report['checks'] = {'wireguard_interface':False,'supported_schema':False}
+        report['api_mode'] = 'wgdashboard'
+    try:profile=CheckProfile.model_validate(profile).model_dump() if wgdashboard else servers.validated('xui',profile)
     except Exception:return report | {'error_code':'InvalidProfile'}
-    report['api_mode']=profile.get('api','legacy')
+    report['api_mode']='wgdashboard' if wgdashboard else profile.get('api','legacy')
     try:context=ssl.create_default_context(cafile=ca_file)
     except Exception:return report | {'error_code':'InvalidCAFile'}
     try:
         factory=client_factory or httpx.AsyncClient
         # Never send credentials through environment proxies or follow panel redirects.
         async with factory(timeout=20,follow_redirects=False,trust_env=False,verify=context) as client:
-            adapter=panel.adapter(profile)
+            adapter=WGDashboard(profile) if wgdashboard else panel.adapter(profile)
             result=await adapter.check(client)
+        if wgdashboard:
+            report['checks'].update(result)
+            report['status']='api_checks_ok'
+            return report
         report['checks']['authentication']=True
         report['checks']['supported_schema']=True
         if profile.get('api') == 'remnawave':
@@ -104,6 +112,7 @@ def main(argv=None):
     source.add_argument('--server',help='ID VLESS-сервера из реестра текущего магазина')
     source.add_argument('--profile-file',type=Path,help='JSON профиля, владелец текущий пользователь, права 0600')
     source.add_argument('--profile-stdin',action='store_true',help='Читать JSON профиля из stdin, максимум 16 KiB')
+    parser.add_argument('--wgdashboard',action='store_true',help='Проверить WGDashboard из JSON профиля без изменения peers')
     parser.add_argument('--ca-file',type=Path,help='Дополнительный локальный PEM CA; TLS-проверка остаётся включена')
     parser.add_argument('--output',type=Path,help='Сохранить JSON 0600 без перезаписи')
     args=parser.parse_args(argv)
@@ -111,8 +120,9 @@ def main(argv=None):
     report=base_report();fd=None
     try:
         if args.output:fd=os.open(args.output,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+        if args.wgdashboard and args.server:raise InputError('ProfileFileRequired')
         profile=registered_profile(args.server) if args.server else read_profile(args.profile_file,sys.stdin.buffer if args.profile_stdin else None)
-        report=asyncio.run(probe(profile,str(args.ca_file) if args.ca_file else None))
+        report=asyncio.run(probe(profile,str(args.ca_file) if args.ca_file else None,wgdashboard=args.wgdashboard))
     except Exception:
         # Validation exceptions can contain passwords/URLs; only fixed local codes may escape.
         report['error_code']='LocalInputRejected'
