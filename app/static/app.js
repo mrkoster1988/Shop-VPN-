@@ -3,6 +3,7 @@ const basePath = document.querySelector('meta[name="shop-base"]').content;
 const $ = id => document.getElementById(id);
 const telegramApp = window.Telegram?.WebApp;
 const telegramDialogStack = [];
+let miniappCurrentRoute = 'home';
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const statusLabel = {pending:'Ожидает оплаты',checkout:'Оплата не завершена',paid:'Оплачено · готовим VPN',active:'Доступ выдан',canceled:'Отменён'};
 const money=(amount,currency)=>amount.toLocaleString('ru-RU')+' '+(currency==='XTR'?'★':'₽');
@@ -28,6 +29,38 @@ function toast(message) { $('toast').textContent = message; $('toast').hidden = 
 function syncTelegramTheme() {
   if (!telegramApp?.initData) return;
   document.documentElement.dataset.telegramTheme = telegramApp.colorScheme === 'dark' ? 'dark' : 'light';
+}
+function setMiniappActive(route) {
+  const nav = $('miniapp-nav');
+  if (!nav) return;
+  nav.querySelectorAll('[data-miniapp-route]').forEach(item => {
+    if (item.dataset.miniappRoute === route) item.setAttribute('aria-current', 'page');
+    else item.removeAttribute('aria-current');
+  });
+  if (route !== 'account') miniappCurrentRoute = route;
+}
+function setupMiniappNavigation() {
+  const nav = $('miniapp-nav');
+  if (!nav) return;
+  nav.hidden = false;
+  nav.querySelectorAll('a[data-miniapp-route]').forEach(link => link.addEventListener('click', () => setMiniappActive(link.dataset.miniappRoute)));
+  $('miniapp-account').addEventListener('click', () => { setMiniappActive('account'); $('account-btn').click(); });
+  window.addEventListener('hashchange', () => {
+    const hash = location.hash.slice(1);
+    const route = hash === 'how' ? 'plans' : hash;
+    if (['home', 'plans', 'help'].includes(route)) setMiniappActive(route);
+  });
+  if ('IntersectionObserver' in window) {
+    const observer = new IntersectionObserver(entries => {
+      const visible = entries.filter(entry => entry.isIntersecting).sort((a, b) => b.intersectionRatio - a.intersectionRatio)[0];
+      const route = visible?.target.id;
+      if (['home', 'plans', 'help'].includes(route)) setMiniappActive(route);
+    }, {rootMargin: '-30% 0px -55% 0px', threshold: [0, 0.15, 0.35, 0.6]});
+    for (const id of ['home', 'plans', 'help']) { const section = $(id); if (section) observer.observe(section); }
+  }
+  $('account-dialog').addEventListener('close', () => { if (telegramApp?.initData && nav.querySelector('[aria-current="page"]')?.dataset.miniappRoute === 'account') setMiniappActive(miniappCurrentRoute); });
+  const initialHash = location.hash.slice(1);
+  setMiniappActive(initialHash === 'how' ? 'plans' : initialHash || 'home');
 }
 function syncTelegramBackButton() {
   const button = telegramApp?.BackButton;
@@ -59,6 +92,7 @@ function show(id) {
     dialog.showModal();
     if (typeof telegramApp?.BackButton?.show === 'function') telegramDialogStack.push(dialog);
   }
+  if (id === 'account-dialog') setMiniappActive('account');
   syncTelegramBackButton();
 }
 function date(ts) { return new Date(ts*1000).toLocaleDateString('ru-RU'); }
@@ -603,7 +637,7 @@ $('logout').onclick = async () => {
     catalog=await api('/api/catalog'); protocol=catalog.protocols.find(p=>p.available)?.id || 'xui'; renderPlans(); $('support').textContent=catalog.support;
     if(catalog.bot_username) { for(const id of ['bot-link','auth-bot']) { $(id).href='https://t.me/'+encodeURIComponent(catalog.bot_username); $(id).hidden=false; } }
     const tg=window.Telegram?.WebApp;
-    if(tg?.initData) { tg.ready(); tg.expand(); syncTelegramTheme(); tg.onEvent?.('themeChanged',syncTelegramTheme); await api('/api/auth/telegram',{init_data:tg.initData}); }
+    if(tg?.initData) { tg.ready(); tg.expand(); syncTelegramTheme(); tg.onEvent?.('themeChanged',syncTelegramTheme); await api('/api/auth/telegram',{init_data:tg.initData}); setupMiniappNavigation(); }
     await refreshMe();
     // Переход из уведомления не даёт прав: вход уже проверен выше.
     if(new URLSearchParams(location.search).get('view')==='account')show(me?'account-dialog':'auth-dialog');
