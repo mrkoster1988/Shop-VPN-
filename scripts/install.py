@@ -260,6 +260,11 @@ def parser():
 
 def main(argv=None):
     args=parser().parse_args(argv);root=install_path(args.dir);codename=check_os()
+    if not args.yes:
+        print('Мастер установки Shop VPN. Enter принимает значение в [скобках].')
+        print('Для выхода нажмите Ctrl+C. Секреты при вводе не отображаются.')
+        print('Нужен домен с DNS на этот сервер и путь магазина, например https://pushok.shop/shop.')
+        print('VPN-панели и тарифы добавляются после установки в админке; платежи настраиваются отдельно.')
     marker=root/'installer.json'
     if marker.exists():
         settings=json.loads(marker.read_text())
@@ -273,8 +278,13 @@ def main(argv=None):
         if root.exists() and any(p.name!='.install.lock' for p in root.iterdir()):raise ValueError('Каталог не пуст и не принадлежит установщику. Существующая установка не изменена.')
         if args.yes and (not args.url or not args.mode):raise ValueError('--yes требует --url и --mode')
         url=choose_public_url(args.url)
+        if not args.mode:
+            print('caddy — новый сайт, только если порты 80/443 свободны.')
+            print('nginx — уже есть HTTPS-сайт Nginx; потребуется путь к его конфигурации.')
+            print('external — уже работает Caddy, другой прокси или панель; HTTPS подключаете вручную.')
         mode=args.mode or ask('Режим: caddy (новый HTTPS), nginx (существующий сайт), external (другой прокси)','nginx' if shutil.which('nginx') else 'caddy')
         if mode not in ('caddy','nginx','external'):raise ValueError('Неизвестный режим')
+        if not args.port and not args.yes:print('Внутренний порт доступен локально. Обычно 8000; если занят — выберите другой, например 8001.')
         port=args.port or int(ask('Внутренний порт магазина','8000') if not args.yes else '8000')
         if not 1024<=port<=65535:raise ValueError('Порт должен быть от 1024 до 65535')
         config=args.nginx_config
@@ -315,6 +325,8 @@ def main(argv=None):
         if not (root/'.env').exists():
             bot='';username='';terms=''
             if not args.yes:
+                print('Токен выдаёт @BotFather командой /newbot. Не отправляйте его в чат или поддержку.')
+                print('Можно нажать Enter и подключить бота позже через настройки .env.')
                 bot=ask('Токен Telegram-бота (Enter — настроить позже)',secret=True)
                 if bot:
                     username=ask('Имя бота без @');terms=ask('Условия продажи для Telegram (можно настроить позже)')
