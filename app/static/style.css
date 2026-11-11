@@ -51,3 +51,11 @@ html[data-telegram-theme="dark"] .status.canceled{background:#4b3330}
 html[data-telegram-theme="dark"] #toast{background:#26392d;color:#fff}
 #toast{bottom:calc(24px + var(--tg-content-safe-area-inset-bottom,0px))}
 dialog{max-height:min(90vh,calc(var(--tg-viewport-stable-height,100vh) - var(--tg-content-safe-area-inset-top,0px) - var(--tg-content-safe-area-inset-bottom,0px) - 24px))}
+html[data-telegram-theme] body{padding-bottom:calc(86px + var(--tg-content-safe-area-inset-bottom,0px))}
+html[data-telegram-theme] .nav #account-btn{display:none}
+html[data-telegram-theme] .miniapp-nav:not([hidden]){display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;align-items:stretch;position:fixed;z-index:950;left:50%;bottom:0;transform:translateX(-50%);width:min(520px,calc(100% - 24px));padding:8px 8px calc(8px + var(--tg-content-safe-area-inset-bottom,0px));border:1px solid var(--line);border-radius:18px 18px 0 0;background:#fffffff2;box-shadow:0 -8px 30px #183c3018;backdrop-filter:blur(14px);font-size:inherit;font-weight:inherit}
+html[data-telegram-theme] .miniapp-nav a,html[data-telegram-theme] .miniapp-nav button{min-width:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;padding:5px 2px;border:0;border-radius:12px;background:transparent;color:var(--muted);font-size:10px;line-height:1.3;text-align:center;text-decoration:none}
+html[data-telegram-theme] .miniapp-nav a>span,html[data-telegram-theme] .miniapp-nav button>span{font-size:19px;line-height:1.2}
+html[data-telegram-theme] .miniapp-nav [aria-current="page"]{background:#e8f0d9;color:var(--ink)}
+html[data-telegram-theme="dark"] .miniapp-nav:not([hidden]){background:#111a15f2;box-shadow:0 -8px 30px #0005}
+html[data-telegram-theme="dark"] .miniapp-nav [aria-current="page"]{background:#233329;color:var(--ink)}
