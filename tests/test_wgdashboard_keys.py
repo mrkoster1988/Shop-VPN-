@@ -21,3 +21,12 @@ def test_key_survives_repeated_calls_and_migration_without_plaintext(client):
 def test_invalid_binding_does_not_create_key(client,server,identity):
     with pytest.raises(PanelError):stored_private_key(server,identity)
     assert one('SELECT count(*) AS n FROM wgdashboard_keys')['n'] == 0
+
+
+def test_revoke_lookup_never_generates_replacement_key(client):
+    identity = str(uuid.uuid4())
+    with pytest.raises(PanelError,match='StoredKeyMissing'):
+        stored_private_key('test-wg',identity,create=False)
+    assert one('SELECT count(*) AS n FROM wgdashboard_keys')['n'] == 0
+    key = stored_private_key('test-wg',identity)
+    assert stored_private_key('test-wg',identity,create=False) == key

@@ -2,7 +2,7 @@
 import json
 import os
 import httpx
-from . import config as c, servers, panel
+from . import config as c, servers, panel, wgdashboard
 
 
 def _require_vpn_protocol(protocol):
@@ -18,9 +18,11 @@ def available(protocol, user_id=None):
 async def probe_server(row):
     _require_vpn_protocol(row['protocol'])
     profile = servers.decode(row)
-    async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
+    async with httpx.AsyncClient(timeout=25, follow_redirects=False, trust_env=False) as client:
         if row['protocol']=='xui':
             await panel.adapter(profile).check(client)
+        elif profile.get('api') == 'wgdashboard':
+            await wgdashboard.WGDashboard(profile).check(client)
         else:
             r = await client.get(profile['url']+'/health', headers={'Authorization':'Bearer '+profile['token']})
             r.raise_for_status()
@@ -30,7 +32,7 @@ async def probe_server(row):
 
 async def xui_client(sub, enabled=True):
     _, profile = servers.for_subscription(sub, revoking=not enabled)
-    async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
+    async with httpx.AsyncClient(timeout=25, follow_redirects=False, trust_env=False) as client:
         return await panel.adapter(profile).apply(client, sub, enabled)
 
 
@@ -38,8 +40,14 @@ async def provision(sub):
     _require_vpn_protocol(sub['protocol'])
     if sub['protocol'] == 'xui':
         return await xui_client(sub)
-    _, profile = servers.for_subscription(sub)
-    async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
+    row, profile = servers.for_subscription(sub)
+    if profile.get('api') == 'wgdashboard':
+        private_key = wgdashboard.stored_private_key(row['id'], sub['id'])
+        async with httpx.AsyncClient(timeout=25, follow_redirects=False, trust_env=False) as client:
+            adapter = wgdashboard.WGDashboard(profile)
+            await adapter.ensure_peer(client, private_key, 'pushok_' + sub['id'])
+            return await adapter.download_config(client, private_key)
+    async with httpx.AsyncClient(timeout=25, follow_redirects=False, trust_env=False) as client:
         r = await client.put(profile['url'] + '/peers/' + sub['id'],
                              headers={'Authorization': 'Bearer ' + profile['token']},
                              json={'expires': sub['expires']})
@@ -52,8 +60,14 @@ async def disable(sub):
     if sub['protocol'] == 'xui':
         await xui_client(sub, enabled=False)
     else:
-        _, profile = servers.for_subscription(sub, revoking=True)
-        async with httpx.AsyncClient(timeout=25, follow_redirects=False) as client:
+        row, profile = servers.for_subscription(sub, revoking=True)
+        if profile.get('api') == 'wgdashboard':
+            private_key = wgdashboard.stored_private_key(row['id'], sub['id'], create=False)
+            async with httpx.AsyncClient(timeout=25, follow_redirects=False, trust_env=False) as client:
+                adapter = wgdashboard.WGDashboard(profile)
+                await adapter.revoke_peer(client, adapter.identity(private_key))
+            return
+        async with httpx.AsyncClient(timeout=25, follow_redirects=False, trust_env=False) as client:
             r = await client.delete(profile['url'] + '/peers/' + sub['id'],
                                     headers={'Authorization': 'Bearer ' + profile['token']})
             r.raise_for_status()

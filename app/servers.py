@@ -89,6 +89,11 @@ class WGProfile(Profile):
         return value
 
 
+class WGDashboardProfile(WGProfile):
+    api: Literal['wgdashboard'] = 'wgdashboard'
+    configuration: str = Field(min_length=1, max_length=64, pattern=r'^[A-Za-z0-9_=+.-]+$')
+
+
 class ClientsProfile(VLESSProfile):
     api: Literal['clients']
     token: str = Field(min_length=32, max_length=2048)
@@ -101,8 +106,13 @@ def validated(protocol, settings):
         model = {'legacy': XUIProfile, 'clients': ClientsProfile, 'remnawave': RemnawaveProfile}.get(mode)
         if model is None:
             raise ValueError('Неизвестный режим API VLESS')
+    elif protocol == 'wg':
+        mode = settings.get('api')
+        model = WGDashboardProfile if mode == 'wgdashboard' else WGProfile if mode is None else None
+        if model is None:
+            raise ValueError('Неизвестный режим API WireGuard')
     else:
-        model = WGProfile
+        raise ValueError('Неизвестный VPN-протокол')
     return model.model_validate(settings).model_dump()
 
 
@@ -119,7 +129,7 @@ def public(row):
     if row['protocol'] == 'xui':
         result['profile'] = {'legacy':'legacy_vless','clients':'clients_vless','remnawave':'remnawave_vless'}.get(decode(row).get('api','legacy'),'legacy_vless')
     else:
-        result['profile'] = 'wireguard_agent'
+        result['profile'] = 'wgdashboard' if decode(row).get('api') == 'wgdashboard' else 'wireguard_agent'
     result['bound_subscriptions'] = row.get('bound_subscriptions', 0)
     result['occupied'] = row.get('occupied', 0)
     return result
@@ -191,7 +201,7 @@ def update(sid, data):
         replacement = validated(before['protocol'], data.settings) if data.settings is not None else profile
         bound = conn.execute('SELECT count(*) FROM subscriptions WHERE server_id=?',(sid,)).fetchone()[0]
         identity = (('url','api','squad_uuids') if profile.get('api') == 'remnawave'
-                    else ('url','api','inbound_id','link_template','flow')) if before['protocol']=='xui' else ('url',)
+                    else ('url','api','inbound_id','link_template','flow')) if before['protocol']=='xui' else ('url','api','configuration')
         if bound and any(profile.get(k)!=replacement.get(k) for k in identity):
             raise HTTPException(409,'У сервера есть подписки. Для другого endpoint создайте отдельный сервер.')
         credentials_changed = replacement != profile

@@ -1,11 +1,10 @@
 """Адаптер WGDashboard; методы записи пока не подключены к заказам магазина."""
-from pydantic import Field
-from .servers import WGProfile
+from .servers import WGDashboardProfile
 from .panel import PanelError
 
 
-class CheckProfile(WGProfile):
-    configuration: str = Field(min_length=1, max_length=64, pattern=r'^[A-Za-z0-9_=+.-]+$')
+class CheckProfile(WGDashboardProfile):
+    pass
 
 
 class WGDashboard:
@@ -163,7 +162,7 @@ class WGDashboard:
         return raw
 
 
-def stored_private_key(server_id, credential_id):
+def stored_private_key(server_id, credential_id, *, create=True):
     """Фиксирует зашифрованный ключ до сети; повторы и перезапуски получают тот же."""
     import base64
     import uuid
@@ -187,6 +186,8 @@ def stored_private_key(server_id, credential_id):
             private_key = c.decrypt(row['private_key'])
             WGDashboard.identity(private_key)
             return private_key
+        if not create:
+            raise PanelError('WGDashboardStoredKeyMissing')
         private_key = base64.b64encode(X25519PrivateKey.generate().private_bytes(
             Encoding.Raw, PrivateFormat.Raw, NoEncryption())).decode()
         conn.execute('INSERT INTO wgdashboard_keys(server_id,credential_id,private_key) VALUES (?,?,?)',
