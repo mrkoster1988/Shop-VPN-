@@ -1,6 +1,8 @@
 'use strict';
 const basePath = document.querySelector('meta[name="shop-base"]').content;
 const $ = id => document.getElementById(id);
+const telegramApp = window.Telegram?.WebApp;
+const telegramDialogStack = [];
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const statusLabel = {pending:'Ожидает оплаты',checkout:'Оплата не завершена',paid:'Оплачено · готовим VPN',active:'Доступ выдан',canceled:'Отменён'};
 const money=(amount,currency)=>amount.toLocaleString('ru-RU')+' '+(currency==='XTR'?'★':'₽');
@@ -23,7 +25,38 @@ async function api(path, data, method) {
   return result;
 }
 function toast(message) { $('toast').textContent = message; $('toast').hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').hidden = true, 6000); }
-function show(id) { if (!$(id).open) $(id).showModal(); }
+function syncTelegramBackButton() {
+  const button = telegramApp?.BackButton;
+  if (!button) return;
+  const hasOpenDialog = telegramDialogStack.some(dialog => dialog.open);
+  if (hasOpenDialog && typeof button.show === 'function') button.show();
+  else if (!hasOpenDialog && typeof button.hide === 'function') button.hide();
+}
+function closeTelegramDialog() {
+  while (telegramDialogStack.length) {
+    const dialog = telegramDialogStack.pop();
+    if (dialog.open) { dialog.close(); return; }
+  }
+  const dialog = document.querySelector('dialog[open]');
+  if (dialog) dialog.close();
+  syncTelegramBackButton();
+}
+if (typeof telegramApp?.BackButton?.onClick === 'function') {
+  telegramApp.BackButton.onClick(closeTelegramDialog);
+  document.querySelectorAll('dialog').forEach(dialog => dialog.addEventListener('close', () => {
+    const index = telegramDialogStack.indexOf(dialog);
+    if (index !== -1) telegramDialogStack.splice(index, 1);
+    syncTelegramBackButton();
+  }));
+}
+function show(id) {
+  const dialog = $(id);
+  if (!dialog.open) {
+    dialog.showModal();
+    if (typeof telegramApp?.BackButton?.show === 'function') telegramDialogStack.push(dialog);
+  }
+  syncTelegramBackButton();
+}
 function date(ts) { return new Date(ts*1000).toLocaleDateString('ru-RU'); }
 function protocolName(id) { return id === 'wg' ? 'WireGuard' : 'VLESS'; }
 function profileAllowance(limit) { return limit===0 ? 'Только основной профиль' : 'Основной + до '+limit+' дополнительных профилей'; }
