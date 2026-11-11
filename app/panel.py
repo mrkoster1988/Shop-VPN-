@@ -180,6 +180,12 @@ class Remnawave:
         return data
 
     def username(self, identity):
+        import uuid
+        try:
+            if str(uuid.UUID(identity)) != identity:
+                raise ValueError()
+        except (ValueError, TypeError, AttributeError):
+            raise PanelError('InvalidSubscriptionIdentity') from None
         compact = identity.replace('-', '')
         if len(compact) != 32 or any(ch not in '0123456789abcdefABCDEF' for ch in compact):
             raise PanelError('InvalidSubscriptionIdentity')
@@ -210,8 +216,20 @@ class Remnawave:
         if (record.get('username') != username or record.get('vlessUuid') != sub['id']
                 or type(record.get('id')) is not int or record['id'] < 1):
             raise PanelError('PanelUserIdentityMismatch')
-        if record.get('status') != 'ACTIVE' or record.get('expireAt') != self.expiry(sub['expires']):
+        try:
+            actual_expiry = datetime.fromisoformat(record['expireAt'].replace('Z', '+00:00'))
+            valid_expiry = actual_expiry.tzinfo is not None and actual_expiry.timestamp() == sub['expires']
+        except (ValueError, TypeError, KeyError, AttributeError):
+            valid_expiry = False
+        if record.get('status') != 'ACTIVE' or not valid_expiry:
             raise PanelError('PanelUserWriteNotConfirmed')
+        expected_squads = set(self.profile['squad_uuids'])
+        if expected_squads:
+            squads = record.get('activeInternalSquads')
+            if (not isinstance(squads, list) or any(not isinstance(row, dict) for row in squads)
+                    or any(not isinstance(row.get('uuid'), str) for row in squads)
+                    or {row.get('uuid') for row in squads} != expected_squads):
+                raise PanelError('PanelUserSquadsNotConfirmed')
         return self.subscription_url(record)
 
     async def apply(self, client, sub, enabled=True):
@@ -253,7 +271,9 @@ class Remnawave:
             self.response(response)
         confirmed = await client.get(self.base + f'/users/{user_id}', headers=self.headers())
         result = self.response(confirmed)
-        if result.get('id') != user_id or result.get('status') != 'DISABLED':
+        if (result.get('id') != user_id or result.get('status') != 'DISABLED'
+                or result.get('username') != record.get('username')
+                or result.get('vlessUuid') != record.get('vlessUuid')):
             raise PanelError('PanelUserDisableNotConfirmed')
 
     async def disable(self, client, sub):

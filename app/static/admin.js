@@ -435,7 +435,7 @@ $('orders-reset').onclick = () => { $('orders-search').reset(); ordersFilters = 
 $('orders-prev').onclick = () => showOrders(Math.max(1, ordersPage-1));
 $('orders-next').onclick = () => showOrders(ordersPage+1);
 
-const serverProfileLabel = {legacy_vless:'Legacy API', clients_vless:'Clients JSON API', remnawave_vless:'Bearer API', wireguard_agent:'WG-агент'};
+const serverProfileLabel = {legacy_vless:'Legacy API', clients_vless:'Clients JSON API', remnawave_vless:'Remnawave v3 API', wireguard_agent:'WG-агент'};
 const serverState = {active:'Принимать новых', draining:'Только продления', maintenance:'Обслуживание', disabled:'Выдача выключена'};
 function serverCard(server) {
   const health = server.health === 'ok' ? 'API доступен' : server.health === 'error' ? 'Ошибка API' : 'Ещё не проверен';
