@@ -54,3 +54,35 @@ def test_synthetic_fixture_snapshot_survives_real_backup(client,tmp_path):
     assert before['counts']['referral_rewards']==1 and before['counts']['trial_claims']==1 and before['counts']['coupon_uses']==1
 
 from test_shop import client
+
+
+def test_upgrade_allows_only_empty_new_key_table_and_preserves_existing_rows(monkeypatch):
+    stage=s.Staging(type('Args',(),{})())
+    base={'table_digests':{'users':'users-hash'},'counts':{'sessions':1,'tickets':1}}
+    current={'table_digests':{'users':'users-hash','wgdashboard_keys':'empty-hash'},
+             'counts':{'sessions':1,'tickets':1,'wgdashboard_keys':0}}
+    monkeypatch.setattr(stage,'snapshot',lambda:current)
+    stage.compare(base,cleared=False)
+    current['counts']['wgdashboard_keys']=1
+    with pytest.raises(s.StageError,match='Unexpected keys'):stage.compare(base,cleared=False)
+    baseline={**current,'table_digests':dict(current['table_digests'])}
+    stage.compare(baseline,cleared=False)
+    current['table_digests']['wgdashboard_keys']='modified-key'
+    with pytest.raises(s.StageError,match='changed=wgdashboard_keys'):stage.compare(baseline,cleared=False)
+    del current['table_digests']['wgdashboard_keys']
+    with pytest.raises(s.StageError,match='missing=wgdashboard_keys'):stage.compare(baseline,cleared=False)
+
+
+def test_encrypted_wgdashboard_key_survives_real_backup_restore(client,tmp_path):
+    import sqlite3,uuid
+    from app import config as c
+    from app.wgdashboard import stored_private_key
+    from test_backup import b
+    identity=str(uuid.uuid4());key=stored_private_key('test-wg',identity)
+    archive=tmp_path/'keys.pvb'
+    b.create(c.DB,('ENCRYPTION_KEY='+os.environ['ENCRYPTION_KEY']+'\n').encode(),archive,'test-backup-password-long')
+    b.restore(archive,'test-backup-password-long',tmp_path/'restored-keys')
+    with sqlite3.connect(tmp_path/'restored-keys/shop.db') as conn:
+        row=conn.execute('SELECT server_id,credential_id,private_key FROM wgdashboard_keys').fetchone()
+    assert row[:2]==('test-wg',identity) and row[2]!=key
+    assert c.decrypt(row[2])==key

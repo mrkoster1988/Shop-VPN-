@@ -106,8 +106,10 @@ class Staging:
         missing=sorted(set(old)-set(new))
         allowed_new={'admin_audit','password_reset_tokens','staff_sessions','staff_users',
                      'store_settings','support_cases','support_messages','partner_events',
-                     'order_history_state','order_milestones','bot_menu_settings'}
+                     'order_history_state','order_milestones','bot_menu_settings','wgdashboard_keys'}
         added=sorted(set(new)-set(old))
+        check('wgdashboard_keys' not in added or current['counts'].get('wgdashboard_keys') == 0,
+              'Unexpected keys during initial WGDashboard migration')
         check(not changed and not missing and set(added)<=allowed_new,
               'Application data changed across snapshot/upgrade: changed='+','.join(sorted(changed))+
               '; missing='+','.join(missing)+'; added='+','.join(added))

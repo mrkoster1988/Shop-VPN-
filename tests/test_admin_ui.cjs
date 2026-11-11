@@ -527,3 +527,53 @@ test('устаревший ответ аналитики и ошибка не о
  const failed=p.run("refreshCommerceAnalytics()");p.replyAt(2,{detail:'Нет связи'},503);await failed;
  assert.equal(p.element('commerce-analytics-details').innerHTML,'');
 });
+
+for (const mode of ['wgdashboard','agent']) test(`WireGuard form submits explicit ${mode} profile`,async()=>{
+  class Fields {constructor(form){this.fields=form.fields;}get(name){return this.fields[name];}}
+  const page=adminPage({FormData:Fields});
+  const request=page.run(`$('server-form').onsubmit({preventDefault(){},target:{fields:{name:'WireGuard',protocol:'wg',capacity:'0',wg_api:'${mode}',url:'https://wg.example/prefix',token:'test-key',configuration:'wg0',api:'remnawave',remnawave_token:'stale-secret'},querySelector(){return {disabled:false};}}})`);
+  assert.deepEqual(page.bodies[0].settings,{url:'https://wg.example/prefix',token:'test-key',...(mode==='wgdashboard'?{api:'wgdashboard',configuration:'wg0'}:{})});
+  page.replyAt(0,uiServer({protocol:'wg',profile:mode==='agent'?'wireguard_agent':mode}));
+  await new Promise(setImmediate);
+  page.replyAt(1,{servers:[uiServer({protocol:'wg',profile:mode==='agent'?'wireguard_agent':mode})]});
+  await request;
+  assert.ok(page.element('server-list').innerHTML.includes(mode==='agent'?'Pushok WG-агент':'WGDashboard'));
+});
+
+test('WireGuard mode changes and invalid interfaces cannot silently save',async()=>{
+  class Fields {constructor(form){this.fields=form.fields;}get(name){return this.fields[name];}}
+  for (const fields of [{wg_api:'agent',url:''},{wg_api:'wgdashboard',url:'https://wg.example',configuration:'../wg0'},{wg_api:'unknown',url:'https://wg.example'}]){
+    const page=adminPage({FormData:Fields});
+    await page.run(`editingServer={id:'a',protocol:'wg',profile:'wgdashboard'}; $('server-form').onsubmit({preventDefault(){},target:{fields:${JSON.stringify(fields)},querySelector(){return {disabled:false};}}})`);
+    assert.equal(page.requests.length,0);
+    assert.notEqual(page.element('server-form-error').textContent,'');
+  }
+});
+
+test('editing WGDashboard keeps blank credentials and the selected adapter',async()=>{
+  class Fields {constructor(form){this.fields=form.fields;}get(name){return this.fields[name];}}
+  const page=adminPage({FormData:Fields});
+  const form=page.element('server-form');form.elements={};
+  for(const name of ['name','location','capacity','protocol','api','wg_api','url']) form.elements[name]={value:''};
+  page.element('server-dialog').showModal=function(){this.open=true;};
+  page.run("openServer({id:'a',name:'WG',protocol:'wg',profile:'wgdashboard',state:'active',version:3})");
+  assert.equal(form.elements.wg_api.value,'wgdashboard');
+  const request=page.run(`$('server-form').onsubmit({preventDefault(){},target:{fields:{name:'Renamed',capacity:'0',wg_api:'wgdashboard',url:'',token:'',configuration:''},querySelector(){return {disabled:false};}}})`);
+  assert.deepEqual(page.bodies[0],{name:'Renamed',location:'',capacity:0,version:3,state:'active'});
+  page.replyAt(0,{});await new Promise(setImmediate);page.replyAt(1,{servers:[]});await request;
+});
+
+test('panel-specific fields and limitations follow current protocol selection',()=>{
+  const page=adminPage();
+  page.element('server-protocol').value='wg';page.element('server-wg-api').value='wgdashboard';
+  page.element('server-api').value='remnawave';page.run('showServerFields()');
+  assert.equal(page.element('server-wg-configuration').hidden,false);
+  assert.equal(page.element('server-wg-interface').disabled,false);
+  assert.equal(page.element('server-wgdashboard-help').hidden,false);
+  assert.equal(page.element('server-remnawave-help').hidden,true);
+  page.element('server-protocol').value='xui';page.run('showServerFields()');
+  assert.equal(page.element('server-wg-configuration').hidden,true);
+  assert.equal(page.element('server-wg-interface').disabled,true);
+  assert.equal(page.element('server-wgdashboard-help').hidden,true);
+  assert.equal(page.element('server-remnawave-help').hidden,false);
+});

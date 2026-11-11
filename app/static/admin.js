@@ -435,7 +435,7 @@ $('orders-reset').onclick = () => { $('orders-search').reset(); ordersFilters = 
 $('orders-prev').onclick = () => showOrders(Math.max(1, ordersPage-1));
 $('orders-next').onclick = () => showOrders(ordersPage+1);
 
-const serverProfileLabel = {legacy_vless:'Legacy API', clients_vless:'Clients JSON API', remnawave_vless:'Remnawave v3 API', wireguard_agent:'WG-агент'};
+const serverProfileLabel = {legacy_vless:'Legacy API', clients_vless:'Clients JSON API', remnawave_vless:'Remnawave v3 API', wireguard_agent:'Pushok WG-агент', wgdashboard:'WGDashboard'};
 const serverState = {active:'Принимать новых', draining:'Только продления', maintenance:'Обслуживание', disabled:'Выдача выключена'};
 function serverCard(server) {
   const health = server.health === 'ok' ? 'API доступен' : server.health === 'error' ? 'Ошибка API' : 'Ещё не проверен';
@@ -455,16 +455,22 @@ function showServerFields() {
   $('server-clients-auth').hidden = mode !== 'clients';
   $('server-remnawave-auth').hidden = mode !== 'remnawave';
   $('server-vless-link-fields').hidden = mode === 'remnawave';
-  $('server-remnawave-help').hidden = mode !== 'remnawave';
+  $('server-remnawave-help').hidden = !xui || mode !== 'remnawave';
+  const dashboard = !xui && $('server-wg-api').value === 'wgdashboard';
+  $('server-wg-configuration').hidden = !dashboard;
+  $('server-wg-interface').disabled = !dashboard;
+  $('server-wgdashboard-help').hidden = !dashboard;
 }
 $('server-protocol').onchange = showServerFields;
 $('server-api').onchange = showServerFields;
+$('server-wg-api').onchange = showServerFields;
 function openServer(server = null) {
   editingServer = server;
   const form = $('server-form'); form.reset();
   form.elements.name.value = server?.name || ''; form.elements.location.value = server?.location || '';
   form.elements.capacity.value = server?.capacity || 0; form.elements.protocol.value = server?.protocol || 'xui';
   form.elements.api.value = server?.profile === 'clients_vless' ? 'clients' : server?.profile === 'remnawave_vless' ? 'remnawave' : 'legacy';
+  form.elements.wg_api.value = server?.profile === 'wgdashboard' ? 'wgdashboard' : 'agent';
   form.elements.protocol.disabled = !!server; form.elements.url.required = !server;
   $('server-title').textContent = server ? 'Профиль сервера' : 'Новый сервер';
   $('server-form-error').textContent = ''; showServerFields(); $('server-dialog').showModal();
@@ -480,14 +486,19 @@ $('server-form').onsubmit = async event => {
   try {
     const url = String(values.get('url') || '').trim();
     const mode = String(values.get('api') || 'legacy');
+    const wgMode = String(values.get('wg_api') || 'agent');
+    if (protocol === 'wg' && !['agent','wgdashboard'].includes(wgMode)) throw new Error('Выберите панель WireGuard.');
+    const originalWGMode = original?.profile === 'wgdashboard' ? 'wgdashboard' : 'agent';
     const originalMode = original?.profile === 'clients_vless' ? 'clients' : original?.profile === 'remnawave_vless' ? 'remnawave' : 'legacy';
-    const fields = protocol !== 'xui' ? ['token'] : mode === 'remnawave' ? ['remnawave_token','squad_uuids'] : mode === 'clients' ? ['api_token','inbound_id','link_template','flow'] : ['username','password','inbound_id','link_template','flow'];
+    const fields = protocol !== 'xui' ? ['token','configuration'] : mode === 'remnawave' ? ['remnawave_token','squad_uuids'] : mode === 'clients' ? ['api_token','inbound_id','link_template','flow'] : ['username','password','inbound_id','link_template','flow'];
     if (original?.protocol === 'xui' && !url && mode !== originalMode) throw new Error('Для смены режима API введите полный профиль.');
+    if (original?.protocol === 'wg' && !url && wgMode !== originalWGMode) throw new Error('Для смены панели введите полный профиль.');
     if (!url && fields.some(key=>values.get(key))) throw new Error('Для замены профиля укажите адрес и все данные подключения.');
+    if (url && protocol === 'wg' && wgMode === 'wgdashboard' && !/^[A-Za-z0-9_=+.\-]{1,64}$/.test(String(values.get('configuration') || '').trim())) throw new Error('Укажите интерфейс WireGuard, например wg0.');
     const profile = url ? protocol === 'xui' ? mode === 'remnawave'
       ? {url,api:mode,token:String(values.get('remnawave_token') || ''),squad_uuids:String(values.get('squad_uuids') || '').split(/[\n,]+/).map(x=>x.trim()).filter(Boolean)}
       : {url,api:mode,...(mode === 'clients' ? {token:String(values.get('api_token') || '')} : {username:String(values.get('username') || ''),password:String(values.get('password') || '')}),inbound_id:Number(values.get('inbound_id')),link_template:String(values.get('link_template') || ''),flow:String(values.get('flow') || '')}
-      : {url,token:String(values.get('token') || '')} : null;
+      : {url,token:String(values.get('token') || ''),...(wgMode === 'wgdashboard' ? {api:'wgdashboard',configuration:String(values.get('configuration') || '').trim()} : {})} : null;
     const data = {name:String(values.get('name')),location:String(values.get('location') || ''),capacity:Number(values.get('capacity'))};
     if (original) { data.version=original.version; data.state=profile ? 'disabled' : original.state; if (profile) data.settings=profile; }
     else { data.protocol=protocol; data.settings=profile; }
