@@ -513,7 +513,7 @@ $('server-list').onsubmit = async event => {
   event.preventDefault(); const form=event.target.closest('[data-server]'); if (!form) return;
   const values=new FormData(form), button=form.querySelector('button[type="submit"]'); button.disabled=true;
   try {
-    await api('servers/'+encodeURIComponent(form.dataset.server), {method:'PUT',data:{name:String(values.get('name')),location:String(values.get('location') || ''),capacity:Number(values.get('capacity')),state:String(values.get('state')),version:Number(form.dataset.version),...(form.elements.schedule_expiry ? {schedule_expiry:form.elements.schedule_expiry.checked,panel_timezone:String(values.get('panel_timezone') || 'UTC')} : {})}});
+    await api('servers/'+encodeURIComponent(form.dataset.server), {method:'PUT',data:{name:String(values.get('name')),location:String(values.get('location') || ''),capacity:Number(values.get('capacity')),state:String(values.get('state')),version:Number(form.dataset.version),...(form.elements?.schedule_expiry ? {schedule_expiry:form.elements.schedule_expiry.checked,panel_timezone:String(values.get('panel_timezone') || 'UTC')} : {})}});
     await refreshServers(); $('error').textContent='';
   } catch (error) { $('error').textContent=error.message; button.disabled=false; }
 };

@@ -31,6 +31,7 @@ function syncTelegramTheme() {
   document.documentElement.dataset.telegramTheme = telegramApp.colorScheme === 'dark' ? 'dark' : 'light';
 }
 function setMiniappActive(route) {
+  if (!telegramApp?.initData) return;
   const nav = $('miniapp-nav');
   if (!nav) return;
   if (!['home', 'plans', 'help', 'account'].includes(route)) route = 'home';
