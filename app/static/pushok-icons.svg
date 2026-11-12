@@ -50,4 +50,5 @@
 <symbol id="pi-clock" viewBox="0 0 24 24"><g fill="none" stroke="#56e2d7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></g></symbol>
 <symbol id="pi-device" viewBox="0 0 24 24"><g fill="none" stroke="#56e2d7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2.5" width="12" height="19" rx="2.3"/><path d="M10 18h4M10 5h4"/></g></symbol>
 <symbol id="pi-globe" viewBox="0 0 24 24"><g fill="none" stroke="#56e2d7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c-6 6-6 12 0 18M12 3c6 6 6 12 0 18"/></g></symbol>
+<symbol id="pi-lock" viewBox="0 0 24 24"><g fill="none" stroke="#56e2d7" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><circle cx="12" cy="15.5" r="1" fill="#ff9f66" stroke="none"/></g></symbol>
 </svg>
