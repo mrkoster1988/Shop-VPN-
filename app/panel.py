@@ -1,4 +1,5 @@
-"""Explicit VLESS API adapters. Never guess or fall back after a remote write."""
+"""Явные адаптеры панелей. После сетевой записи режим API не меняется."""
+import base64
 import json
 from datetime import datetime, timezone
 from urllib.parse import quote, urlsplit
@@ -17,6 +18,7 @@ def result(response):
 
 
 class Legacy:
+    inbound_protocol = 'vless'
     def __init__(self, profile):
         self.profile = profile
         self.base = profile['url']
@@ -30,9 +32,9 @@ class Legacy:
         csrf = response.headers.get('X-CSRF-Token')
         if csrf and isinstance(self, Legacy) and not isinstance(self, Clients):
             client.headers['X-CSRF-Token'] = csrf
-        if (not isinstance(obj, dict) or obj.get('protocol') != 'vless'
+        if (not isinstance(obj, dict) or obj.get('protocol') != self.inbound_protocol
                 or ('id' in obj and (type(obj['id']) is not int or obj['id'] != self.inbound_id))):
-            raise PanelError('VLESSInboundUnavailable')
+            raise PanelError(self.inbound_protocol.upper() + 'InboundUnavailable')
         return obj
 
     async def check(self, client):
@@ -99,8 +101,22 @@ class Clients(Legacy):
     async def check(self, client):
         client.headers['Authorization'] = 'Bearer ' + self.profile['token']
         inbound = await self.inbound(client)
+        self.validate_inbound(inbound, True)
         await self.search(client, '')
         return inbound
+
+    def validate_inbound(self, inbound, enabled):
+        pass
+
+    def new_payload(self, sub):
+        return {'id':sub['id'], 'email':'pushok_' + sub['id'], 'subId':sub['id'].replace('-',''),
+                'flow':self.profile['flow'], 'limitIp':0, 'limitHwid':0, 'totalGB':0}
+
+    def connection_link(self, sub):
+        return self.profile['link_template'].replace('{uuid}',sub['id'])
+
+    def validate_issued_record(self, record):
+        pass
 
     async def search(self, client, email):
         obj = result(await client.get(self.base + '/panel/api/clients/list/paged',
@@ -121,20 +137,24 @@ class Clients(Legacy):
         record = obj['client']
         if (record.get('email') != email or record.get('uuid') != sub['id']
                 or obj.get('inboundIds') != [self.inbound_id]
+                or type(obj['inboundIds'][0]) is not int
                 or record.get('subId') != sub['id'].replace('-','')):
             raise PanelError('ClientIdentityMismatch')
         return record
 
     async def apply(self, client, sub, enabled):
         client.headers['Authorization'] = 'Bearer ' + self.profile['token']
-        await self.inbound(client)
+        inbound = await self.inbound(client)
+        self.validate_inbound(inbound, enabled)
         email = 'pushok_' + sub['id']
         exists = await self.search(client,email)
         if not exists and not enabled:
             return ''
         if exists:
             record = await self.read(client,email,sub)
-            # Preserve VLESS settings. The API replaces the client, rather than patching it.
+            if enabled:
+                self.validate_issued_record(record)
+            # Сохраняем параметры клиента: API заменяет запись, а не частично обновляет её.
             payload = {key:value for key,value in record.items() if key not in
                 ('id','uuid','createdAt','updatedAt','allowedIPs','reverse')}
             payload['id'] = record['uuid']
@@ -143,16 +163,94 @@ class Clients(Legacy):
             if record.get('allowedIPs'):
                 raise PanelError('UnexpectedTunnelClient')
         else:
-            payload = {'id':sub['id'], 'email':email, 'subId':sub['id'].replace('-',''),
-                       'flow':self.profile['flow'], 'limitIp':0, 'limitHwid':0, 'totalGB':0}
+            payload = self.new_payload(sub)
         payload.update(enable=enabled, expiryTime=sub['expires']*1000)
         path = '/panel/api/clients/update/'+quote(email,safe='') if exists else '/panel/api/clients/add'
         body = payload if exists else {'client':payload, 'inboundIds':[self.inbound_id]}
         result(await client.post(self.base+path,json=body))
         confirmed = await self.read(client,email,sub)
-        if confirmed.get('enable') is not enabled or confirmed.get('expiryTime') != sub['expires']*1000:
+        if (confirmed.get('enable') is not enabled or type(confirmed.get('expiryTime')) is not int
+                or confirmed['expiryTime'] != sub['expires']*1000):
             raise PanelError('ClientWriteNotConfirmed')
-        return self.profile['link_template'].replace('{uuid}',sub['id'])
+        if enabled:
+            self.validate_issued_record(confirmed)
+        return self.connection_link(sub) if enabled else ''
+
+
+class VMessClients(Clients):
+    """VMess AEAD: Clients JSON, контракт 3x-ui e535df03745c5ad003ae48e812024eb5fdc2124d."""
+    inbound_protocol = 'vmess'
+
+    async def inbound(self, client):
+        value = await super().inbound(client)
+        if type(value.get('id')) is not int or value['id'] != self.inbound_id:
+            raise PanelError('VMESSInboundUnavailable')
+        return value
+
+    @staticmethod
+    def object(value):
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except (ValueError, TypeError):
+                raise PanelError('UnsupportedVMessSchema') from None
+        if not isinstance(value, dict):
+            raise PanelError('UnsupportedVMessSchema')
+        return value
+
+    def validate_inbound(self, inbound, enabled):
+        # Изменившийся транспорт не должен мешать отзыву уже выданного UUID.
+        if not enabled:
+            return
+        stream = self.object(inbound.get('streamSettings'))
+        network = stream.get('network')
+        if network == 'raw':
+            network = 'tcp'
+        if (inbound.get('enable') is not True or stream.get('security') != 'tls'
+                or network != self.profile['network']):
+            raise PanelError('VMessTransportMismatch')
+        tls = self.object(stream.get('tlsSettings'))
+        if tls.get('serverName') and tls['serverName'] != self.profile['sni']:
+            raise PanelError('VMessServerNameMismatch')
+        if network == 'tcp':
+            tcp = self.object(stream.get('rawSettings', stream.get('tcpSettings', {})))
+            header = self.object(tcp.get('header', {}))
+            if header.get('type', 'none') != 'none':
+                raise PanelError('UnsupportedVMessTransport')
+        elif network == 'ws':
+            ws = self.object(stream.get('wsSettings'))
+            headers = self.object(ws.get('headers', {}))
+            host = ws.get('host') or headers.get('Host', headers.get('host', ''))
+            if (ws.get('path', '/') != self.profile['path']
+                    or host != self.profile['ws_host'] or ws.get('maxEarlyData', 0)
+                    or ws.get('earlyDataHeaderName')):
+                raise PanelError('VMessWebSocketMismatch')
+        else:
+            raise PanelError('UnsupportedVMessTransport')
+
+    def new_payload(self, sub):
+        return {'id':sub['id'], 'email':'pushok_' + sub['id'], 'subId':sub['id'].replace('-',''),
+                'security':'auto', 'limitIp':0, 'limitHwid':0, 'totalGB':0}
+
+    def validate_issued_record(self, record):
+        # AEAD не имеет ненулевых alterId; неизвестный/старый режим не выдаём.
+        if (record.get('security') != 'auto' or type(record.get('alterId', 0)) is not int
+                or record.get('alterId', 0) != 0):
+            raise PanelError('VMessAEADRequired')
+
+    def connection_link(self, sub):
+        data = {'v':'2', 'ps':'puShok shop VPN', 'add':self.profile['address'],
+                'port':str(self.profile['port']), 'id':sub['id'], 'aid':'0', 'scy':'auto',
+                'net':self.profile['network'], 'type':'none', 'host':self.profile['ws_host'],
+                'path':self.profile['path'], 'tls':'tls', 'sni':self.profile['sni'], 'insecure':'0'}
+        return 'vmess://' + base64.b64encode(json.dumps(data, ensure_ascii=False,
+                                                     separators=(',', ':')).encode()).decode()
+
+    async def apply(self, client, sub, enabled):
+        link = await super().apply(client, sub, enabled)
+        if enabled:
+            self.validate_inbound(await self.inbound(client), True)
+        return link
 
 
 class Remnawave:
@@ -293,8 +391,14 @@ class Remnawave:
         await self.disable_record(client, record)
 
 
-def adapter(profile):
+def adapter(profile, protocol='xui'):
     mode = profile.get('api','legacy')
+    if protocol == 'vmess':
+        if mode != 'clients':
+            raise PanelError('UnsupportedVMessAPI')
+        return VMessClients(profile)
+    if protocol != 'xui':
+        raise PanelError('UnsupportedPanelProtocol')
     if mode == 'legacy':
         return Legacy(profile)
     if mode == 'clients':

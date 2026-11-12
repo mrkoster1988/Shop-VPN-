@@ -102,7 +102,7 @@ function show(id) {
   syncTelegramBackButton();
 }
 function date(ts) { return new Date(ts*1000).toLocaleDateString('ru-RU'); }
-function protocolName(id) { return id === 'wg' ? 'WireGuard' : 'VLESS'; }
+function protocolName(id) { return ({wg:'WireGuard',xui:'VLESS',vmess:'VMess'})[id] || id; }
 function profileAllowance(limit) { return limit===0 ? 'Только основной профиль' : 'Основной + до '+limit+' дополнительных профилей'; }
 function displayOrderStatus(order) { if(order.progress?.title)return order.progress.title; return order.kind==='referral'&&order.status==='paid'?'Добавляем бонусные дни':order.kind==='referral'&&order.status==='active'?'Бонусные дни добавлены':order.kind==='trial'&&order.status==='paid'?'Готовим пробный VPN':order.kind==='trial'&&order.status==='active'?'Пробный доступ выдан':statusLabel[order.status] || order.status; }
 function renderPlans() {
@@ -345,14 +345,14 @@ function connectionInstructions() {
   const mobile = platform==='android' || platform==='ios';
   const wg = connection.protocol==='wg';
   const remoteSubscription = connection.remoteSubscription;
-  const install = wg ? 'Установите приложение WireGuard для выбранного устройства.' : 'Установите VPN-клиент с поддержкой VLESS для выбранного устройства.';
+  const install = wg ? 'Установите приложение WireGuard для выбранного устройства.' : 'Установите VPN-клиент с поддержкой '+protocolName(connection.protocol)+' для выбранного устройства.';
   const source = platform==='ios' || platform==='macos' ? 'Ищите приложение в App Store или на официальном сайте его разработчика.' : platform==='android' ? 'Используйте магазин приложений или официальный сайт разработчика.' : 'Скачайте клиент с официального сайта его разработчика для вашей системы.';
   const importing = wg ? (platform==='linux' ? 'Скачайте файл .conf. Импортируйте его в установленный клиент WireGuard; при ручной настройке обратитесь к администратору.' : 'Скачайте файл .conf. В WireGuard добавьте туннель и выберите импорт из файла.') : remoteSubscription ? 'Скопируйте HTTPS-ссылку. В VPN-клиенте выберите добавление подписки по URL или по ссылке; обновление подписки будет получать конфигурации с панели.' : 'Нажмите «Копировать настройки». В VPN-клиенте выберите добавление профиля или импорт из буфера обмена. Можно также скачать ссылку как .txt.';
   const alternative = mobile ? 'Если настройки открыты на другом экране, покажите QR-код и отсканируйте его внутри VPN-клиента.' : 'Для телефона можно открыть QR-код на этом компьютере и отсканировать его в VPN-клиенте телефона.';
   const titles = ['Установите приложение','Импортируйте настройки','Включите VPN'];
   const steps = [install+' '+source, importing+' '+alternative, 'Выберите импортированный профиль и включите подключение. Разрешите добавление VPN, если устройство запросит это. Затем откройте сайт в браузере и проверьте интернет.'];
   $('connection-steps').innerHTML = steps.map((text,i)=>`<li><h3>${titles[i]}</h3><p>${esc(text)}</p></li>`).join('');
-  $('config-help').textContent = wg ? 'Импортируйте именно файл .conf или сканируйте код внутри WireGuard. Не используйте этот профиль в VLESS-клиенте.' : remoteSubscription ? 'Это ссылка подписки. Добавьте её в клиент как подписку по URL; QR-код также содержит ссылку. Поддержка подписок зависит от выбранного клиента.' : 'Клиент должен поддерживать параметры вашей VLESS-ссылки. Скопируйте ссылку целиком, без лишних пробелов. Обычная камера телефона может не распознать VPN-конфигурацию.';
+  $('config-help').textContent = wg ? 'Импортируйте именно файл .conf или сканируйте код внутри WireGuard. Не используйте этот профиль в VLESS-клиенте.' : connection.protocol==='vmess' ? 'Импортируйте ссылку vmess:// целиком в клиент с поддержкой VMess AEAD и выбранного TCP/WS + TLS. Включите автоматическую дату и время. Не отключайте проверку сертификата TLS.' : remoteSubscription ? 'Это ссылка подписки. Добавьте её в клиент как подписку по URL; QR-код также содержит ссылку. Поддержка подписок зависит от выбранного клиента.' : 'Клиент должен поддерживать параметры вашей VLESS-ссылки. Скопируйте ссылку целиком, без лишних пробелов. Обычная камера телефона может не распознать VPN-конфигурацию.';
 }
 function connectionReady() {
   if (!connection || connection.expires*1000<=Date.now()) {

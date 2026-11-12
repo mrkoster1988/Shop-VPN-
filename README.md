@@ -13,7 +13,7 @@
 
 </div>
 
-puShok shop VPN — самостоятельный магазин подключений VLESS и WireGuard для владельцев своих серверов и доменов. Покупатель выбирает тариф, оплачивает заказ и получает настройки подключения; владелец управляет продажами, клиентами и панелями из своего кабинета.
+puShok shop VPN — самостоятельный магазин подключений VLESS, VMess и WireGuard для владельцев своих серверов и доменов. Покупатель выбирает тариф, оплачивает заказ и получает настройки подключения; владелец управляет продажами, клиентами и панелями из своего кабинета.
 
 У puShok shop VPN собственные код, база, интерфейс и логика продаж. Панели подключаются через отдельные API-адаптеры; другой магазин для работы не требуется. Фирменный стиль puShok — рыжий кот, бирюзовый, тёмно-синий и оранжевый, иллюстрации цветными карандашами.
 
@@ -49,7 +49,7 @@ puShok shop VPN — самостоятельный магазин подключ
 </p>
 
 
-- **3x-ui** — Выдача, продление и отключение VLESS-клиентов через API. [Настройка](docs/THREEXUI_API.md).
+- **3x-ui** — Выдача, продление и отключение VLESS и VMess AEAD через API. [VLESS](docs/THREEXUI_API.md) · [VMess](docs/VMESS.md).
 - **WGDashboard** — Управление WireGuard peers и выдача конфигураций через API. [Настройка](docs/WGDASHBOARD.md).
 - **Remnawave** — Пользователи, сроки и подписки через прямой REST API. [Настройка](docs/REMNAWAVE.md).
 
@@ -63,8 +63,14 @@ puShok shop VPN — самостоятельный магазин подключ
 </p>
 
 
+<p align="center">
+  <a href="https://www.v2fly.org/en_US/developer/protocols/vmess.html"><img src="docs/assets/technologies/vmess.webp" width="360" alt="VMess — иллюстрация puShok shop VPN"></a>
+</p>
+
 - **VLESS** — Лёгкий протокол с UUID. Защита и транспорт выбираются в конфигурации сервера: например, TLS или REALITY.
 - **WireGuard** — VPN-туннель с ключами устройств. Конфигурация и QR-код для подключения.
+
+- **VMess AEAD** — 3x-ui Clients JSON, TCP/WS + TLS. Выдача ссылки, продление и отзыв; [настройка и границы поддержки](docs/VMESS.md).
 
 [Проверка API панелей](docs/PANEL_CHECK.md) · [Приёмка WireGuard](docs/WIREGUARD_STAGING.md)
 
@@ -75,8 +81,7 @@ puShok shop VPN — самостоятельный магазин подключ
 **Шифрованные прокси**
 
 <p align="center">
-  <a href="https://www.v2fly.org/en_US/developer/protocols/vmess.html"><img src="docs/assets/technologies/vmess.webp" width="360" alt="VMess — иллюстрация puShok shop VPN"></a>
-  &nbsp; <a href="https://sing-box.sagernet.org/manual/proxy-protocol/trojan/"><img src="docs/assets/technologies/trojan.webp" width="360" alt="Trojan — иллюстрация puShok shop VPN"></a>
+  <a href="https://sing-box.sagernet.org/manual/proxy-protocol/trojan/"><img src="docs/assets/technologies/trojan.webp" width="360" alt="Trojan — иллюстрация puShok shop VPN"></a>
 </p>
 
 <p align="center">
@@ -85,7 +90,6 @@ puShok shop VPN — самостоятельный магазин подключ
 </p>
 
 
-- **VMess** — Шифрованный прокси-протокол с UUID. Для новых конфигураций — аутентификация AEAD.
 - **Trojan** — Прокси-соединение с защитой TLS и аутентификацией по паролю.
 - **Shadowsocks / Shadowsocks 2022** — Семейство шифрованных прокси. Метод шифрования и формат ключа должны поддерживаться клиентом.
 - **AnyTLS** — Прокси поверх TLS с настраиваемым дополнением пакетов. Требуется совместимое приложение.

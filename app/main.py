@@ -146,7 +146,7 @@ class TgAuth(BaseModel):
 
 class Purchase(BaseModel):
     plan: str = Field(min_length=1, max_length=32, pattern=r'^[a-z][a-z0-9_-]*$')
-    protocol: Literal['xui', 'wg']
+    protocol: protocols.SalesProtocol
     accept_terms: bool = False
     plan_version: int = Field(default=1, ge=1, strict=True)
     receipt_email: str | None = Field(default=None, max_length=254)
@@ -197,7 +197,7 @@ class ServerFields(BaseModel):
         return value
 
 class ServerCreate(ServerFields):
-    protocol: Literal['xui','wg']
+    protocol: protocols.SalesProtocol
     settings: dict
 
 class ServerUpdate(ServerFields):
@@ -916,7 +916,7 @@ async def create_server(data: ServerCreate):
         try:
             result = servers.create(data)
         except (ValidationError, ValueError):
-            raise HTTPException(422,'Проверьте профиль подключения: адрес, секреты, inbound и шаблон VLESS.') from None
+            raise HTTPException(422,'Проверьте профиль подключения: API, адрес, секреты, inbound и параметры протокола.') from None
     return JSONResponse(result, status_code=201)
 
 @app.put('/api/admin/servers/{sid}', dependencies=[Depends(admin)])
@@ -1051,7 +1051,7 @@ async def admin_user(user_id: int = APIPath(ge=1, le=9223372036854775807),
 async def admin_orders(q: str = Query(default='', max_length=100),
                        status: Literal['', 'pending', 'checkout', 'paid', 'active', 'canceled'] = '',
                        method: Literal['', 'manual', 'yookassa', 'sbp', 'stars','trial','referral'] = '',
-                       protocol: Literal['', 'xui', 'wg'] = '',
+                       protocol: Literal['', 'xui', 'wg', 'vmess'] = '',
                        page: int = Query(default=1, ge=1, le=1000000),
                        page_size: int = Query(default=25, ge=1, le=100)):
     conditions, args = [], []

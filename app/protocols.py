@@ -1,5 +1,8 @@
 """Реестр протоколов: справочник возможностей, отдельно от доступности серверов."""
 from dataclasses import asdict, dataclass
+from typing import Literal
+
+SalesProtocol = Literal['xui', 'wg', 'vmess']
 
 
 @dataclass(frozen=True)
@@ -28,9 +31,10 @@ PROTOCOLS = (
              'WireGuard: импорт файла .conf или QR; Android, iOS, Windows, macOS, Linux.',
              'https://www.wireguard.com/install/', 'wg', ('Агент WireGuard', 'WGDashboard')),
     Protocol('vmess', 'VMess', 'Шифрованный прокси-протокол с UUID.',
-             'Кандидат: 3x-ui; реализации Xray и sing-box',
-             'VMess AEAD; согласованные транспорт и TLS, синхронизированное время.',
-             'https://www.v2fly.org/en_US/developer/protocols/vmess.html'),
+             '3x-ui Clients JSON API',
+             'VMess AEAD: TCP+TLS или WebSocket+TLS; время клиента и сервера синхронизировано.',
+             'https://www.v2fly.org/en_US/developer/protocols/vmess.html', 'vmess',
+             ('3x-ui Clients JSON · TCP/WS + TLS',)),
     Protocol('trojan', 'Trojan', 'Прокси поверх TLS с аутентификацией по паролю.',
              'Кандидаты: 3x-ui / S-UI',
              'Клиент Trojan; совпадающие пароль, TLS и имя сервера.',

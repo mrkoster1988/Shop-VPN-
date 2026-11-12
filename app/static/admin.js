@@ -377,7 +377,7 @@ $('create-plan-form').onsubmit = async event => {
 };
 
 const orderStatus = {pending:'Ожидает оплаты', checkout:'Оплата не завершена', paid:'Готовим доступ', active:'Доступ выдан', canceled:'Отменён'};
-const protocolLabel = value => value === 'wg' ? 'WireGuard' : value === 'xui' ? 'VLESS · 3x-ui' : value;
+const protocolLabel = value => ({wg:'WireGuard',xui:'VLESS',vmess:'VMess AEAD'})[value] || value;
 const dateTime = value => value ? new Date(value * 1000).toLocaleString('ru-RU') : '—';
 async function refreshUsers() {
   const request = ++usersRequest;
@@ -481,7 +481,7 @@ $('orders-reset').onclick = () => { $('orders-search').reset(); ordersFilters = 
 $('orders-prev').onclick = () => showOrders(Math.max(1, ordersPage-1));
 $('orders-next').onclick = () => showOrders(ordersPage+1);
 
-const serverProfileLabel = {legacy_vless:'Legacy API', clients_vless:'Clients JSON API', remnawave_vless:'Remnawave v3 API', wireguard_agent:'Pushok WG-агент', wgdashboard:'WGDashboard'};
+const serverProfileLabel = {legacy_vless:'Legacy API', clients_vless:'Clients JSON API', clients_vmess:'3x-ui Clients JSON · VMess', remnawave_vless:'Remnawave v3 API', wireguard_agent:'Pushok WG-агент', wgdashboard:'WGDashboard'};
 const serverState = {active:'Принимать новых', draining:'Только продления', maintenance:'Обслуживание', disabled:'Выдача выключена'};
 function serverCard(server) {
   const health = server.health === 'ok' ? 'API доступен' : server.health === 'error' ? 'Ошибка API' : 'Ещё не проверен';
@@ -496,14 +496,18 @@ async function refreshServers() {
 }
 function showServerFields() {
   const xui = $('server-protocol').value === 'xui';
+  const wg = $('server-protocol').value === 'wg';
+  const vmess = $('server-protocol').value === 'vmess';
   const mode = $('server-api').value;
-  $('server-xui-fields').hidden = !xui; $('server-wg-fields').hidden = xui;
+  $('server-xui-fields').hidden = !xui; $('server-wg-fields').hidden = !wg;
+  $('server-vmess-fields').hidden = !vmess;
+  $('server-vmess-ws-fields').hidden = !vmess || $('server-vmess-network').value !== 'ws';
   $('server-legacy-auth').hidden = mode !== 'legacy';
   $('server-clients-auth').hidden = mode !== 'clients';
   $('server-remnawave-auth').hidden = mode !== 'remnawave';
   $('server-vless-link-fields').hidden = mode === 'remnawave';
   $('server-remnawave-help').hidden = !xui || mode !== 'remnawave';
-  const dashboard = !xui && $('server-wg-api').value === 'wgdashboard';
+  const dashboard = wg && $('server-wg-api').value === 'wgdashboard';
   $('server-wg-configuration').hidden = !dashboard;
   $('server-wg-interface').disabled = !dashboard;
   $('server-wgdashboard-help').hidden = !dashboard;
@@ -511,6 +515,7 @@ function showServerFields() {
 $('server-protocol').onchange = showServerFields;
 $('server-api').onchange = showServerFields;
 $('server-wg-api').onchange = showServerFields;
+$('server-vmess-network').onchange = showServerFields;
 function openServer(server = null) {
   editingServer = server;
   const form = $('server-form'); form.reset();
@@ -537,12 +542,16 @@ $('server-form').onsubmit = async event => {
     if (protocol === 'wg' && !['agent','wgdashboard'].includes(wgMode)) throw new Error('Выберите панель WireGuard.');
     const originalWGMode = original?.profile === 'wgdashboard' ? 'wgdashboard' : 'agent';
     const originalMode = original?.profile === 'clients_vless' ? 'clients' : original?.profile === 'remnawave_vless' ? 'remnawave' : 'legacy';
-    const fields = protocol !== 'xui' ? ['token','configuration'] : mode === 'remnawave' ? ['remnawave_token','squad_uuids'] : mode === 'clients' ? ['api_token','inbound_id','link_template','flow'] : ['username','password','inbound_id','link_template','flow'];
+    const fields = protocol === 'vmess' ? ['vmess_token','vmess_inbound_id','vmess_address','vmess_port','vmess_sni','vmess_path','vmess_host'] : protocol !== 'xui' ? ['token','configuration'] : mode === 'remnawave' ? ['remnawave_token','squad_uuids'] : mode === 'clients' ? ['api_token','inbound_id','link_template','flow'] : ['username','password','inbound_id','link_template','flow'];
     if (original?.protocol === 'xui' && !url && mode !== originalMode) throw new Error('Для смены режима API введите полный профиль.');
     if (original?.protocol === 'wg' && !url && wgMode !== originalWGMode) throw new Error('Для смены панели введите полный профиль.');
     if (!url && fields.some(key=>values.get(key))) throw new Error('Для замены профиля укажите адрес и все данные подключения.');
+    if (!url && protocol === 'vmess' && values.get('vmess_network') === 'ws') throw new Error('Для изменения транспорта VMess введите полный профиль.');
     if (url && protocol === 'wg' && wgMode === 'wgdashboard' && !/^[A-Za-z0-9_=+.\-]{1,64}$/.test(String(values.get('configuration') || '').trim())) throw new Error('Укажите интерфейс WireGuard, например wg0.');
-    const profile = url ? protocol === 'xui' ? mode === 'remnawave'
+    const network = String(values.get('vmess_network') || 'tcp');
+    const profile = url ? protocol === 'vmess'
+      ? {url,api:'clients',token:String(values.get('vmess_token') || ''),inbound_id:Number(values.get('vmess_inbound_id')),address:String(values.get('vmess_address') || '').trim(),port:Number(values.get('vmess_port')),network,sni:String(values.get('vmess_sni') || '').trim(),path:network==='ws'?String(values.get('vmess_path') || ''):'',ws_host:network==='ws'?String(values.get('vmess_host') || '').trim():''}
+      : protocol === 'xui' ? mode === 'remnawave'
       ? {url,api:mode,token:String(values.get('remnawave_token') || ''),squad_uuids:String(values.get('squad_uuids') || '').split(/[\n,]+/).map(x=>x.trim()).filter(Boolean)}
       : {url,api:mode,...(mode === 'clients' ? {token:String(values.get('api_token') || '')} : {username:String(values.get('username') || ''),password:String(values.get('password') || '')}),inbound_id:Number(values.get('inbound_id')),link_template:String(values.get('link_template') || ''),flow:String(values.get('flow') || '')}
       : {url,token:String(values.get('token') || ''),...(wgMode === 'wgdashboard' ? {api:'wgdashboard',configuration:String(values.get('configuration') || '').trim()} : {})} : null;
@@ -589,7 +598,7 @@ function couponDate(ts) {
   const d=new Date(ts*1000);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);
 }
 function couponForm(p) {
-  return `<form class="plan-editor" data-coupon="${esc(p.id)}" data-version="${p.version}"><h3>${esc(p.code)}</h3><p>Оформлено: ${p.used} из ${p.max_uses}. Применения не сбрасываются.</p><label>Скидка, %<input name="percent" type="number" min="1" max="90" required value="${p.percent}"></label><label>Лимит заказов<input name="max_uses" type="number" min="1" max="100000" required value="${p.max_uses}"></label><label>Окончание (часовой пояс браузера)<input name="expires_at" type="datetime-local" value="${couponDate(p.expires_at)}"></label><label>Код тарифа (пусто — все)<input name="plan_id" maxlength="32" value="${esc(p.plan_id || '')}"></label><label>Протокол<select name="protocol">${[['all','Все'],['xui','VLESS'],['wg','WireGuard']].map(([id,label])=>`<option value="${id}" ${p.protocol===id?'selected':''}>${label}</option>`).join('')}</select></label><label class="plan-enabled"><input name="enabled" type="checkbox" ${p.enabled?'checked':''}> Включён</label><button type="submit" class="small">Сохранить</button></form>`;
+  return `<form class="plan-editor" data-coupon="${esc(p.id)}" data-version="${p.version}"><h3>${esc(p.code)}</h3><p>Оформлено: ${p.used} из ${p.max_uses}. Применения не сбрасываются.</p><label>Скидка, %<input name="percent" type="number" min="1" max="90" required value="${p.percent}"></label><label>Лимит заказов<input name="max_uses" type="number" min="1" max="100000" required value="${p.max_uses}"></label><label>Окончание (часовой пояс браузера)<input name="expires_at" type="datetime-local" value="${couponDate(p.expires_at)}"></label><label>Код тарифа (пусто — все)<input name="plan_id" maxlength="32" value="${esc(p.plan_id || '')}"></label><label>Протокол<select name="protocol">${[['all','Все'],['xui','VLESS'],['wg','WireGuard'],['vmess','VMess AEAD']].map(([id,label])=>`<option value="${id}" ${p.protocol===id?'selected':''}>${label}</option>`).join('')}</select></label><label class="plan-enabled"><input name="enabled" type="checkbox" ${p.enabled?'checked':''}> Включён</label><button type="submit" class="small">Сохранить</button></form>`;
 }
 async function refreshCoupons(){const result=await api('coupons');$('coupons-list').innerHTML=result.coupons.map(couponForm).join('');}
 function couponFields(values){return {percent:Number(values.get('percent')),max_uses:Number(values.get('max_uses')),expires_at:values.get('expires_at')?Math.floor(new Date(values.get('expires_at')).getTime()/1000):0,plan_id:String(values.get('plan_id') || '').trim() || null,protocol:String(values.get('protocol')),enabled:values.has('enabled')};}
@@ -619,11 +628,11 @@ $('referral-policy-editor').onsubmit=async event=>{
   catch(e){$('referral-policy-error').textContent=e.message;button.disabled=false;}
 };
 
-const diagnosticWarnings={worker_disabled:'Фоновые задачи выключены настройками',encryption_key_invalid:'Неверный формат ключа шифрования',worker_failed:'Последний цикл worker завершился ошибкой',worker_not_observed:'Цикл worker ещё не наблюдался в этом процессе',worker_slow:'Цикл worker выполняется больше 3 минут',worker_stale:'Нет свежего успешного цикла worker',queue_errors:'В очереди есть задания с ошибками',queue_wait_over_10m:'Задания выдачи или устройств ожидают больше 10 минут',expiry_wait_over_10m:'Есть доступы с просроченным отзывом больше 10 минут',queues_paused:'Фоновые задачи выключены при непустой очереди',server_probe_not_recent_ok:'Не все включённые серверы имеют успешную API-проверку за сутки',no_new_assignments_xui:'Нет сервера VLESS для новых назначений',no_new_assignments_wg:'Нет сервера WireGuard для новых назначений',no_active_plans:'Нет опубликованных тарифов',no_assignable_servers:'Нет серверов для новых назначений',payment_settings_incomplete:'Не заполнены настройки оплаты',telegram_sales_settings_incomplete:'Не заполнены настройки продаж в Telegram'};
+const diagnosticWarnings={worker_disabled:'Фоновые задачи выключены настройками',encryption_key_invalid:'Неверный формат ключа шифрования',worker_failed:'Последний цикл worker завершился ошибкой',worker_not_observed:'Цикл worker ещё не наблюдался в этом процессе',worker_slow:'Цикл worker выполняется больше 3 минут',worker_stale:'Нет свежего успешного цикла worker',queue_errors:'В очереди есть задания с ошибками',queue_wait_over_10m:'Задания выдачи или устройств ожидают больше 10 минут',expiry_wait_over_10m:'Есть доступы с просроченным отзывом больше 10 минут',queues_paused:'Фоновые задачи выключены при непустой очереди',server_probe_not_recent_ok:'Не все включённые серверы имеют успешную API-проверку за сутки',no_new_assignments_xui:'Нет сервера VLESS для новых назначений',no_new_assignments_wg:'Нет сервера WireGuard для новых назначений',no_new_assignments_vmess:'Нет сервера VMess для новых назначений',no_active_plans:'Нет опубликованных тарифов',no_assignable_servers:'Нет серверов для новых назначений',payment_settings_incomplete:'Не заполнены настройки оплаты',telegram_sales_settings_incomplete:'Не заполнены настройки продаж в Telegram'};
 const diagnosticWorker={disabled:'Выключен настройками',not_observed:'Ещё не наблюдался',failed:'Ошибка последнего цикла',busy:'Выполняет цикл',slow:'Длительный цикл',stale:'Нет свежего успешного цикла',recent_success:'Недавно завершил цикл'};
 function diagnosticsMarkup(r) {
   const labels={issuance:'Выдача и продление',payment_poll:'Сверка ЮKassa',devices:'Создание/отзыв устройств',device_rotations:'Смена ключей устройств',primary_rotations:'Смена основного ключа'};
-  return `<p><b>${r.status==='local_checks_ok'?'Локальные проверки без замечаний':'Требуется внимание'}</b> · ${esc(new Date(r.generated_at*1000).toLocaleString('ru-RU'))}</p><p>Worker: ${esc(diagnosticWorker[r.worker.state] || r.worker.state)}. Последний успешный цикл: ${r.worker.last_success?esc(new Date(r.worker.last_success*1000).toLocaleString('ru-RU')):'не наблюдался'}.</p>${r.warnings.length?'<ul>'+r.warnings.map(w=>'<li>'+esc(diagnosticWarnings[w] || w)+'</li>').join('')+'</ul>':''}<div class="table-scroll"><table><thead><tr><th>Очередь</th><th>Ожидает</th><th>Срок повтора наступил</th><th>С ошибкой</th><th>Возраст старейшего, сек.</th></tr></thead><tbody>${Object.entries(r.queues).map(([key,q])=>`<tr><td>${esc(labels[key] || key)}</td><td>${esc(q.pending)}</td><td>${esc(q.due)}</td><td>${esc(q.with_error)}</td><td>${esc(q.oldest_age_seconds ?? '—')}</td></tr>`).join('')}</tbody></table></div><p>Подписок с истёкшим сроком в состоянии active: ${esc(r.expiry.pending)}. Это очередь проверки отзыва, а не доказательство текущего доступа на узле.</p><p>Серверы VLESS / WireGuard для новых назначений: ${esc(r.servers.xui.assignable)} / ${esc(r.servers.wg.assignable)}. Недавние успешные API-проверки: ${esc(r.servers.xui.cached_api_ok_24h)} / ${esc(r.servers.wg.cached_api_ok_24h)}.</p><p>Статус относится только к локальным наблюдениям. Проверка трафика, платежа и восстановления копии выполняется отдельно.</p>`;
+  return `<p><b>${r.status==='local_checks_ok'?'Локальные проверки без замечаний':'Требуется внимание'}</b> · ${esc(new Date(r.generated_at*1000).toLocaleString('ru-RU'))}</p><p>Worker: ${esc(diagnosticWorker[r.worker.state] || r.worker.state)}. Последний успешный цикл: ${r.worker.last_success?esc(new Date(r.worker.last_success*1000).toLocaleString('ru-RU')):'не наблюдался'}.</p>${r.warnings.length?'<ul>'+r.warnings.map(w=>'<li>'+esc(diagnosticWarnings[w] || w)+'</li>').join('')+'</ul>':''}<div class="table-scroll"><table><thead><tr><th>Очередь</th><th>Ожидает</th><th>Срок повтора наступил</th><th>С ошибкой</th><th>Возраст старейшего, сек.</th></tr></thead><tbody>${Object.entries(r.queues).map(([key,q])=>`<tr><td>${esc(labels[key] || key)}</td><td>${esc(q.pending)}</td><td>${esc(q.due)}</td><td>${esc(q.with_error)}</td><td>${esc(q.oldest_age_seconds ?? '—')}</td></tr>`).join('')}</tbody></table></div><p>Подписок с истёкшим сроком в состоянии active: ${esc(r.expiry.pending)}. Это очередь проверки отзыва, а не доказательство текущего доступа на узле.</p><p>Серверы для новых назначений / недавние успешные API-проверки: ${Object.entries(r.servers).map(([id,s])=>esc(protocolLabel(id))+": "+esc(s.assignable)+" / "+esc(s.cached_api_ok_24h)).join(" · ")}.</p><p>Статус относится только к локальным наблюдениям. Проверка трафика, платежа и восстановления копии выполняется отдельно.</p>`;
 }
 async function refreshDiagnostics() {
   const request=++diagnosticsRequest,epoch=authEpoch;$('diagnostics-refresh').disabled=true;

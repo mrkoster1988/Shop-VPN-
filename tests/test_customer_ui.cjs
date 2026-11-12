@@ -152,15 +152,15 @@ test('the expiry timer removes the configuration without waiting for another cli
   assert.equal(p.element('copy-config').disabled,true);
 });
 
-test('all five platforms have three instructions for both protocols',async()=>{
+test('all five platforms have three instructions for all supported protocols',async()=>{
   const p=await customerPage();
-  for(const protocol of ['xui','wg']) {
+  for(const protocol of ['xui','wg','vmess']) {
     p.state.customer.subscriptions[0].protocol=protocol;p.state.config={protocol,config:'private-config'};
     await p.run('refreshMe()');await p.run("openConnection('sub-a')");
     for(const platform of ['android','ios','windows','macos','linux']) {
       p.element('config-platform').value=platform;p.element('config-platform').onchange();
       assert.equal((p.element('connection-steps').innerHTML.match(/<li>/g)||[]).length,3);
-      assert.ok(p.element('connection-steps').innerHTML.includes(protocol==='wg'?'.conf':'VLESS'));
+      assert.ok(p.element('connection-steps').innerHTML.includes(protocol==='wg'?'.conf':protocol==='vmess'?'VMess':'VLESS'));
     }
   }
 });
