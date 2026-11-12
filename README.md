@@ -1,25 +1,25 @@
 <div align="center">
 
-# Pushok VPN
+# puShok shop VPN
 
 **Ваш магазин VPN. Ваш бренд. Ваши правила.**
 
 Сайт · Telegram-бот · Mini App · Управление подключениями через API
 
-[Установка](docs/INSTALL_QUICKSTART.md) · [Возможности](#возможности-shop) · [Технологии](#технологии-подключения) · [План развития](docs/ROADMAP.md)
+[Установка](docs/INSTALL_QUICKSTART.md) · [Возможности](#возможности-магазина) · [Технологии](#технологии-подключения) · [План развития](docs/ROADMAP.md)
 
 [![CI](https://github.com/mrkoster1988/Shop-VPN-/actions/workflows/ci.yml/badge.svg)](https://github.com/mrkoster1988/Shop-VPN-/actions/workflows/ci.yml)
 [![Релиз](https://img.shields.io/github/v/release/mrkoster1988/Shop-VPN-?label=release&color=00a89d)](https://github.com/mrkoster1988/Shop-VPN-/releases)
 
 </div>
 
-Shop VPN — самостоятельный магазин подключений VLESS и WireGuard для владельцев своих серверов и доменов. Покупатель выбирает тариф, оплачивает заказ и получает настройки подключения; владелец управляет продажами, клиентами и панелями из своего кабинета.
+puShok shop VPN — самостоятельный магазин подключений VLESS и WireGuard для владельцев своих серверов и доменов. Покупатель выбирает тариф, оплачивает заказ и получает настройки подключения; владелец управляет продажами, клиентами и панелями из своего кабинета.
 
-У Shop собственные код, база, интерфейс и логика продаж. Панели подключаются через отдельные API-адаптеры; другой магазин для работы не требуется. Фирменный стиль Pushok — рыжий кот, бирюзовый, тёмно-синий и оранжевый, иллюстрации цветными карандашами.
+У puShok shop VPN собственные код, база, интерфейс и логика продаж. Панели подключаются через отдельные API-адаптеры; другой магазин для работы не требуется. Фирменный стиль puShok — рыжий кот, бирюзовый, тёмно-синий и оранжевый, иллюстрации цветными карандашами.
 
 > **Статус: подготовка к запуску.** Последний опубликованный релиз и закреплённый установщик — **v0.054**. В `main` есть более новые изменения. Реальные платежи, целевые панели и чистая установка на VPS требуют приёмки. [Отчёт о готовности](docs/LAUNCH_READINESS.md) содержит результаты проверки и открытые блокеры; актуальный CI показан выше.
 
-## Возможности Shop
+## Возможности магазина
 
 | Покупателю | Владельцу |
 |---|---|
@@ -34,25 +34,99 @@ Shop VPN — самостоятельный магазин подключени�
 
 ## Технологии подключения
 
-Самостоятельные проекты и протоколы, с которыми работает архитектура Shop. Нажмите на карточку, чтобы открыть официальный ресурс. Иллюстрации созданы для Pushok; они не являются официальными логотипами или свидетельством спонсорства.
+**Выберите технологию — нажмите на иллюстрацию, чтобы открыть официальный ресурс.**
+
+Галерея действующих технологий и направлений развития puShok shop VPN. Карточки сгруппированы по назначению; статус протокола в магазине указан отдельно от возможностей самого протокола.
 
 ### Панели управления
 
-| 3x-ui | WGDashboard | Remnawave |
-|:---:|:---:|:---:|
-| [![3x-ui — управление VPN-подключениями](docs/assets/technologies/3x-ui.png)](https://github.com/MHSanaei/3x-ui) | [![WGDashboard — панель WireGuard](docs/assets/technologies/wgdashboard.png)](https://github.com/WGDashboard/WGDashboard) | [![Remnawave — управление пользователями и подписками](docs/assets/technologies/remnawave.png)](https://docs.rw/) |
-| Панель управления подключениями. Shop использует API для выдачи, продления и отключения VLESS-клиентов. | Веб-панель WireGuard. Shop использует API для работы с peers, конфигурациями и сроками доступа. | Панель управления пользователями и подписками. Shop подключается непосредственно по REST API. |
-| [Официальный проект](https://github.com/MHSanaei/3x-ui) · [Настройка в Shop](docs/THREEXUI_API.md) | [Документация](https://docs.wgdashboard.dev/) · [Настройка в Shop](docs/WGDASHBOARD.md) | [Официальный проект](https://github.com/remnawave/panel) · [Настройка в Shop](docs/REMNAWAVE.md) |
+<p align="center">
+  <a href="https://github.com/MHSanaei/3x-ui"><img src="docs/assets/technologies/3x-ui.webp" width="240" alt="3x-ui — иллюстрация puShok shop VPN"></a>
+  &nbsp; <a href="https://github.com/WGDashboard/WGDashboard"><img src="docs/assets/technologies/wgdashboard.webp" width="240" alt="WGDashboard — иллюстрация puShok shop VPN"></a>
+  &nbsp; <a href="https://docs.rw/"><img src="docs/assets/technologies/remnawave.webp" width="240" alt="Remnawave — иллюстрация puShok shop VPN"></a>
+</p>
+
+
+- **3x-ui** — Выдача, продление и отключение VLESS-клиентов через API. [Настройка](docs/THREEXUI_API.md).
+- **WGDashboard** — Управление WireGuard peers и выдача конфигураций через API. [Настройка](docs/WGDASHBOARD.md).
+- **Remnawave** — Пользователи, сроки и подписки через прямой REST API. [Настройка](docs/REMNAWAVE.md).
 
 ### Протоколы подключения
 
-| WireGuard | VLESS |
-|:---:|:---:|
-| [![WireGuard — VPN-туннель](docs/assets/technologies/wireguard.png)](https://www.wireguard.com/) | [![VLESS — протокол подключения](docs/assets/technologies/vless.png)](https://xtls.github.io/en/config/inbounds/vless.html) |
-| VPN-протокол с ключами и конфигурациями клиентов. Shop выдаёт доступ через свой агент или API WGDashboard. | Протокол соединения клиента с сервером. Shop управляет доступом через API панели; транспорт и его защита настраиваются на сервере. |
-| [Официальный сайт](https://www.wireguard.com/) · [Проверка подключения](docs/WIREGUARD_STAGING.md) | [Официальная документация](https://xtls.github.io/en/config/inbounds/vless.html) · [API панелей](docs/PANEL_CHECK.md) |
+#### 🟢 Реализованы в коде · требуется приёмка на целевых серверах
 
-[Подробнее о роли каждой технологии и границах совместимости →](docs/TECHNOLOGIES.md)
+<p align="center">
+  <a href="https://xtls.github.io/en/config/inbounds/vless.html"><img src="docs/assets/technologies/vless.webp" width="360" alt="VLESS — иллюстрация puShok shop VPN"></a>
+  &nbsp; <a href="https://www.wireguard.com/"><img src="docs/assets/technologies/wireguard.webp" width="360" alt="WireGuard — иллюстрация puShok shop VPN"></a>
+</p>
+
+
+- **VLESS** — Лёгкий протокол с UUID. Защита и транспорт выбираются в конфигурации сервера: например, TLS или REALITY.
+- **WireGuard** — VPN-туннель с ключами устройств. Конфигурация и QR-код для подключения.
+
+[Проверка API панелей](docs/PANEL_CHECK.md) · [Приёмка WireGuard](docs/WIREGUARD_STAGING.md)
+
+#### 🟠 Расширение каталога · интеграция в магазин запланирована
+
+Следующие протоколы имеют действующие реализации. Их автоматическая продажа, выдача, продление и отключение в puShok shop VPN пока не реализованы. Карточка в галерее не включает протокол в магазине.
+
+**Шифрованные прокси**
+
+<p align="center">
+  <a href="https://www.v2fly.org/en_US/developer/protocols/vmess.html"><img src="docs/assets/technologies/vmess.webp" width="360" alt="VMess — иллюстрация puShok shop VPN"></a>
+  &nbsp; <a href="https://sing-box.sagernet.org/manual/proxy-protocol/trojan/"><img src="docs/assets/technologies/trojan.webp" width="360" alt="Trojan — иллюстрация puShok shop VPN"></a>
+</p>
+
+<p align="center">
+  <a href="https://sing-box.sagernet.org/manual/proxy-protocol/shadowsocks/"><img src="docs/assets/technologies/shadowsocks.webp" width="360" alt="Shadowsocks / Shadowsocks 2022 — иллюстрация puShok shop VPN"></a>
+  &nbsp; <a href="https://sing-box.sagernet.org/configuration/inbound/anytls/"><img src="docs/assets/technologies/anytls.webp" width="360" alt="AnyTLS — иллюстрация puShok shop VPN"></a>
+</p>
+
+
+- **VMess** — Шифрованный прокси-протокол с UUID. Для новых конфигураций — аутентификация AEAD.
+- **Trojan** — Прокси-соединение с защитой TLS и аутентификацией по паролю.
+- **Shadowsocks / Shadowsocks 2022** — Семейство шифрованных прокси. Метод шифрования и формат ключа должны поддерживаться клиентом.
+- **AnyTLS** — Прокси поверх TLS с настраиваемым дополнением пакетов. Требуется совместимое приложение.
+
+**Соединения на базе QUIC**
+
+<p align="center">
+  <a href="https://v2.hysteria.network/"><img src="docs/assets/technologies/hysteria2.webp" width="360" alt="Hysteria2 — иллюстрация puShok shop VPN"></a>
+  &nbsp; <a href="https://github.com/tuic-protocol/tuic"><img src="docs/assets/technologies/tuic.webp" width="360" alt="TUIC — иллюстрация puShok shop VPN"></a>
+</p>
+
+
+- **Hysteria2** — Прокси на базе QUIC, разработанный для соединений с потерями и нестабильным качеством сети.
+- **TUIC** — Прокси на базе QUIC с передачей TCP/UDP и несколькими потоками в одном соединении.
+
+**VPN-туннели и доступ к сетям**
+
+<p align="center">
+  <a href="https://docs.amnezia.org/documentation/amnezia-wg/"><img src="docs/assets/technologies/amneziawg.webp" width="360" alt="AmneziaWG — иллюстрация puShok shop VPN"></a>
+  &nbsp; <a href="https://openvpn.net/community/"><img src="docs/assets/technologies/openvpn.webp" width="360" alt="OpenVPN — иллюстрация puShok shop VPN"></a>
+</p>
+
+<p align="center">
+  <a href="https://docs.strongswan.org/docs/latest/howtos/introduction.html"><img src="docs/assets/technologies/ikev2-ipsec.webp" width="360" alt="IKEv2 / IPsec — иллюстрация puShok shop VPN"></a>
+</p>
+
+
+- **AmneziaWG** — Основа WireGuard с дополнительной маскировкой признаков трафика.
+- **OpenVPN** — VPN для пользовательских устройств, удалённого доступа и соединения сетей.
+- **IKEv2 / IPsec** — Защищённый доступ к сети: IKEv2 согласует параметры, IPsec защищает трафик.
+
+<details>
+<summary><strong>Как связаны протокол, защита соединения и панель?</strong></summary>
+
+Панель управляет пользователями и серверами. Протокол задаёт способ соединения. TLS и REALITY относятся к защите транспорта; WebSocket, gRPC и XHTTP — к транспортным вариантам. Они выбираются в совместимой комбинации, например VLESS + REALITY, и не считаются отдельными VPN-панелями.
+
+Проверка по официальной документации: **12 ноября 2026 года**. Поддерживаемая реализация протокола не гарантирует работу в каждой сети. Для каждой интеграции проверяются версии сервера и клиента, создание доступа, продление, трафик и отключение.
+
+</details>
+
+Иллюстрации созданы для puShok shop VPN в фирменном карандашном стиле. Это оригинальные изображения, а не официальные логотипы; партнёрство и спонсорство не заявляются.
+
+[Роль технологий, источники и границы совместимости →](docs/TECHNOLOGIES.md)
 
 ## Установка на ваш VPS
 
@@ -82,4 +156,4 @@ Shop VPN — самостоятельный магазин подключени�
 
 ---
 
-**Pushok VPN** — собственный магазин с понятными настройками и проверяемыми результатами. Разработка ведётся в этом GitHub-репозитории.
+**puShok shop VPN** — собственный магазин с понятными настройками и проверяемыми результатами. Разработка ведётся в этом GitHub-репозитории.
