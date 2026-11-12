@@ -148,7 +148,7 @@ class InstallerStage(helpers.Staging):
         _, headers = self.request('/shop/api/auth/register', body=account)
         cookies = SimpleCookie(); cookies.load(headers['Set-Cookie']); cookie = cookies['session']
         self.secrets.append(cookie.value)
-        check(cookie['secure'] and cookie['httponly'] and cookie['path'] == '/shop' and cookie['samesite'] == 'lax',
+        check(cookie['secure'] and cookie['httponly'] and cookie['path'] == '/shop/' and cookie['samesite'] == 'lax',
               'Неверные параметры cookie')
         before = json.loads(self.request('/shop/api/me', cookie=cookie.value)[0])
         self.event('https_prefix_admin_and_registration_passed')
