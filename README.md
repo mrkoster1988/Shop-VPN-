@@ -13,7 +13,7 @@
 
 </div>
 
-puShok shop VPN — самостоятельный магазин подключений VLESS, VMess и WireGuard для владельцев своих серверов и доменов. Покупатель выбирает тариф, оплачивает заказ и получает настройки подключения; владелец управляет продажами, клиентами и панелями из своего кабинета.
+puShok shop VPN — самостоятельный магазин подключений VLESS, VMess, Hysteria2 и WireGuard для владельцев своих серверов и доменов. Покупатель выбирает тариф, оплачивает заказ и получает настройки подключения; владелец управляет продажами, клиентами и панелями из своего кабинета.
 
 У puShok shop VPN собственные код, база, интерфейс и логика продаж. Панели подключаются через отдельные API-адаптеры; другой магазин для работы не требуется. Фирменный стиль puShok — рыжий кот, бирюзовый, тёмно-синий и оранжевый, иллюстрации цветными карандашами.
 
@@ -53,6 +53,8 @@ puShok shop VPN — самостоятельный магазин подключ
 - **WGDashboard** — Управление WireGuard peers и выдача конфигураций через API. [Настройка](docs/WGDASHBOARD.md).
 - **Remnawave** — Пользователи, сроки и подписки через прямой REST API. [Настройка](docs/REMNAWAVE.md).
 
+Дополнительно поддерживается **S-UI** как API-панель Hysteria2. [Официальный проект](https://github.com/alireza0/s-ui) · [Подключение к магазину](docs/HYSTERIA2.md). Установка панели отдельная.
+
 ### Протоколы подключения
 
 #### 🟢 Реализованы в коде · требуется приёмка на целевых серверах
@@ -65,12 +67,15 @@ puShok shop VPN — самостоятельный магазин подключ
 
 <p align="center">
   <a href="https://www.v2fly.org/en_US/developer/protocols/vmess.html"><img src="docs/assets/technologies/vmess.webp" width="360" alt="VMess — иллюстрация puShok shop VPN"></a>
+  &nbsp; <a href="https://v2.hysteria.network/"><img src="docs/assets/technologies/hysteria2.webp" width="360" alt="Hysteria2 — иллюстрация puShok shop VPN"></a>
 </p>
 
 - **VLESS** — Лёгкий протокол с UUID. Защита и транспорт выбираются в конфигурации сервера: например, TLS или REALITY.
 - **WireGuard** — VPN-туннель с ключами устройств. Конфигурация и QR-код для подключения.
 
 - **VMess AEAD** — 3x-ui Clients JSON, TCP/WS + TLS. Выдача ссылки, продление и отзыв; [настройка и границы поддержки](docs/VMESS.md).
+
+- **Hysteria2** — S-UI apiv2, UDP/QUIC + TLS, опционально Salamander. Продление и отзыв с закрытием сессий; [настройка и приёмка](docs/HYSTERIA2.md).
 
 [Проверка API панелей](docs/PANEL_CHECK.md) · [Приёмка WireGuard](docs/WIREGUARD_STAGING.md)
 
@@ -97,12 +102,10 @@ puShok shop VPN — самостоятельный магазин подключ
 **Соединения на базе QUIC**
 
 <p align="center">
-  <a href="https://v2.hysteria.network/"><img src="docs/assets/technologies/hysteria2.webp" width="360" alt="Hysteria2 — иллюстрация puShok shop VPN"></a>
-  &nbsp; <a href="https://github.com/tuic-protocol/tuic"><img src="docs/assets/technologies/tuic.webp" width="360" alt="TUIC — иллюстрация puShok shop VPN"></a>
+  <a href="https://github.com/tuic-protocol/tuic"><img src="docs/assets/technologies/tuic.webp" width="360" alt="TUIC — иллюстрация puShok shop VPN"></a>
 </p>
 
 
-- **Hysteria2** — Прокси на базе QUIC, разработанный для соединений с потерями и нестабильным качеством сети.
 - **TUIC** — Прокси на базе QUIC с передачей TCP/UDP и несколькими потоками в одном соединении.
 
 **VPN-туннели и доступ к сетям**

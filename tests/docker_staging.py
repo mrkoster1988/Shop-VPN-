@@ -107,8 +107,10 @@ class Staging:
         allowed_new={'admin_audit','password_reset_tokens','staff_sessions','staff_users',
                      'store_settings','support_cases','support_messages','partner_events',
                      'order_history_state','order_milestones','bot_menu_settings','wgdashboard_keys',
-                     'wgdashboard_expirations'}
+                     'wgdashboard_expirations','hysteria2_credentials'}
         added=sorted(set(new)-set(old))
+        check('hysteria2_credentials' not in added or current['counts'].get('hysteria2_credentials') == 0,
+              'Unexpected credentials during initial Hysteria2 migration')
         check('wgdashboard_keys' not in added or current['counts'].get('wgdashboard_keys') == 0,
               'Unexpected keys during initial WGDashboard migration')
         check('wgdashboard_expirations' not in added or current['counts'].get('wgdashboard_expirations') == 0,

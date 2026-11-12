@@ -161,6 +161,26 @@ class VMessProfile(Profile):
         return self
 
 
+class Hysteria2Profile(Profile):
+    """S-UI: прямой Hysteria2 по QUIC/TLS, опционально Salamander."""
+    api: Literal['sui']
+    token: str = Field(min_length=32, max_length=2048)
+    inbound_id: int = Field(ge=1, le=2147483647, strict=True)
+    address: str = Field(min_length=1, max_length=253)
+    port: int = Field(ge=1, le=65535, strict=True)
+    sni: str = Field(min_length=1, max_length=253)
+    obfs_password: str = Field(default='', max_length=256)
+    valid_header = field_validator('token')(WGProfile.valid_header.__func__)
+    hostname = field_validator('address', 'sni')(VMessProfile.hostname.__func__)
+
+    @field_validator('obfs_password')
+    @classmethod
+    def valid_obfs(cls, value):
+        if value and (len(value) < 16 or any(ord(ch) < 33 for ch in value)):
+            raise ValueError('Пароль Salamander: не менее 16 символов без пробелов и управляющих знаков')
+        return value
+
+
 def validated(protocol, settings):
     if protocol == 'xui':
         mode = settings.get('api', 'legacy')
@@ -174,6 +194,8 @@ def validated(protocol, settings):
             raise ValueError('Неизвестный режим API WireGuard')
     elif protocol == 'vmess':
         model = VMessProfile
+    elif protocol == 'hysteria2':
+        model = Hysteria2Profile
     else:
         raise ValueError('Неизвестный VPN-протокол')
     return model.model_validate(settings).model_dump()
@@ -193,6 +215,8 @@ def public(row):
         result['profile'] = {'legacy':'legacy_vless','clients':'clients_vless','remnawave':'remnawave_vless'}.get(decode(row).get('api','legacy'),'legacy_vless')
     elif row['protocol'] == 'vmess':
         result['profile'] = 'clients_vmess'
+    elif row['protocol'] == 'hysteria2':
+        result['profile'] = 'sui_hysteria2'
     else:
         profile = decode(row)
         result['profile'] = 'wgdashboard' if profile.get('api') == 'wgdashboard' else 'wireguard_agent'
@@ -286,13 +310,15 @@ def update(sid, data):
         bound = conn.execute('SELECT count(*) FROM subscriptions WHERE server_id=?',(sid,)).fetchone()[0]
         identity = (('url','api','squad_uuids') if profile.get('api') == 'remnawave'
                     else ('url','api','inbound_id','link_template','flow')) if before['protocol']=='xui' else ('url','api','configuration')
+        if before['protocol'] == 'hysteria2':
+            identity = ('url','api','inbound_id','address','port','sni','obfs_password')
         if before['protocol'] == 'vmess':
             identity = ('url','api','inbound_id','address','port','network','sni','path','ws_host')
         if bound and any(profile.get(k)!=replacement.get(k) for k in identity):
             raise HTTPException(409,'У сервера есть подписки. Для другого endpoint создайте отдельный сервер.')
         requires_recheck = any(profile.get(key) != replacement.get(key)
                                for key in ('url','api','token','configuration','username','password',
-                                           'inbound_id','address','port','network','sni','path','ws_host'))
+                                           'inbound_id','address','port','network','sni','path','ws_host','obfs_password'))
         health = 'unknown' if requires_recheck else before['health']
         if data.state == 'active' and (requires_recheck or before['state']!='active') and health != 'ok':
             raise HTTPException(409,'Сначала сохраните настройки и успешно проверьте сервер, затем включите продажи.')

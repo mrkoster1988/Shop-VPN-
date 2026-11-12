@@ -106,3 +106,20 @@ def test_upgrade_preserves_expiration_jobs_and_only_allows_empty_initial_table(m
     del current['table_digests']['wgdashboard_expirations']
     with pytest.raises(s.StageError,match='missing=wgdashboard_expirations'):
         stage.compare(existing,cleared=False)
+
+
+def test_upgrade_preserves_hysteria_passwords_and_allows_only_empty_new_table(monkeypatch):
+    stage=s.Staging(type('Args',(),{})())
+    base={'table_digests':{'users':'users-hash'},'counts':{'sessions':1,'tickets':1}}
+    current={'table_digests':{'users':'users-hash','hysteria2_credentials':'empty-hash'},
+             'counts':{'sessions':1,'tickets':1,'hysteria2_credentials':0}}
+    monkeypatch.setattr(stage,'snapshot',lambda:current)
+    stage.compare(base,cleared=False)
+    current['counts']['hysteria2_credentials']=1
+    with pytest.raises(s.StageError,match='Unexpected credentials'):stage.compare(base,cleared=False)
+    baseline={**current,'table_digests':dict(current['table_digests'])}
+    stage.compare(baseline,cleared=False)
+    current['table_digests']['hysteria2_credentials']='modified-secret'
+    with pytest.raises(s.StageError,match='changed=hysteria2_credentials'):stage.compare(baseline,cleared=False)
+    del current['table_digests']['hysteria2_credentials']
+    with pytest.raises(s.StageError,match='missing=hysteria2_credentials'):stage.compare(baseline,cleared=False)

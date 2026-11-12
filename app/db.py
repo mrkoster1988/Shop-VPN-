@@ -132,6 +132,9 @@ def init_db():
           protocol TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'disabled', capacity INTEGER NOT NULL DEFAULT 0,
           settings TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, created INTEGER NOT NULL,
           health TEXT NOT NULL DEFAULT 'unknown', checked_at INTEGER, error_code TEXT);
+        CREATE TABLE IF NOT EXISTS hysteria2_credentials (
+          server_id TEXT NOT NULL REFERENCES servers(id), credential_id TEXT NOT NULL,
+          password TEXT NOT NULL, PRIMARY KEY(server_id,credential_id));
         CREATE TABLE IF NOT EXISTS wgdashboard_keys (
           server_id TEXT NOT NULL REFERENCES servers(id), credential_id TEXT NOT NULL,
           private_key TEXT NOT NULL, PRIMARY KEY(server_id,credential_id));
