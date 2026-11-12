@@ -36,6 +36,7 @@ def authorize(request: Request):
         elif r=="mtproxy_manager":
             ok=path.startswith("/api/admin/ads/") and not any(x in path for x in ("/finance","/expenses","/payments"))
         else: ok=False
+        if r=="panel_operator" and path=="/api/admin/protocols": ok=True
         if not ok: raise HTTPException(403,"Просмотр этих данных для вашей роли не разрешён")
     if r!="owner" and method not in ("GET","HEAD","OPTIONS"):
         ok=False

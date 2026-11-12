@@ -11,6 +11,7 @@ let adsPolicy=null,adsPage=1,adsRequest=0,adsPaymentIntents=new Map();
 let token = '', role = '', authEpoch = 0, usersPage = 1, usersQuery = '', usersRequest = 0, shopSettingsVersion = 0, commerceAnalyticsRequest = 0;
 let selectedUser = null, profilePage = 1, profileRequest = 0;
 let serverCache = [], editingServer = null;
+let protocolCache = [], protocolsRequest = 0;
 let ordersPage = 1, ordersRequest = 0, ordersFilters = {q:'', status:'', method:'', protocol:''};
 async function api(path, {method = 'GET', data} = {}) {
   const epoch = authEpoch;
@@ -23,6 +24,47 @@ async function api(path, {method = 'GET', data} = {}) {
   if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : 'Проверьте введённые данные');
   return result;
 }
+
+// Справочник не включает продажи: доступность проверяется отдельно для каждого заказа.
+function renderProtocols() {
+  const filter = $('protocols-filter').value || 'all';
+  const items = protocolCache.filter(item => filter === 'all' || item.implementation === filter);
+  $('protocols-list').innerHTML = items.map(item => {
+    const implemented = item.implementation === 'in_code';
+    const status = implemented ? 'Адаптер в коде' : item.implementation === 'planned' ? 'В плане' : 'Статус неизвестен';
+    const url = typeof item.documentation_url === 'string' && /^https:\/\/[a-z0-9.-]+(?:\/[^\s\\]*)?$/i.test(item.documentation_url) ? item.documentation_url : '';
+    const adapters = implemented && Array.isArray(item.adapters) ? item.adapters.join(' · ') : 'Выдача магазином пока не реализована';
+    return '<article class="protocol-card"><div class="protocol-card-heading"><h3>' + esc(item.name) + '</h3>' +
+      '<span class="protocol-badge' + (implemented ? ' implemented' : '') + '">' + status + '</span></div>' +
+      '<p>' + esc(item.description) + '</p><dl><dt>Сервер / панель</dt><dd>' + esc(item.server_options) +
+      '</dd><dt>Адаптеры магазина</dt><dd>' + esc(adapters) + '</dd><dt>Для подключения</dt><dd>' +
+      esc(item.client_requirements) + '</dd></dl>' +
+      (url ? '<a href="' + esc(url) + '" target="_blank" rel="noopener noreferrer">Официальная документация ↗</a>' : '') + '</article>';
+  }).join('') || '<p>В этой группе пока нет протоколов.</p>';
+  $('protocols-status').textContent = 'Показано: ' + items.length + ' из ' + protocolCache.length + '.';
+}
+async function refreshProtocols() {
+  const section = $('protocols-panel'), epoch = authEpoch, request = ++protocolsRequest;
+  if (!['owner', 'panel_operator'].includes(role)) {
+    section.hidden = true; protocolCache = []; $('protocols-list').replaceChildren();
+    $('protocols-status').textContent = ''; return;
+  }
+  section.hidden = false; $('protocols-refresh').disabled = true;
+  $('protocols-status').textContent = 'Загружаем справочник…';
+  try {
+    const data = await api('protocols');
+    if (epoch !== authEpoch || request !== protocolsRequest) return;
+    if (data.schema_version !== 1 || !Array.isArray(data.protocols)) throw new Error('Не удалось прочитать справочник протоколов.');
+    protocolCache = data.protocols; renderProtocols();
+  } catch (error) {
+    if (epoch !== authEpoch || request !== protocolsRequest) return;
+    protocolCache = []; $('protocols-list').replaceChildren(); $('protocols-status').textContent = error.message;
+  } finally {
+    if (epoch === authEpoch && request === protocolsRequest) $('protocols-refresh').disabled = false;
+  }
+}
+$('protocols-refresh').onclick = () => refreshProtocols();
+$('protocols-filter').onchange = () => renderProtocols();
 function planForm(plan) {
   return `<form class="plan-editor" data-plan-id="${esc(plan.id)}" data-version="${plan.version}">
     <div class="plan-editor-heading"><h3>${esc(plan.name)}</h3><span class="status">${plan.enabled ? 'В продаже' : 'Скрыт'}</span></div>
@@ -218,6 +260,7 @@ async function refresh({plans = role==='owner'} = {}) {
   const catalog = plans ? await api('plans') : null;
   $('stats').innerHTML = `<div>Пользователи<strong>${data.users}</strong></div><div>Подписки<strong>${data.active}</strong></div><div>Подтверждено<strong>${data.revenue} ₽ / ${data.stars} ★</strong></div>`;
   if (catalog) $('plan-editors').innerHTML = catalog.plans.map(planForm).join('');
+  await refreshProtocols();
   if(role==='owner') await Promise.all([refreshAdsAdmin(),refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers(),refreshTrialPolicy(),refreshCoupons(),refreshReferralPolicy(),refreshCommerceAnalytics()]);
   else if(role==='mtproxy_manager') await refreshAdsAdmin();
   else if(role==='finance') await Promise.all([refreshAdsAdmin(),refreshOrders(),refreshCommerceAnalytics()]);
@@ -243,6 +286,9 @@ $('admin-login').onsubmit = async event => {
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{}); role='';
+  protocolsRequest++; protocolCache = []; $('protocols-list').replaceChildren();
+  $('protocols-status').textContent = ''; $('protocols-filter').value = 'all';
+  $('protocols-panel').hidden = true; $('protocols-refresh').disabled = false;
   adsFinanceRequest++;adsFinancePage=1;adsExpenseIntents.clear();commerceAnalyticsRequest++;
   for(const id of ['commerce-analytics-cards','commerce-analytics-details','commerce-analytics-error'])$(id).replaceChildren();
   for(const id of ['commerce-analytics-start','commerce-analytics-end'])$(id).value='';$('commerce-analytics').hidden=true;

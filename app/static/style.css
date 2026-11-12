@@ -63,3 +63,17 @@ html[data-telegram-theme="dark"] .miniapp-nav [aria-current="page"]{background:#
 .account-shortcuts{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 24px}
 .account-shortcuts button{flex:1;padding:10px 12px;font-size:12px;min-height:44px}
 #subscriptions,#orders,#support-panel{scroll-margin-top:16px}
+
+/* Справочник протоколов в кабинете владельца и оператора панелей. */
+.protocol-toolbar{display:flex;flex-wrap:wrap;align-items:end;gap:12px}
+.protocol-toolbar label{flex:1;min-width:180px;max-width:340px}
+.protocol-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));gap:16px}
+.protocol-card{min-width:0;border:1px solid #c4d9dd;border-radius:18px;padding:20px;background:#f7fbfc;color:#183441;overflow-wrap:anywhere}
+.protocol-card-heading{display:flex;align-items:start;justify-content:space-between;flex-wrap:wrap;gap:10px}
+.protocol-card h3{margin:0;font-size:20px}
+.protocol-card p,.protocol-card dd{font-size:14px;line-height:1.6}
+.protocol-card dt{font-size:12px;font-weight:700;color:#43616a;margin-top:12px}
+.protocol-card dd{margin:4px 0 0}
+.protocol-card a{display:inline-block;padding:10px 0;font-size:13px;color:#126978}
+.protocol-badge{display:inline-block;border-radius:20px;padding:5px 10px;background:#f4e6d6;color:#704716;font-size:11px;white-space:nowrap}
+.protocol-badge.implemented{background:#d9f1ee;color:#175c58}

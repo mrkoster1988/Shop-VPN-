@@ -2,12 +2,12 @@
 import json
 import os
 import httpx
-from . import config as c, servers, panel, wgdashboard
+from . import config as c, servers, panel, wgdashboard, protocols
 
 
 def _require_vpn_protocol(protocol):
     """Reject channels and unknown drivers before any network calls."""
-    if protocol not in ('xui', 'wg'):
+    if protocol not in protocols.supported_drivers():
         raise ValueError('UnsupportedVpnProtocol')
     return protocol
 

@@ -86,3 +86,23 @@ def test_encrypted_wgdashboard_key_survives_real_backup_restore(client,tmp_path)
         row=conn.execute('SELECT server_id,credential_id,private_key FROM wgdashboard_keys').fetchone()
     assert row[:2]==('test-wg',identity) and row[2]!=key
     assert c.decrypt(row[2])==key
+
+
+def test_upgrade_preserves_expiration_jobs_and_only_allows_empty_initial_table(monkeypatch):
+    stage=s.Staging(type('Args',(),{})())
+    baseline={'table_digests':{'users':'users-hash'},'counts':{'sessions':1,'tickets':1}}
+    current={'table_digests':{'users':'users-hash','wgdashboard_expirations':'empty-hash'},
+             'counts':{'sessions':1,'tickets':1,'wgdashboard_expirations':0}}
+    monkeypatch.setattr(stage,'snapshot',lambda:current)
+    stage.compare(baseline,cleared=False)
+    current['counts']['wgdashboard_expirations']=1
+    with pytest.raises(s.StageError,match='Unexpected expiration jobs'):
+        stage.compare(baseline,cleared=False)
+    existing={**current,'table_digests':dict(current['table_digests'])}
+    stage.compare(existing,cleared=False)
+    current['table_digests']['wgdashboard_expirations']='changed-job'
+    with pytest.raises(s.StageError,match='changed=wgdashboard_expirations'):
+        stage.compare(existing,cleared=False)
+    del current['table_digests']['wgdashboard_expirations']
+    with pytest.raises(s.StageError,match='missing=wgdashboard_expirations'):
+        stage.compare(existing,cleared=False)
