@@ -90,3 +90,8 @@ html[data-telegram-theme="dark"] .miniapp-nav [aria-current="page"]{background:#
 .setup-review{padding:16px;border:1px solid #c4d9dd;border-radius:16px;background:#f7fbfc;overflow-wrap:anywhere}
 .setup-review h3{margin-top:0}
 #server-credentials-target{overflow-wrap:anywhere}
+
+/* Pushok Sketch Icons: lightweight vector pictograms for web and Mini Apps. */
+.pushok-icon{display:inline-block;width:20px;height:20px;flex-shrink:0;vertical-align:middle}
+html[data-telegram-theme] .miniapp-nav .pushok-icon{width:20px;height:20px;filter:drop-shadow(0 0 1px #193e38)}
+.nav button .pushok-icon{margin-right:5px}
