@@ -999,3 +999,25 @@ def test_clients_invalid_profile_is_rejected_without_echo(registry_client,change
     response=server_create(registry_client,settings=settings)
     assert response.status_code==422
     assert 'private-api-token' not in response.text and 'short-secret' not in response.text
+
+
+@pytest.mark.parametrize('base', ['', '/shop'])
+def test_icon_sprite_served_at_configured_prefix(client, monkeypatch, base):
+    import re
+    import xml.etree.ElementTree as ET
+    from app.main import create_app
+    monkeypatch.setattr(c, 'BASE_PATH', base)
+    with TestClient(create_app(base)) as shop:
+        page = shop.get(base + '/')
+        assert page.status_code == 200
+        assert '__BASE_PATH__' not in page.text
+        uses = re.findall(r'<use href="([^"]+)"', page.text)
+        assert len(uses) == 6
+        sprite = shop.get(base + '/static/pushok-icons.svg')
+        assert sprite.status_code == 200
+        assert sprite.headers['content-type'].startswith('image/svg+xml')
+        ids = {element.get('id') for element in ET.fromstring(sprite.content).iter()}
+        for use in uses:
+            url, symbol = use.split('#')
+            assert url == base + '/static/pushok-icons.svg'
+            assert symbol in ids

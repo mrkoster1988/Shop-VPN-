@@ -1,86 +1,56 @@
-# Pushok Icons — собственная система пиктограмм v1
+# Pushok Icons — единые значки магазина
 
-Семейство оригинальных лаконичных линейных иконок вместо копирования Crypto Bot. Образ: бирюзовая линия как карандашный штрих, янтарный акцент, без тяжёлых глянцевых квадратов. Рабочая область 24×24, круглые окончания, прозрачный фон.
+Набор содержит 50 собственных линейных SVG-символов: бирюзовая линия, янтарный акцент, прозрачный фон и круглые окончания. Координаты 24×24, размер в интерфейсе 20×20. В светлой теме линия затемняется для контраста; светлая кнопка тарифа сохраняет этот контраст и в тёмной теме.
 
-## Привязка к реальным разделам проекта
+## Где используются
 
-- `buy` → `pi-cart`
-- `account` → `pi-user`
-- `support` → `pi-support`
-- `terms` → `pi-rules`
-- `link1` → `pi-link`
-- `link2` → `pi-link`
-- `plans` → `pi-price`
-- `subscription` → `pi-shield`
-- `devices` → `pi-devices`
-- `connection` → `pi-connect`
-- `renew` → `pi-renew`
-- `payments` → `pi-wallet`
-- `stars` → `pi-star`
-- `sbp` → `pi-qr`
-- `settings` → `pi-settings`
-- `servers` → `pi-server`
-- `analytics` → `pi-chart`
-- `tickets` → `pi-ticket`
+| Экран | Элемент | Символ |
+|---|---|---|
+| Сайт и Mini App | Кнопка личного кабинета | `pi-user` |
+| Главный экран | «Выбрать тариф» | `pi-price` |
+| Нижнее меню Mini App | Главная / тарифы / кабинет / помощь | `pi-home` / `pi-price` / `pi-user` / `pi-support` |
 
-## Использование в вебе
+Остальные символы подготовлены для следующих экранов. Наличие значка в наборе не означает, что соответствующая функция уже реализована. Подписи кнопок остаются текстовыми; SVG помечены `aria-hidden="true"` и не получают фокус. При отсутствии файла иконок переходы и подписи продолжают работать. Обновление аккаунта и выход меняют только подпись кнопки, сохраняя SVG.
+
+## Путь к файлу
+
+Спрайт отдаётся как `image/svg+xml` по `/static/pushok-icons.svg`, а при установке магазина в `/shop` — по `/shop/static/pushok-icons.svg`. В HTML-шаблоне используется общий префикс проекта:
 
 ```html
-<svg class="pushok-icon" width="24" height="24" aria-hidden="true"><use href="/shop/assets/pushok-icons.svg#pi-cart"></use></svg>
+<svg class="pushok-icon" width="20" height="20" viewBox="0 0 24 24"
+     aria-hidden="true" focusable="false">
+  <use href="__BASE_PATH__/static/pushok-icons.svg#pi-user"></use>
+</svg>
 ```
 
-**Важно:** путь в примере заменить реальным URL выдачи статики (при развёртывании с подпутём проверить base URL). Не подключать sprite до теста маршрута статики.
+`__BASE_PATH__` заменяет сервер при выдаче страницы. Не используйте путь `/assets/`: такого маршрута в магазине нет.
 
-Для Telegram Bot API на обычных reply/inline-кнопках SVG напрямую **не работает**. Использовать `icon_custom_emoji_id` при выполнении условий Telegram (Premium владельца или дополнительные username, см. официальный Bot API), создать и зарегистрировать отдельный набор custom emoji, а до этого оставить обычные подписи кнопок. Не подставлять случайные ID. Для MAX/VK определить поддерживаемые форматы кнопок платформ отдельно.
+## Telegram — отдельное подключение
 
-## Проверки перед подключением
+SVG применяется в веб-странице и Mini App. Нативным inline-кнопкам бота нужны зарегистрированные Telegram Custom Emoji и реальные `custom_emoji_id`. Функция выключена по умолчанию; порядок включения описан в [PUSHOK_TELEGRAM_EMOJI.md](PUSHOK_TELEGRAM_EMOJI.md).
 
-- [ ] Сравнить пункты меню с текущими командами/API.
-- [ ] Проверить SVG и отдачу статики, адаптивность, SVG-спрайт в Safari/Android.
-- [ ] Текст остаётся доступным без иконок; декоративные SVG имеют `aria-hidden`.
-- [ ] Не увеличивать нагрузку на Mini Apps, не показывать декоративные иконки вместо статуса платежа.
-- [ ] В Telegram зарегистрировать собственные Custom Emoji и сохранить реальные IDs.
-- [ ] После подключения элементов интерфейса проверить UI-тесты и CHANGELOG.
+| Действие бота | Изображение |
+|---|---|
+| `buy` | `pi-cart` |
+| `account` | `pi-user` |
+| `support` | `pi-support` |
+| `terms` | `pi-rules` |
+| `link1`, `link2` | `pi-link` |
 
-Статус: дизайн-ассеты опубликованы отдельной веткой, реальные кнопки и серверные настройки **не изменены**.
+Экспорт и проверка без отправки в Telegram:
 
-## Машиночитаемое соответствие
-
-```json
-{
-  "system": "Pushok Icons",
-  "version": "1.0.0",
-  "kind": "SVG sprite",
-  "asset": "app/static/pushok-icons.svg",
-  "colors": {
-    "line": "#56e2d7",
-    "highlight": "#ff9f66",
-    "background": "none"
-  },
-  "menu": {
-    "buy": "cart",
-    "account": "user",
-    "support": "support",
-    "terms": "rules",
-    "link1": "link",
-    "link2": "link",
-    "plans": "price",
-    "subscription": "shield",
-    "devices": "devices",
-    "connection": "connect",
-    "renew": "renew",
-    "payments": "wallet",
-    "stars": "star",
-    "sbp": "qr",
-    "settings": "settings",
-    "servers": "server",
-    "analytics": "chart",
-    "tickets": "ticket"
-  },
-  "telegram": {
-    "icon_custom_emoji_ids": {},
-    "status": "not-configured",
-    "note": "Telegram reply and inline buttons need custom emoji IDs; SVG is for web/Mini Apps only"
-  }
-}
+```bash
+python -m pip install 'CairoSVG==2.7.1' 'Pillow==11.3.0'
+python scripts/export_pushok_emoji.py --sprite app/static/pushok-icons.svg --output .build/pushok-emoji
+python scripts/build_pushok_emoji_manifest.py --input .build/pushok-emoji --output .build/pushok-emoji/manifest.json
 ```
+
+CI сохраняет 50 PNG 100×100 и манифест с SHA-256, размерами и соответствием шести действий. Это подготовленные файлы, а не опубликованный набор Telegram.
+
+## Что проверяется
+
+- Python: корректность SVG, уникальность символов, реальные маршруты `/` и `/shop`, ссылки всех шести элементов, MIME-тип, экспорт/манифест, настройки кнопок и повтор после явного отказа Telegram.
+- `tests/icons_browser.cjs`: Chromium и WebKit; широкий/мобильный экран, светлая/тёмная тема Mini App, отрисовка внешнего SVG, обновление аккаунта/выход, навигация, доступность подписей и отказ загрузки спрайта. Сеть заменена локальными фикстурами, скриншоты сохраняются в CI.
+- Реальные Telegram Android/iOS/Desktop, регистрация набора и право целевого бота использовать emoji остаются отдельной ручной приёмкой. WebKit в CI не заменяет проверку на устройстве.
+
+Изменение находится в `Unreleased`. Установочный релиз v0.055 не содержит этот этап.

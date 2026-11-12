@@ -39,3 +39,17 @@ def decorate(button, action, icons=None):
     if isinstance(icon_id, str) and _VALID_ID.fullmatch(icon_id):
         result["icon_custom_emoji_id"] = icon_id
     return result
+
+
+def without_icons(markup):
+    """Копия inline-меню без необязательных значков; None, если удалять нечего."""
+    if not isinstance(markup, dict) or not isinstance(markup.get('inline_keyboard'), list):
+        return None
+    rows = markup['inline_keyboard']
+    if any(not isinstance(row, list) or any(not isinstance(button, dict) for button in row) for row in rows):
+        return None
+    if not any('icon_custom_emoji_id' in button for row in rows for button in row):
+        return None
+    return {**markup, 'inline_keyboard': [
+        [{key: value for key, value in button.items() if key != 'icon_custom_emoji_id'} for button in row]
+        for row in rows]}
