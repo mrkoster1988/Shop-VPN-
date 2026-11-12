@@ -195,6 +195,69 @@ def test_bootstrap_pins_install_and_upgrade_to_current_release(tmp_path,upgrade)
     assert ('/'+i.VERSION+'.tar.gz') in log.read_text()
     assert '--source' in output['args'] and ('plan' if upgrade else '--plan') in output['args']
 
+
+def run_bootstrap_archive(tmp_path, archive):
+    """Подмена только скачивания: настоящий bash-загрузчик и распаковка Python."""
+    binary=tmp_path/'bootstrap-bin';binary.mkdir()
+    curl=binary/'curl'
+    curl.write_text('''#!/usr/bin/env python3
+import os,sys,shutil
+from pathlib import Path
+args=sys.argv[1:];source=Path(os.environ['MOCK_ARCHIVE'])
+limit=int(args[args.index('--max-filesize')+1])
+if source.stat().st_size>limit:sys.exit(63)
+shutil.copyfile(source,args[args.index('-o')+1])
+''')
+    curl.chmod(0o755)
+    env={**os.environ,'PATH':str(binary)+os.pathsep+os.environ['PATH'],'MOCK_ARCHIVE':str(archive)}
+    return subprocess.run(['bash',str(Path(__file__).parents[1]/'install.sh'),'--plan'],
+                          env=env,capture_output=True,text=True)
+
+
+def test_bootstrap_accepts_source_archive_larger_than_old_ten_mib_limit(tmp_path):
+    import io,tarfile
+    archive=tmp_path/'large.tar.gz'
+    with tarfile.open(archive,'w:gz') as tar:
+        for name,data in [('scripts/install.py',b'print("plan-reached")\n'),
+                          ('docs/artwork.bin',os.urandom(11*1024*1024))]:
+            member=tarfile.TarInfo('release/'+name);member.size=len(data)
+            tar.addfile(member,io.BytesIO(data))
+    assert archive.stat().st_size>10*1024*1024
+    result=run_bootstrap_archive(tmp_path,archive)
+    assert result.returncode==0,result.stderr
+    assert result.stdout.strip()=='plan-reached'
+
+
+@pytest.mark.parametrize('fault',['traversal','absolute','symlink','hardlink','device','expanded_size','member_count'])
+def test_bootstrap_still_rejects_unsafe_archives_before_execution(tmp_path,fault):
+    import io,tarfile
+    archive=tmp_path/'unsafe.tar.gz'
+    with tarfile.open(archive,'w:gz') as tar:
+        script=b'print("must-not-run")\n'
+        member=tarfile.TarInfo('release/scripts/install.py');member.size=len(script)
+        tar.addfile(member,io.BytesIO(script))
+        bad=tarfile.TarInfo('release/bad')
+        if fault=='traversal':bad.name='release/../../escape'
+        elif fault=='absolute':bad.name=str(tmp_path/'escape')
+        elif fault=='symlink':bad.type=tarfile.SYMTYPE;bad.linkname='../escape'
+        elif fault=='hardlink':bad.type=tarfile.LNKTYPE;bad.linkname='../escape'
+        elif fault=='device':bad.type=tarfile.CHRTYPE
+        elif fault=='expanded_size':
+            data=b'\0'*(64*1024*1024+1);bad.size=len(data);tar.addfile(bad,io.BytesIO(data))
+        elif fault=='member_count':
+            for n in range(2001):tar.addfile(tarfile.TarInfo('release/empty-'+str(n)))
+        if fault not in ('expanded_size','member_count'):tar.addfile(bad)
+    result=run_bootstrap_archive(tmp_path,archive)
+    assert result.returncode!=0 and 'must-not-run' not in result.stdout
+    assert not (tmp_path/'escape').exists()
+
+
+def test_bootstrap_download_remains_bounded(tmp_path):
+    archive=tmp_path/'oversize.tar.gz'
+    with archive.open('wb') as stream:stream.truncate(33*1024*1024)
+    result=run_bootstrap_archive(tmp_path,archive)
+    assert result.returncode==63
+
 @pytest.mark.parametrize('raw,expected',[
     ('https://vpn.alpha.example/shop/','https://vpn.alpha.example/shop'),
     ('https://SHOP.BETA.EXAMPLE/shop','https://shop.beta.example/shop'),

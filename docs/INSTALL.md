@@ -5,16 +5,16 @@
 Python 3 уже установлен. Скрипт проверяет поддерживаемую ОС до установки магазина.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.054/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.055/install.sh | bash
 ```
 
-Команда устанавливает фиксированную версию v0.054. Скрипт скачивает архив этого
+Команда устанавливает фиксированную версию v0.055. Скрипт скачивает архив этого
 же тега по HTTPS, проверяет пути/типы файлов и размер до распаковки. Вопросы читает
 из терминала, поэтому запуск через pipe не мешает диалогу. При обычном пользователе
 запрашивается sudo. Для просмотра действий без установки:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.054/install.sh | bash -s -- --plan
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.055/install.sh | bash -s -- --plan
 ```
 
 ## Диалог и режимы
@@ -101,7 +101,7 @@ docker compose --project-name PROJECT --env-file .env -f compose.install.json lo
 бот остаётся ненастроенным. Для nginx также нужен --nginx-config:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.054/install.sh | bash -s -- --yes --url https://example.com/shop --mode caddy --support '@support'
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.055/install.sh | bash -s -- --yes --url https://example.com/shop --mode caddy --support '@support'
 ```
 
 При следующем релизе VERSION в install.sh и scripts/install.py должен совпадать с
@@ -120,15 +120,15 @@ access и error log этого пути. Собственные CDN/APM/logging 
 согласованного снимка; сохраняйте .env и состояние VPN-узлов отдельно по инструкции.
 
 
-Для установленных через установщик версий v0.021–v0.046 доступно управляемое
-обновление до v0.054, включая подтверждённый managed-upgrade. Обычный install.sh не
+Для установленных через установщик версий v0.021–v0.054 доступно управляемое
+обновление до v0.055, включая подтверждённый managed-upgrade. Обычный install.sh не
 запускает обновление сам: используйте `--upgrade plan`, затем `--upgrade prepare`,
 проверьте результат и выполните `--upgrade activate` либо `--upgrade rollback` до
 начала активации. Команды, проверки текущего тома и ограничения: [UPGRADE.md](UPGRADE.md).
 
 Незавершённые старые операции сначала закончите инструментом их целевого релиза.
-Изменённые установки и более старые версии требуют отдельного плана. Bootstrap v0.054
-использует фиксированный v0.054 для новой установки и обновления.
+Изменённые установки и более старые версии требуют отдельного плана. Bootstrap v0.055
+использует фиксированный v0.055 для новой установки и обновления.
 
 Локальный отчёт в админке и CLI нового образа: [DIAGNOSTICS.md](DIAGNOSTICS.md).
 Он не подтверждает работу VPN-трафика, реальный платёж и восстановление копии.

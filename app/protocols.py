@@ -2,7 +2,7 @@
 from dataclasses import asdict, dataclass
 from typing import Literal
 
-SalesProtocol = Literal['xui', 'wg', 'vmess', 'hysteria2']
+SalesProtocol = Literal['xui', 'wg', 'vmess', 'hysteria2', 'tuic']
 
 
 @dataclass(frozen=True)
@@ -48,9 +48,9 @@ PROTOCOLS = (
              'Hysteria2: UDP/QUIC + TLS, при необходимости Salamander; доступный UDP-порт.',
              'https://v2.hysteria.network/', 'hysteria2', ('S-UI apiv2 · QUIC/TLS',)),
     Protocol('tuic', 'TUIC', 'Прокси на базе QUIC для передачи TCP и UDP.',
-             'Кандидат: S-UI; реализация sing-box',
-             'Совпадающая версия TUIC на сервере и клиенте; доступный UDP/QUIC.',
-             'https://github.com/tuic-protocol/tuic'),
+             'S-UI apiv2',
+             'TUIC v5, UUID + пароль, UDP/QUIC + TLS, ALPN h3; без 0-RTT.',
+             'https://github.com/tuic-protocol/tuic', 'tuic', ('S-UI apiv2 · TUIC v5',)),
     Protocol('anytls', 'AnyTLS', 'Прокси поверх TLS с дополнением пакетов.',
              'Реализация sing-box; управляющий адаптер предстоит выбрать',
              'Явная поддержка AnyTLS в версии клиента; обычной поддержки TLS недостаточно.',

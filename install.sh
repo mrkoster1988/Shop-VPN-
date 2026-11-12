@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 # A fixed release prevents downloading a moving main branch during installation.
-VERSION=v0.054
+VERSION=v0.055
 main() {
   local archive_version="$VERSION"
   command -v curl >/dev/null || { echo 'Нужен curl.' >&2; exit 1; }
@@ -9,14 +9,14 @@ main() {
   stage=$(mktemp -d)
   trap 'rm -rf -- "$stage"' EXIT
   curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --tlsv1.2 \
-    --max-time 120 --max-filesize 10485760 \
+    --max-time 120 --max-filesize 33554432 \
     "https://github.com/mrkoster1988/Shop-VPN-/archive/refs/tags/${archive_version}.tar.gz" -o "$stage/source.tar.gz"
   python3 - "$stage" <<'PY'
 import pathlib,sys,tarfile
 root=pathlib.Path(sys.argv[1])
 with tarfile.open(root/'source.tar.gz') as archive:
     members=archive.getmembers()
-    if len(members)>2000 or sum(m.size for m in members)>32*1024*1024:
+    if len(members)>2000 or sum(m.size for m in members)>64*1024*1024:
         raise SystemExit('Архив слишком большой')
     for m in members:
         p=pathlib.PurePosixPath(m.name)
