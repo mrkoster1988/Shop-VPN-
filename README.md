@@ -36,90 +36,235 @@ puShok shop VPN — самостоятельный магазин подключ
 
 ## Технологии подключения
 
-**Выберите технологию — нажмите на иллюстрацию, чтобы открыть официальный ресурс.**
+Начните с установки магазина, затем выберите панель и протокол. У каждой карточки одинаковые ссылки: **установка → подключение к Shop → документация**. Иллюстрация также открывает инструкцию установки.
 
-Галерея действующих технологий и направлений развития puShok shop VPN. Карточки сгруппированы по назначению; статус протокола в магазине указан отдельно от возможностей самого протокола.
+<p align="center">
+  <a href="docs/INSTALL_QUICKSTART.md"><strong>Установить puShok shop VPN</strong></a> ·
+  <a href="docs/PANELS_SETUP.md">Мастер установки панелей</a> ·
+  <a href="docs/PANEL_CHECK.md">Проверить API</a>
+</p>
 
 ### Панели управления
 
-<p align="center">
-  <a href="https://github.com/MHSanaei/3x-ui"><img src="docs/assets/technologies/3x-ui.webp" width="240" alt="3x-ui — иллюстрация puShok shop VPN"></a>
-  &nbsp; <a href="https://github.com/WGDashboard/WGDashboard"><img src="docs/assets/technologies/wgdashboard.webp" width="240" alt="WGDashboard — иллюстрация puShok shop VPN"></a>
-  &nbsp; <a href="https://docs.rw/"><img src="docs/assets/technologies/remnawave.webp" width="240" alt="Remnawave — иллюстрация puShok shop VPN"></a>
-</p>
-
-
-- **3x-ui** — Выдача, продление и отключение VLESS и VMess AEAD через API. [VLESS](docs/THREEXUI_API.md) · [VMess](docs/VMESS.md).
-- **WGDashboard** — Управление WireGuard peers и выдача конфигураций через API. [Настройка](docs/WGDASHBOARD.md).
-- **Remnawave** — Пользователи, сроки и подписки через прямой REST API. [Настройка](docs/REMNAWAVE.md).
-
-Дополнительно поддерживается **S-UI** как API-панель Hysteria2 и TUIC. [Официальный проект](https://github.com/alireza0/s-ui) · [Подключение к магазину](docs/HYSTERIA2.md). Установка панели отдельная.
-
-### Протоколы подключения
-
-#### 🟢 Реализованы в коде · требуется приёмка на целевых серверах
+<h4 align="center">3x-ui</h4>
 
 <p align="center">
-  <a href="https://xtls.github.io/en/config/inbounds/vless.html"><img src="docs/assets/technologies/vless.webp" width="360" alt="VLESS — иллюстрация puShok shop VPN"></a>
-  &nbsp; <a href="https://www.wireguard.com/"><img src="docs/assets/technologies/wireguard.webp" width="360" alt="WireGuard — иллюстрация puShok shop VPN"></a>
+  <a href="https://docs.sanaei.dev/docs/guide/installation/"><img src="docs/assets/technologies/3x-ui.webp" width="440" alt="3x-ui — фирменная иллюстрация puShok"></a>
+</p>
+<p align="center">
+  Панель для управления пользователями VLESS и VMess через API.<br>
+  <strong>🟢 Реализовано в коде · требуется приёмка</strong>
+</p>
+<p align="center">
+  <a href="https://docs.sanaei.dev/docs/guide/installation/"><strong>Установка</strong></a> ·
+  <a href="docs/THREEXUI_API.md">Подключение к Shop</a> ·
+  <a href="https://github.com/MHSanaei/3x-ui">Документация</a>
 </p>
 
+<h4 align="center">WGDashboard</h4>
 
 <p align="center">
-  <a href="https://www.v2fly.org/en_US/developer/protocols/vmess.html"><img src="docs/assets/technologies/vmess.webp" width="360" alt="VMess — иллюстрация puShok shop VPN"></a>
-  &nbsp; <a href="https://v2.hysteria.network/"><img src="docs/assets/technologies/hysteria2.webp" width="360" alt="Hysteria2 — иллюстрация puShok shop VPN"></a>
+  <a href="https://docs.wgdashboard.dev/install/"><img src="docs/assets/technologies/wgdashboard.webp" width="440" alt="WGDashboard — фирменная иллюстрация puShok"></a>
 </p>
+<p align="center">
+  Управление WireGuard peers, сроками доступа и конфигурациями через API.<br>
+  <strong>🟢 Реализовано в коде · требуется приёмка</strong>
+</p>
+<p align="center">
+  <a href="https://docs.wgdashboard.dev/install/"><strong>Установка</strong></a> ·
+  <a href="docs/WGDASHBOARD.md">Подключение к Shop</a> ·
+  <a href="https://docs.wgdashboard.dev/">Документация</a>
+</p>
+
+<h4 align="center">Remnawave</h4>
 
 <p align="center">
-  <a href="https://github.com/tuic-protocol/tuic"><img src="docs/assets/technologies/tuic.webp" width="360" alt="TUIC — иллюстрация puShok shop VPN"></a>
+  <a href="https://docs.rw/overview/quick-start/"><img src="docs/assets/technologies/remnawave.webp" width="440" alt="Remnawave — фирменная иллюстрация puShok"></a>
+</p>
+<p align="center">
+  Управление пользователями, узлами и подписками через REST API.<br>
+  <strong>🟢 Реализовано в коде · требуется приёмка</strong>
+</p>
+<p align="center">
+  <a href="https://docs.rw/overview/quick-start/"><strong>Установка</strong></a> ·
+  <a href="docs/REMNAWAVE.md">Подключение к Shop</a> ·
+  <a href="https://docs.rw/">Документация</a>
 </p>
 
-- **VLESS** — Лёгкий протокол с UUID. Защита и транспорт выбираются в конфигурации сервера: например, TLS или REALITY.
-- **WireGuard** — VPN-туннель с ключами устройств. Конфигурация и QR-код для подключения.
+**S-UI** используется для Hysteria2 и TUIC: [установка](https://github.com/alireza0/s-ui#install--upgrade-to-latest-version) · [Hysteria2 в Shop](docs/HYSTERIA2.md) · [TUIC в Shop](docs/TUIC.md). Панель устанавливается отдельно.
 
-- **VMess AEAD** — 3x-ui Clients JSON, TCP/WS + TLS. Выдача ссылки, продление и отзыв; [настройка и границы поддержки](docs/VMESS.md).
+### Протоколы, реализованные в Shop
 
-- **Hysteria2** — S-UI apiv2, UDP/QUIC + TLS, опционально Salamander. Продление и отзыв с закрытием сессий; [настройка и приёмка](docs/HYSTERIA2.md).
+Ссылка «Установка» ведёт к серверной реализации, которую использует адаптер Shop. Сам протокол отдельно не устанавливается. Для VLESS также доступна Remnawave, для WireGuard — собственный агент магазина.
 
-- **TUIC v5** — S-UI apiv2, UUID + пароль, QUIC/TLS с ALPN h3; [настройка и приёмка](docs/TUIC.md).
-
-[Проверка API панелей](docs/PANEL_CHECK.md) · [Приёмка WireGuard](docs/WIREGUARD_STAGING.md)
-
-#### 🟠 Расширение каталога · интеграция в магазин запланирована
-
-Следующие протоколы имеют действующие реализации. Их автоматическая продажа, выдача, продление и отключение в puShok shop VPN пока не реализованы. Карточка в галерее не включает протокол в магазине.
-
-**Шифрованные прокси**
+<h4 align="center">VLESS</h4>
 
 <p align="center">
-  <a href="https://sing-box.sagernet.org/manual/proxy-protocol/trojan/"><img src="docs/assets/technologies/trojan.webp" width="360" alt="Trojan — иллюстрация puShok shop VPN"></a>
+  <a href="https://docs.sanaei.dev/docs/guide/installation/"><img src="docs/assets/technologies/vless.webp" width="440" alt="VLESS — фирменная иллюстрация puShok"></a>
 </p>
+<p align="center">
+  Подключения с UUID через 3x-ui или Remnawave. Транспорт и защита задаются на сервере.<br>
+  <strong>🟢 Реализовано в коде · требуется приёмка</strong>
+</p>
+<p align="center">
+  <a href="https://docs.sanaei.dev/docs/guide/installation/"><strong>Установка</strong></a> ·
+  <a href="docs/THREEXUI_API.md">Подключение к Shop</a> ·
+  <a href="https://xtls.github.io/en/config/inbounds/vless.html">Документация</a>
+</p>
+
+<h4 align="center">WireGuard</h4>
 
 <p align="center">
-  <a href="https://sing-box.sagernet.org/manual/proxy-protocol/shadowsocks/"><img src="docs/assets/technologies/shadowsocks.webp" width="360" alt="Shadowsocks / Shadowsocks 2022 — иллюстрация puShok shop VPN"></a>
-  &nbsp; <a href="https://sing-box.sagernet.org/configuration/inbound/anytls/"><img src="docs/assets/technologies/anytls.webp" width="360" alt="AnyTLS — иллюстрация puShok shop VPN"></a>
+  <a href="https://www.wireguard.com/install/"><img src="docs/assets/technologies/wireguard.webp" width="440" alt="WireGuard — фирменная иллюстрация puShok"></a>
+</p>
+<p align="center">
+  VPN-туннель с ключами устройств, конфигурацией и QR-кодом.<br>
+  <strong>🟢 Реализовано в коде · требуется приёмка</strong>
+</p>
+<p align="center">
+  <a href="https://www.wireguard.com/install/"><strong>Установка</strong></a> ·
+  <a href="docs/WGDASHBOARD.md">Подключение к Shop</a> ·
+  <a href="https://www.wireguard.com/quickstart/">Документация</a>
 </p>
 
-
-- **Trojan** — Прокси-соединение с защитой TLS и аутентификацией по паролю.
-- **Shadowsocks / Shadowsocks 2022** — Семейство шифрованных прокси. Метод шифрования и формат ключа должны поддерживаться клиентом.
-- **AnyTLS** — Прокси поверх TLS с настраиваемым дополнением пакетов. Требуется совместимое приложение.
-
-**VPN-туннели и доступ к сетям**
+<h4 align="center">VMess AEAD</h4>
 
 <p align="center">
-  <a href="https://docs.amnezia.org/documentation/amnezia-wg/"><img src="docs/assets/technologies/amneziawg.webp" width="360" alt="AmneziaWG — иллюстрация puShok shop VPN"></a>
-  &nbsp; <a href="https://openvpn.net/community/"><img src="docs/assets/technologies/openvpn.webp" width="360" alt="OpenVPN — иллюстрация puShok shop VPN"></a>
+  <a href="https://docs.sanaei.dev/docs/guide/installation/"><img src="docs/assets/technologies/vmess.webp" width="440" alt="VMess AEAD — фирменная иллюстрация puShok"></a>
 </p>
+<p align="center">
+  Выдача, продление и отключение через 3x-ui: TCP или WebSocket с TLS.<br>
+  <strong>🟢 Реализовано в коде · требуется приёмка</strong>
+</p>
+<p align="center">
+  <a href="https://docs.sanaei.dev/docs/guide/installation/"><strong>Установка</strong></a> ·
+  <a href="docs/VMESS.md">Подключение к Shop</a> ·
+  <a href="https://www.v2fly.org/en_US/developer/protocols/vmess.html">Документация</a>
+</p>
+
+<h4 align="center">Hysteria2</h4>
 
 <p align="center">
-  <a href="https://docs.strongswan.org/docs/latest/howtos/introduction.html"><img src="docs/assets/technologies/ikev2-ipsec.webp" width="360" alt="IKEv2 / IPsec — иллюстрация puShok shop VPN"></a>
+  <a href="https://github.com/alireza0/s-ui#install--upgrade-to-latest-version"><img src="docs/assets/technologies/hysteria2.webp" width="440" alt="Hysteria2 — фирменная иллюстрация puShok"></a>
+</p>
+<p align="center">
+  Выдача и отзыв через S-UI: UDP/QUIC, TLS и необязательный Salamander.<br>
+  <strong>🟢 Реализовано в коде · требуется приёмка</strong>
+</p>
+<p align="center">
+  <a href="https://github.com/alireza0/s-ui#install--upgrade-to-latest-version"><strong>Установка</strong></a> ·
+  <a href="docs/HYSTERIA2.md">Подключение к Shop</a> ·
+  <a href="https://v2.hysteria.network/">Документация</a>
 </p>
 
+<h4 align="center">TUIC v5</h4>
 
-- **AmneziaWG** — Основа WireGuard с дополнительной маскировкой признаков трафика.
-- **OpenVPN** — VPN для пользовательских устройств, удалённого доступа и соединения сетей.
-- **IKEv2 / IPsec** — Защищённый доступ к сети: IKEv2 согласует параметры, IPsec защищает трафик.
+<p align="center">
+  <a href="https://github.com/alireza0/s-ui#install--upgrade-to-latest-version"><img src="docs/assets/technologies/tuic.webp" width="440" alt="TUIC v5 — фирменная иллюстрация puShok"></a>
+</p>
+<p align="center">
+  Выдача и отзыв через S-UI: UUID и пароль, QUIC/TLS с ALPN h3.<br>
+  <strong>🟢 Реализовано в коде · требуется приёмка</strong>
+</p>
+<p align="center">
+  <a href="https://github.com/alireza0/s-ui#install--upgrade-to-latest-version"><strong>Установка</strong></a> ·
+  <a href="docs/TUIC.md">Подключение к Shop</a> ·
+  <a href="https://sing-box.sagernet.org/configuration/inbound/tuic/">Документация</a>
+</p>
+
+### Планируемые интеграции
+
+Официальные инструкции доступны уже сейчас. Продажа, выдача и отзыв этих подключений в Shop пока не реализованы; ссылка «План интеграции» показывает текущий статус.
+
+<h4 align="center">Trojan</h4>
+
+<p align="center">
+  <a href="https://sing-box.sagernet.org/installation/package-manager/"><img src="docs/assets/technologies/trojan.webp" width="440" alt="Trojan — фирменная иллюстрация puShok"></a>
+</p>
+<p align="center">
+  Прокси с защитой TLS и аутентификацией по паролю.<br>
+  <strong>🟠 Интеграция запланирована</strong>
+</p>
+<p align="center">
+  <a href="https://sing-box.sagernet.org/installation/package-manager/"><strong>Установка</strong></a> ·
+  <a href="docs/PROTOCOLS.md">План интеграции</a> ·
+  <a href="https://sing-box.sagernet.org/configuration/inbound/trojan/">Документация</a>
+</p>
+
+<h4 align="center">Shadowsocks / Shadowsocks 2022</h4>
+
+<p align="center">
+  <a href="https://sing-box.sagernet.org/installation/package-manager/"><img src="docs/assets/technologies/shadowsocks.webp" width="440" alt="Shadowsocks / Shadowsocks 2022 — фирменная иллюстрация puShok"></a>
+</p>
+<p align="center">
+  Шифрованные прокси с согласованным методом шифрования и форматом ключа.<br>
+  <strong>🟠 Интеграция запланирована</strong>
+</p>
+<p align="center">
+  <a href="https://sing-box.sagernet.org/installation/package-manager/"><strong>Установка</strong></a> ·
+  <a href="docs/PROTOCOLS.md">План интеграции</a> ·
+  <a href="https://sing-box.sagernet.org/configuration/inbound/shadowsocks/">Документация</a>
+</p>
+
+<h4 align="center">AnyTLS</h4>
+
+<p align="center">
+  <a href="https://sing-box.sagernet.org/installation/package-manager/"><img src="docs/assets/technologies/anytls.webp" width="440" alt="AnyTLS — фирменная иллюстрация puShok"></a>
+</p>
+<p align="center">
+  Прокси поверх TLS с настраиваемым дополнением пакетов.<br>
+  <strong>🟠 Интеграция запланирована</strong>
+</p>
+<p align="center">
+  <a href="https://sing-box.sagernet.org/installation/package-manager/"><strong>Установка</strong></a> ·
+  <a href="docs/PROTOCOLS.md">План интеграции</a> ·
+  <a href="https://sing-box.sagernet.org/configuration/inbound/anytls/">Документация</a>
+</p>
+
+<h4 align="center">AmneziaWG</h4>
+
+<p align="center">
+  <a href="https://docs.amnezia.org/documentation/instructions/install-vpn-on-server/"><img src="docs/assets/technologies/amneziawg.webp" width="440" alt="AmneziaWG — фирменная иллюстрация puShok"></a>
+</p>
+<p align="center">
+  Основа WireGuard с дополнительной маскировкой признаков трафика.<br>
+  <strong>🟠 Интеграция запланирована</strong>
+</p>
+<p align="center">
+  <a href="https://docs.amnezia.org/documentation/instructions/install-vpn-on-server/"><strong>Установка</strong></a> ·
+  <a href="docs/PROTOCOLS.md">План интеграции</a> ·
+  <a href="https://docs.amnezia.org/documentation/amnezia-wg/">Документация</a>
+</p>
+
+<h4 align="center">OpenVPN</h4>
+
+<p align="center">
+  <a href="https://openvpn.net/community-docs/how-to/"><img src="docs/assets/technologies/openvpn.webp" width="440" alt="OpenVPN — фирменная иллюстрация puShok"></a>
+</p>
+<p align="center">
+  VPN для устройств, удалённого доступа и соединения сетей.<br>
+  <strong>🟠 Интеграция запланирована</strong>
+</p>
+<p align="center">
+  <a href="https://openvpn.net/community-docs/how-to/"><strong>Установка</strong></a> ·
+  <a href="docs/PROTOCOLS.md">План интеграции</a> ·
+  <a href="https://openvpn.net/community/">Документация</a>
+</p>
+
+<h4 align="center">IKEv2 / IPsec</h4>
+
+<p align="center">
+  <a href="https://docs.strongswan.org/docs/latest/install/install.html"><img src="docs/assets/technologies/ikev2-ipsec.webp" width="440" alt="IKEv2 / IPsec — фирменная иллюстрация puShok"></a>
+</p>
+<p align="center">
+  Защищённый доступ к сети: IKEv2 согласует параметры, IPsec защищает трафик.<br>
+  <strong>🟠 Интеграция запланирована</strong>
+</p>
+<p align="center">
+  <a href="https://docs.strongswan.org/docs/latest/install/install.html"><strong>Установка</strong></a> ·
+  <a href="docs/PROTOCOLS.md">План интеграции</a> ·
+  <a href="https://docs.strongswan.org/docs/latest/config/quickstart.html">Документация</a>
+</p>
 
 <details>
 <summary><strong>Как связаны протокол, защита соединения и панель?</strong></summary>
@@ -147,6 +292,7 @@ puShok shop VPN — самостоятельный магазин подключ
 | Дополнительно установить 3x-ui или WGDashboard | [Установка и настройка панелей](docs/PANELS_SETUP.md) |
 | Настроить СБП и Stars | [Платежи](docs/SBP_PAYMENTS.md) |
 | Проверить, что магазин действительно готов | [Стендовая приёмка](docs/STAGING.md) |
+| Автоматическая проверка первой установки | [Ubuntu 24.04 в CI](docs/INSTALLER_STAGING.md) |
 
 Загрузчик v0.055 закреплён на одноимённом релизе и включает новые протоколы, подсказки и выбор дополнительных панелей. Установка S-UI остаётся отдельной. Приёмка целевой Ubuntu и VPN-клиентов ещё открыта.
 
@@ -158,7 +304,7 @@ puShok shop VPN — самостоятельный магазин подключ
 - [Резервное копирование](docs/BACKUP.md) · [Обновление и откат](docs/UPGRADE.md) · [Диагностика](docs/DIAGNOSTICS.md).
 - [История изменений](CHANGELOG.md) · [Задачи](https://github.com/mrkoster1988/Shop-VPN-/issues) · [Релизы](https://github.com/mrkoster1988/Shop-VPN-/releases).
 
-Ближайший приоритет — закрыть блокеры CI и восстановление, выпустить проверенный установщик и пройти полный цикл «оплата → выдача → VPN-трафик → продление → отключение».
+Ближайший приоритет — подтвердить установку на целевой инфраструктуре и пройти полный цикл «оплата → выдача → VPN-трафик → продление → отключение». Установочный релиз v0.055 опубликован; автоматические проверки дополняются отдельным стендом Ubuntu 24.04.
 
 ---
 
