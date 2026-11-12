@@ -11,6 +11,24 @@ permissions:
   contents: read
 
 jobs:
+  panel-wizard-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install pinned browser test runtime
+        run: |
+          npm install --prefix "$RUNNER_TEMP/panel-ui" --ignore-scripts --no-audit --no-fund playwright@1.62.1
+          "$RUNNER_TEMP/panel-ui/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Check wizard and credential replacement on desktop and mobile
+        env:
+          NODE_PATH: ${{ runner.temp }}/panel-ui/node_modules
+          PANEL_UI_OUTPUT: ${{ runner.temp }}/panel-ui-screenshots
+        run: node tests/panel_wizard_browser.cjs
+
   tests:
     runs-on: ubuntu-latest
     timeout-minutes: 15

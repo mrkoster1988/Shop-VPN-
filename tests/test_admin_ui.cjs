@@ -11,6 +11,7 @@ function adminPage(options={}) {
       listeners:{}, reset() {},
       replaceChildren() { this.innerHTML = ''; this.textContent = ''; },
       addEventListener(name, handler) { this.listeners[name] = handler; },
+      showModal() { this.open = true; },
       close() { this.open = false; this.listeners.close?.(); },
     });
     return elements.get(id);
@@ -643,6 +644,7 @@ test('editing WGDashboard keeps blank credentials and the selected adapter',asyn
   page.element('server-dialog').showModal=function(){this.open=true;};
   page.run("openServer({id:'a',name:'WG',protocol:'wg',profile:'wgdashboard',state:'active',version:3})");
   assert.equal(form.elements.wg_api.value,'wgdashboard');
+  page.run('nextServerStep(); nextServerStep()');
   const request=page.run(`$('server-form').onsubmit({preventDefault(){},target:{fields:{name:'Renamed',capacity:'0',wg_api:'wgdashboard',url:'',token:'',configuration:''},querySelector(){return {disabled:false};}}})`);
   assert.deepEqual(page.bodies[0],{name:'Renamed',location:'',capacity:0,version:3,state:'active'});
   page.replyAt(0,{});await new Promise(setImmediate);page.replyAt(1,{servers:[]});await request;
@@ -721,4 +723,93 @@ test('TUIC blank edit preserves profile and partial settings are refused',async(
     await other.run(`editingServer={id:'a',protocol:'tuic',state:'active',version:3};$('server-form').onsubmit({preventDefault(){},target:{fields:${JSON.stringify({name:'TUIC',url:'',...fields})},querySelector(){return {disabled:false};}}})`);
     assert.equal(other.requests.length,0);assert.notEqual(other.element('server-form-error').textContent,'');
   }
+});
+
+function prepareServerWizard(page) {
+  const form=page.element('server-form'); form.elements={};
+  for (const key of ['name','location','capacity','protocol','api','wg_api','url']) form.elements[key]={value:''};
+  return form;
+}
+
+test('server wizard starts with metadata, navigates back and never sends credentials in review',()=>{
+  const page=adminPage(), form=prepareServerWizard(page);
+  page.run('openServer()');
+  assert.equal(page.run('serverWizardStep'),1);
+  assert.equal(page.element('server-step-2').hidden,true);
+  form.elements.name.value='<img src=x>';form.elements.location.value='FI';
+  form.elements.token={value:'secret-token'};form.elements.url.value='https://panel.example/private';
+  page.run('nextServerStep(); nextServerStep()');
+  assert.equal(page.run('serverWizardStep'),3);
+  assert.equal(page.element('server-save').hidden,false);
+  assert.match(page.element('server-review').innerHTML,/&lt;img/);
+  assert.doesNotMatch(page.element('server-review').innerHTML,/<img|secret-token|private|panel.example/);
+  page.run("$('server-back').onclick()");
+  assert.equal(page.run('serverWizardStep'),2);
+  assert.equal(form.elements.token.value,'secret-token');
+  assert.equal(page.requests.length,0);
+});
+
+test('invalid wizard field stops navigation and Enter advances without saving',async()=>{
+  const page=adminPage();prepareServerWizard(page);page.run('openServer()');
+  page.element('server-step-1').querySelectorAll=()=>[{disabled:false,closest:()=>null,reportValidity:()=>false}];
+  page.run('nextServerStep()');assert.equal(page.run('serverWizardStep'),1);
+  page.element('server-step-1').querySelectorAll=()=>[];
+  await page.run("$('server-form').onsubmit({preventDefault(){}})");
+  assert.equal(page.run('serverWizardStep'),2);assert.equal(page.requests.length,0);
+});
+
+test('credential dialog chooses token fields and sends no endpoint or stale password',async()=>{
+  const page=adminPage();
+  page.run("openServerCredentials({id:'node-a',name:'<name>',profile:'wgdashboard',version:4})");
+  assert.equal(page.element('server-credentials-legacy').hidden,true);
+  page.element('server-credentials-token').value='new-token';
+  page.element('server-credentials-password').value='stale-password';
+  const request=page.run("$('server-credentials-form').onsubmit({preventDefault(){}})");
+  await page.run("$('server-credentials-form').onsubmit({preventDefault(){}})");
+  assert.equal(page.requests.length,1);
+  assert.equal(page.requests[0],'/shop/api/admin/servers/node-a/credentials');
+  assert.deepEqual(page.bodies[0],{version:4,token:'new-token'});
+  page.replyAt(0,{});await new Promise(setImmediate);
+  assert.equal(page.element('server-credentials-token').value,'');
+  assert.equal(page.element('server-credentials-password').value,'');
+  page.replyAt(1,{servers:[]});await request;
+  assert.match(page.element('admin-notice').textContent,/Проверьте API/);
+});
+
+test('legacy credential dialog preserves login when changing password only',async()=>{
+  const page=adminPage();
+  page.run("openServerCredentials({id:'node-a',name:'Legacy',profile:'legacy_vless',version:2})");
+  assert.equal(page.element('server-credentials-token').disabled,true);
+  await page.run("$('server-credentials-form').onsubmit({preventDefault(){}})");
+  assert.equal(page.requests.length,0);
+  page.element('server-credentials-password').value='new-password';
+  const request=page.run("$('server-credentials-form').onsubmit({preventDefault(){}})");
+  assert.deepEqual(page.bodies[0],{version:2,password:'new-password'});
+  page.replyAt(0,{detail:'Версия изменилась'},409);await request;
+  assert.equal(page.element('server-credentials-error').textContent,'Версия изменилась');
+  assert.equal(page.element('server-credentials-save').disabled,false);
+});
+
+test('closed credential request cannot close or refill a newly opened dialog',async()=>{
+  const page=adminPage();
+  page.run("openServerCredentials({id:'a',name:'A',profile:'wgdashboard',version:1})");
+  page.element('server-credentials-token').value='old-secret';
+  const request=page.run("$('server-credentials-form').onsubmit({preventDefault(){}})");
+  page.run("$('server-credentials-close').onclick(); openServerCredentials({id:'b',name:'B',profile:'wgdashboard',version:2})");
+  page.element('server-credentials-token').value='new-draft';
+  page.replyAt(0,{});await request;
+  assert.equal(page.element('server-credentials-dialog').open,true);
+  assert.equal(page.element('server-credentials-token').value,'new-draft');
+  assert.equal(page.requests.length,1);
+});
+
+test('logout clears credential inputs and ignores late server errors',async()=>{
+  const page=adminPage();
+  page.run("openServerCredentials({id:'a',name:'A',profile:'wgdashboard',version:1})");
+  page.element('server-credentials-token').value='secret-token';
+  const request=page.run("$('server-credentials-form').onsubmit({preventDefault(){}})");
+  page.run("$('exit').onclick()");page.replyAt(0,{detail:'late error'},403);await request;
+  assert.equal(page.element('server-credentials-token').value,'');
+  assert.equal(page.element('server-credentials-error').textContent,'');
+  assert.equal(page.element('server-credentials-dialog').open,false);
 });

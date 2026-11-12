@@ -350,6 +350,39 @@ def update(sid, data):
     return public(row)
 
 
+def update_credentials(sid, data):
+    """Меняет только доступ к API, сохраняя endpoint и привязки подписок."""
+    with db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        raw = conn.execute('SELECT * FROM servers WHERE id=?', (sid,)).fetchone()
+        if not raw:
+            raise HTTPException(404, 'Сервер не найден')
+        before = dict(raw)
+        if before['version'] != data.version:
+            raise HTTPException(409, 'Сервер уже изменён. Обновите список и откройте замену доступа заново.')
+        profile = decode(before)
+        fields = data.model_fields_set - {'version'}
+        legacy = before['protocol'] == 'xui' and profile.get('api') == 'legacy'
+        if legacy:
+            if not fields or not fields <= {'username', 'password'}:
+                raise ValueError('InvalidCredentialFields')
+        elif fields != {'token'}:
+            raise ValueError('InvalidCredentialFields')
+        # Явный null не является командой удаления секрета.
+        if any(getattr(data, key) is None for key in fields):
+            raise ValueError('EmptyCredentials')
+        profile.update({key:getattr(data, key) for key in fields})
+        replacement = validated(before['protocol'], profile)
+        conn.execute("""UPDATE servers SET settings=?, state='disabled', health='unknown',
+            checked_at=NULL, error_code=NULL, version=version+1 WHERE id=?""",
+            (c.encrypt(json.dumps(replacement)), sid))
+        row = dict(conn.execute('SELECT * FROM servers WHERE id=?', (sid,)).fetchone())
+        conn.execute('INSERT INTO server_changes(server_id,created,action,version) VALUES (?,?,?,?)',
+            (sid, int(time.time()), 'credentials_updated', row['version']))
+    # Счётчики и секреты здесь не вычисляем: клиент обновит обычный список серверов.
+    return public(row)
+
+
 def import_environment():
     # One-time snapshot pins old subscriptions before any remote operation can run.
     with db() as conn:

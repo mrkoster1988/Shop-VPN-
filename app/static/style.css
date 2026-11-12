@@ -77,3 +77,16 @@ html[data-telegram-theme="dark"] .miniapp-nav [aria-current="page"]{background:#
 .protocol-card a{display:inline-block;padding:10px 0;font-size:13px;color:#126978}
 .protocol-badge{display:inline-block;border-radius:20px;padding:5px 10px;background:#f4e6d6;color:#704716;font-size:11px;white-space:nowrap}
 .protocol-badge.implemented{background:#d9f1ee;color:#175c58}
+
+/* Настройка подключения: одинаковые шаги для всех поддержанных панелей. */
+.setup-steps{list-style:none;display:flex;gap:8px;flex-wrap:wrap;padding:0;margin:20px 0}
+.setup-steps li{flex:1;min-width:120px;padding:10px 12px;border:1px solid var(--line);border-radius:12px;font-size:12px;color:var(--muted)}
+.setup-steps [aria-current="step"]{background:#d9f1ee;border-color:#76bdb6;color:#175c58;font-weight:700}
+.setup-step{border:0;min-width:0;padding:0;margin:0}
+.setup-step[hidden],.setup-actions [hidden]{display:none}
+.setup-step legend{font-weight:700;font-size:18px;margin-bottom:14px}
+.setup-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:18px}
+.setup-actions button{flex:1;min-height:44px}
+.setup-review{padding:16px;border:1px solid #c4d9dd;border-radius:16px;background:#f7fbfc;overflow-wrap:anywhere}
+.setup-review h3{margin-top:0}
+#server-credentials-target{overflow-wrap:anywhere}
