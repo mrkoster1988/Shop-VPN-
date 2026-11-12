@@ -23,6 +23,8 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
     await page.route('**/*',async route=>{
      const request=route.request(),url=new URL(request.url()),p=url.pathname;
      if(url.href==='https://telegram.org/js/telegram-web-app.js')return route.fulfill({contentType:'text/javascript',body:''});
+     // Проверяем и системный шрифт: внешний CDN не нужен для работы значков.
+     if(url.hostname==='fonts.googleapis.com')return route.fulfill({contentType:'text/css',body:''});
      if(url.hostname!=='pushok.test'){unexpected.push(url.href);return route.abort();}
      if(p===base+'/')return route.fulfill({contentType:'text/html',body:fs.readFileSync(root+'/app/static/index.html','utf8').replaceAll('__BASE_PATH__',base)});
      if(p.startsWith(base+'/static/')){
