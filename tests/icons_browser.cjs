@@ -57,6 +57,16 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
       if(!missing)await page.waitForFunction(el=>{const b=el.querySelector('use').getBBox();return b.width>0 && b.height>0;},await icon.elementHandle());
      }
      assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Нет горизонтального скролла');
+     const colors=await page.evaluate(()=>({
+      heroFilter:getComputedStyle(document.querySelector('.hero .pushok-icon')).filter,
+      emphasis:getComputedStyle(document.querySelector('.hero h1 em')).color,
+      navBackground:getComputedStyle(document.getElementById('miniapp-account')).backgroundColor,
+     }));
+     assert.equal(colors.heroFilter==='none',theme!=='dark','Контраст значка на заливке кнопки');
+     if(theme==='dark'){
+      assert.equal(colors.emphasis,'rgb(24, 60, 48)','Тёмный текст на светлом выделении');
+      assert.equal(colors.navBackground,'rgba(0, 0, 0, 0)','Неактивный кабинет без заливки основной кнопки');
+     }
      const name=engine+'-'+(base?'shop':'root')+'-'+theme+'-'+width+(missing?'-no-sprite':'');
      await page.screenshot({path:path.join(output,name+'.png')});
      // Опциональные компактные превью только фикстур для приёмки через CI-логи.

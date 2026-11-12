@@ -106,6 +106,11 @@ html[data-telegram-theme="dark"] .miniapp-nav [aria-current="page"]{background:#
 html[data-telegram-theme="dark"] .pushok-icon{filter:none}
 html[data-telegram-theme] .miniapp-nav .pushok-icon{width:20px;height:20px}
 .nav button .pushok-icon{margin-right:5px}
+.hero .button .pushok-icon{filter:none}
 
 /* Светлая кнопка тарифа сохраняет контраст значка и в тёмной теме. */
 html[data-telegram-theme="dark"] .hero .button .pushok-icon{filter:brightness(.52) saturate(1.5)}
+html[data-telegram-theme="dark"] .hero h1 em{color:#183c30}
+/* Нижнее меню не наследует заливку основной кнопки действия. */
+html[data-telegram-theme="dark"] #miniapp-nav :is(a,button){background:transparent;color:var(--muted)}
+html[data-telegram-theme="dark"] #miniapp-nav [aria-current="page"]{background:#233329;color:var(--ink)}
