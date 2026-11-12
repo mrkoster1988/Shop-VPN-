@@ -102,6 +102,7 @@ html[data-telegram-theme="dark"] .miniapp-nav [aria-current="page"]{background:#
 
 
 /* Pushok Sketch Icons — original icon family on web/Mini App surfaces. */
-.pushok-icon{display:inline-block;width:20px;height:20px;flex-shrink:0;vertical-align:middle}
+.pushok-icon{display:inline-block;width:20px;height:20px;flex-shrink:0;vertical-align:middle;filter:brightness(.52) saturate(1.5)}
+html[data-telegram-theme="dark"] .pushok-icon{filter:none}
 html[data-telegram-theme] .miniapp-nav .pushok-icon{width:20px;height:20px}
 .nav button .pushok-icon{margin-right:5px}
