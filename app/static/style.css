@@ -90,3 +90,12 @@ html[data-telegram-theme="dark"] .miniapp-nav [aria-current="page"]{background:#
 .setup-review{padding:16px;border:1px solid #c4d9dd;border-radius:16px;background:#f7fbfc;overflow-wrap:anywhere}
 .setup-review h3{margin-top:0}
 #server-credentials-target{overflow-wrap:anywhere}
+
+/* Обновления магазина: общая палитра и компактные карточки для телефона. */
+.updates-panel{border:1px solid var(--line);border-radius:20px;padding:24px;background:linear-gradient(145deg,#fff,#edf5e4)}
+.updates-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}.updates-heading h2{margin:6px 0 0}.updates-eyebrow{color:#32745d;font-size:12px;letter-spacing:.06em}
+.updates-versions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:20px 0}.updates-versions>div{border:1px solid var(--line);border-radius:14px;padding:18px;background:var(--white)}.updates-versions span{display:block;font-size:13px;color:#59685f}.updates-versions strong{display:block;font-size:28px;margin-top:6px;overflow-wrap:anywhere}
+.updates-actions{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0}.updates-actions button{width:auto;margin:0}.updates-schedule-fields{display:grid;grid-template-columns:minmax(110px,1fr) minmax(0,2fr);gap:12px}.updates-enabled{display:flex;align-items:center;gap:10px}.updates-enabled input{width:auto;margin:0}
+.updates-notes{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:14px;max-height:360px;overflow:auto;padding:12px;border-radius:10px;background:#ffffffb3}#updates-timing,#updates-status{overflow-wrap:anywhere}#updates-schedule{border-top:1px solid var(--line);margin-top:22px;padding-top:12px}
+#updates-dialog{width:min(640px,calc(100vw - 32px));box-sizing:border-box}#updates-dialog li{margin-bottom:12px}.updates-guide-link{display:block;margin:18px 0;overflow-wrap:anywhere}#updates-dialog-close{width:100%}
+@media(max-width:560px){.updates-panel{padding:16px}.updates-schedule-fields{grid-template-columns:1fr}.updates-actions button{width:100%}.updates-versions>div{padding:12px}.updates-versions strong{font-size:23px}}

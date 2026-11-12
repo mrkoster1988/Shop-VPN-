@@ -23,11 +23,13 @@ jobs:
         run: |
           npm install --prefix "$RUNNER_TEMP/panel-ui" --ignore-scripts --no-audit --no-fund playwright@1.62.1
           "$RUNNER_TEMP/panel-ui/node_modules/.bin/playwright" install --with-deps chromium
-      - name: Check wizard and credential replacement on desktop and mobile
+      - name: Check panel wizard, credentials and updates on desktop and mobile
         env:
           NODE_PATH: ${{ runner.temp }}/panel-ui/node_modules
           PANEL_UI_OUTPUT: ${{ runner.temp }}/panel-ui-screenshots
-        run: node tests/panel_wizard_browser.cjs
+        run: |
+          node tests/panel_wizard_browser.cjs
+          node tests/updates_browser.cjs
 
   tests:
     runs-on: ubuntu-latest

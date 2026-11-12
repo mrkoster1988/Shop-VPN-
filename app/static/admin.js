@@ -2,6 +2,130 @@
 const basePath = document.querySelector('meta[name="shop-base"]').content;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let updatesRequest = 0, updatesVersion = 0, updatesCache = null, updatesBusy = false;
+let updatesDirty = false, updatesTimer = null;
+const updatesErrors = {network_error:'Нет связи с GitHub. Повторим проверку автоматически.',
+  rate_limited:'GitHub временно ограничил запросы. Дождитесь следующей попытки.',
+  source_unavailable:'Источник релизов временно недоступен.', invalid_release:'Не удалось подтвердить стабильный релиз.',
+  interrupted:'Предыдущая проверка была прервана. Она будет повторена.', check_error:'Проверка не завершилась. Повторите позже.'};
+function updatesDate(value, zone) {
+  return value ? new Date(value * 1000).toLocaleString('ru-RU', {timeZone:zone}) : 'ещё не выполнялась';
+}
+function updateLinks(tag) {
+  if (typeof tag !== 'string' || !/^v(?:0|[1-9][0-9]{0,5})\.[0-9]{3}$/.test(tag)) return null;
+  const root = 'https://github.com/mrkoster1988/Shop-VPN-';
+  return {release:root+'/releases/tag/'+tag, guide:root+'/blob/'+tag+'/docs/UPGRADE.md'};
+}
+function setUpdatesBusy(busy) {
+  updatesBusy = busy;
+  for (const id of ['updates-check','updates-refresh','updates-save','updates-reset','updates-enabled','updates-time','updates-timezone']) $(id).disabled = busy;
+}
+function clearUpdates() {
+  updatesRequest++; updatesCache = null; updatesVersion = 0; updatesDirty = false;
+  if (updatesTimer !== null) clearTimeout(updatesTimer);
+  updatesTimer = null; setUpdatesBusy(false);
+  $('updates-panel').hidden = true; $('updates-open').hidden = true; $('updates-action-note').hidden = true;
+  $('updates-release').hidden = true;
+  for (const id of ['updates-status','updates-timing','updates-notes','updates-error']) $(id).textContent = '';
+  for (const id of ['updates-current','updates-latest']) $(id).textContent = '—';
+  $('updates-release-link').href = ''; $('updates-guide-link').href = '';
+  if ($('updates-dialog').open) $('updates-dialog').close();
+}
+function renderUpdates(data) {
+  updatesCache = data;
+  const labels = {not_checked:'Ещё не проверено',current:'Установлена последняя версия',available:'Доступно обновление',
+    ahead:'Установленная версия новее релиза',check_failed:'Не удалось проверить',stale:'Нужна свежая проверка',unknown_version:'Версия не определена'};
+  $('updates-badge').textContent = data.checking ? 'Проверяем…' : labels[data.state] || 'Статус неизвестен';
+  $('updates-current').textContent = data.current_version;
+  $('updates-latest').textContent = data.release?.tag || '—';
+  $('updates-status').textContent = data.checking ? 'Проверяем опубликованный стабильный релиз…' :
+    data.error_code ? updatesErrors[data.error_code] || updatesErrors.check_error : labels[data.state] || '';
+  const zone = data.settings.timezone;
+  const schedule = !data.settings.enabled ? 'Проверка по расписанию выключена.' : !data.scheduler_running ?
+    'Фоновые задачи магазина выключены. Доступна ручная проверка.' : 'Следующая проверка: '+updatesDate(data.next_check,zone)+'.';
+  $('updates-timing').textContent = 'Последняя попытка: '+updatesDate(data.last_attempt,zone)+
+    '. Успешная проверка: '+updatesDate(data.last_success,zone)+'. '+schedule+' Часовой пояс: '+zone+'.'+
+    (data.stale ? ' Сведения о релизе сохранены ранее; доступность обновления нужно подтвердить.' : '');
+  if (!updatesDirty) {
+    updatesVersion = data.settings.version;
+    $('updates-enabled').checked = data.settings.enabled;
+    $('updates-time').value = data.settings.check_time;
+    $('updates-timezone').value = zone;
+  }
+  const links = updateLinks(data.release?.tag);
+  $('updates-release').hidden = !links;
+  $('updates-notes').textContent = links ? (data.release.notes || 'Описание не заполнено.')+
+    (data.release.notes_truncated ? '\n\nПолное описание доступно на странице релиза.' : '') : '';
+  $('updates-release-link').href = links ? links.release : '';
+  $('updates-open').hidden = !links || !data.can_open_guide;
+  $('updates-action-note').hidden = $('updates-open').hidden;
+  if ($('updates-dialog').open && (!links || !data.can_open_guide)) $('updates-dialog').close();
+}
+function scheduleUpdatesPoll() {
+  if (updatesTimer !== null) clearTimeout(updatesTimer);
+  updatesTimer = null;
+  if (role !== 'owner' || typeof setTimeout !== 'function') return;
+  updatesTimer = setTimeout(() => {
+    updatesTimer = null;
+    if (document.visibilityState === 'visible' && !updatesBusy) void refreshUpdates();
+    else scheduleUpdatesPoll();
+  }, 60000);
+}
+async function refreshUpdates() {
+  if (role !== 'owner') {clearUpdates(); return;}
+  if (updatesBusy) return;
+  $('updates-panel').hidden = false;
+  const request = ++updatesRequest, epoch = authEpoch;
+  try {
+    const data = await api('updates');
+    if (request !== updatesRequest || epoch !== authEpoch) return;
+    renderUpdates(data); $('updates-error').textContent = '';
+  } catch (error) {
+    if (request !== updatesRequest || epoch !== authEpoch) return;
+    updatesCache = null; $('updates-open').hidden = true; $('updates-action-note').hidden = true;
+    $('updates-badge').textContent = 'Статус недоступен';
+    if ($('updates-dialog').open) $('updates-dialog').close();
+    $('updates-error').textContent = error.message;
+  } finally {
+    if (request === updatesRequest && epoch === authEpoch) scheduleUpdatesPoll();
+  }
+}
+$('updates-schedule').oninput = () => {updatesDirty = true;};
+$('updates-refresh').onclick = () => refreshUpdates();
+$('updates-reset').onclick = () => {if (updatesBusy) return; updatesDirty = false; return refreshUpdates();};
+async function mutateUpdates(path, options) {
+  if (role !== 'owner' || updatesBusy) return;
+  const request = ++updatesRequest, epoch = authEpoch;
+  setUpdatesBusy(true); $('updates-error').textContent = ''; $('updates-open').hidden = true;
+  if (path.endsWith('/check')) $('updates-status').textContent = 'Проверяем опубликованный стабильный релиз…';
+  try {
+    const data = await api(path, options);
+    if (request !== updatesRequest || epoch !== authEpoch) return;
+    if (path.endsWith('/schedule')) updatesDirty = false;
+    renderUpdates(data);
+    if (path.endsWith('/schedule')) $('updates-error').textContent = 'Расписание сохранено.';
+  } catch (error) {
+    if (request !== updatesRequest || epoch !== authEpoch) return;
+    $('updates-error').textContent = error.message;
+    $('updates-status').textContent = 'Действие не завершено. Обновите статус перед следующей попыткой.';
+  } finally {
+    if (request === updatesRequest && epoch === authEpoch) {setUpdatesBusy(false); scheduleUpdatesPoll();}
+  }
+}
+$('updates-check').onclick = () => mutateUpdates('updates/check', {method:'POST'});
+$('updates-schedule').onsubmit = event => {
+  event.preventDefault();
+  return mutateUpdates('updates/schedule', {method:'PUT',data:{enabled:$('updates-enabled').checked,
+    check_time:$('updates-time').value,timezone:$('updates-timezone').value,version:updatesVersion}});
+};
+$('updates-open').onclick = () => {
+  const data = updatesCache, links = updateLinks(data?.release?.tag);
+  if (role !== 'owner' || updatesBusy || !data?.can_open_guide || !links) return;
+  $('updates-dialog-title').textContent = 'Обновление до '+data.release.tag;
+  $('updates-guide-link').href = links.guide;
+  $('updates-dialog').showModal();
+};
+$('updates-dialog-close').onclick = () => $('updates-dialog').close();
 let diagnosticsRequest=0;
 let adsFinanceRequest=0,adsFinancePage=1,adsExpenseIntents=new Map();
 let adsBookingIntents=new Map(),adsBookingRequest=0,adsBookingPage=1;
@@ -268,7 +392,7 @@ async function refresh({plans = role==='owner'} = {}) {
   else if(role==='finance') await Promise.all([refreshAdsAdmin(),refreshOrders(),refreshCommerceAnalytics()]);
   else if(role==='panel_operator') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers()]);
   else if(role==='support') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshSupportAdmin()]);
-  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu()]);}
+  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates()]);}
 }
 $('admin-login').onsubmit = async event => {
   event.preventDefault(); const button=event.target.querySelector('button'); button.disabled=true; authEpoch++;
@@ -288,6 +412,7 @@ $('admin-login').onsubmit = async event => {
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{}); role='';
+  clearUpdates();
   protocolsRequest++; protocolCache = []; $('protocols-list').replaceChildren();
   $('protocols-status').textContent = ''; $('protocols-filter').value = 'all';
   $('protocols-panel').hidden = true; $('protocols-refresh').disabled = false;
