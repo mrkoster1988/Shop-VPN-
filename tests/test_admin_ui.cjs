@@ -26,6 +26,61 @@ function adminPage(options={}) {
   return {element, run:code=>vm.runInContext(code,context), reply:body=>replies.at(-1)(body), replyAt:(index,body,status=200)=>replies[index](body,status), requests,bodies};
 }
 
+function protocolCatalog() {
+  return {schema_version:1, protocols:[
+    {id:'vless',name:'VLESS',implementation:'in_code',adapters:['3x-ui','Remnawave'],description:'UUID',server_options:'3x-ui / Remnawave',client_requirements:'TLS',documentation_url:'https://xtls.github.io/'},
+    {id:'vmess',name:'VMess',implementation:'planned',adapters:[],description:'AEAD',server_options:'Кандидат: 3x-ui',client_requirements:'Часы',documentation_url:'https://www.v2fly.org/'}
+  ]};
+}
+
+test('protocol catalog filters implemented and planned adapters without purchase actions', async () => {
+  const page=adminPage(), request=page.run("role='owner'; refreshProtocols()");
+  assert.equal(page.requests[0], '/shop/api/admin/protocols');
+  page.reply(protocolCatalog()); await request;
+  assert.match(page.element('protocols-list').innerHTML, /Адаптер в коде/);
+  assert.match(page.element('protocols-list').innerHTML, /В плане/);
+  assert.doesNotMatch(page.element('protocols-list').innerHTML, /<button|<form|В продаже/);
+  page.element('protocols-filter').value='planned'; page.run('renderProtocols()');
+  assert.match(page.element('protocols-list').innerHTML, /VMess/);
+  assert.doesNotMatch(page.element('protocols-list').innerHTML, /VLESS/);
+  assert.equal(page.element('protocols-status').textContent, 'Показано: 1 из 2.');
+});
+
+test('protocol catalog escapes text and rejects unsafe documentation links', async () => {
+  const page=adminPage(), data=protocolCatalog();
+  data.protocols[0].name='<img src=x onerror=alert(1)>';
+  data.protocols[0].documentation_url='javascript:alert(1)';
+  data.protocols[0].adapters=['<script>'];
+  const request=page.run("role='panel_operator'; refreshProtocols()"); page.reply(data); await request;
+  const markup=page.element('protocols-list').innerHTML;
+  assert.match(markup, /&lt;img/); assert.match(markup, /&lt;script&gt;/);
+  assert.doesNotMatch(markup, /<img|<script|javascript:/);
+  assert.match(markup, /rel="noopener noreferrer"/);
+});
+
+test('protocol catalog ignores late requests and clears results on errors', async () => {
+  const page=adminPage();
+  const first=page.run("role='owner'; refreshProtocols()");
+  const second=page.run('refreshProtocols()');
+  page.replyAt(1,protocolCatalog()); await second;
+  page.replyAt(0,{schema_version:1,protocols:[]}); await first;
+  assert.match(page.element('protocols-list').innerHTML, /VMess/);
+  const failed=page.run('refreshProtocols()'); page.replyAt(2,{detail:'Нет доступа'},403); await failed;
+  assert.equal(page.element('protocols-list').innerHTML,'');
+  assert.equal(page.element('protocols-status').textContent,'Нет доступа');
+  assert.equal(page.element('protocols-refresh').disabled,false);
+});
+
+test('protocol catalog cannot reappear after logout or load for an unrelated role', async () => {
+  const page=adminPage(), request=page.run("role='owner'; refreshProtocols()");
+  page.run("$('exit').onclick()"); page.replyAt(0,protocolCatalog()); await request;
+  assert.equal(page.element('protocols-list').innerHTML,'');
+  assert.equal(page.element('protocols-panel').hidden,true);
+  const count=page.requests.length;
+  await page.run("role='finance'; refreshProtocols()");
+  assert.equal(page.requests.length,count);
+});
+
 test('logout rejects an in-flight response with customer data', async () => {
   const page = adminPage();
   const request = page.run("api('users')");

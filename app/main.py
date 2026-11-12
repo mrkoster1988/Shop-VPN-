@@ -26,7 +26,7 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 from . import ads_bookings as bookings, ads_finance as finance
 from . import support as support_cases
-from . import shop_settings, platforms, bot_menu as menu_editor, payment_events
+from . import shop_settings, platforms, protocols, bot_menu as menu_editor, payment_events
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
@@ -224,6 +224,11 @@ async def platform_catalog():
     """Read-only code/config inventory, not live platform verification."""
     return platforms.public_catalog()
 
+
+@app.get('/api/admin/protocols', dependencies=[Depends(admin)])
+async def protocol_catalog():
+    return protocols.catalog()
+
 def html_page(name):
     html = (STATIC / name).read_text().replace('__BASE_PATH__', c.BASE_PATH)
     return HTMLResponse(html, headers={'Cache-Control': 'no-cache'})
@@ -315,8 +320,9 @@ async def catalog(request: Request):
         tg = False
     plans = [{**p, 'price': p['stars'] if tg else p['price']} for p in all_rows('SELECT id,name,days,price,stars,version,device_limit FROM plans WHERE enabled=1 ORDER BY position,id')]
     public_settings=shop_settings.public()
-    return {'plans': plans, 'currency': 'XTR' if tg else 'RUB',  'protocols': [{'id': 'xui', 'name': 'VLESS · 3x-ui', 'available': providers.available('xui', customer['id'] if customer else None)},
-                                           {'id': 'wg', 'name': 'WireGuard', 'available': providers.available('wg', customer['id'] if customer else None)}],
+    return {'plans': plans, 'currency': 'XTR' if tg else 'RUB', 'protocols': [
+                {**item, 'available': providers.available(item['id'], customer['id'] if customer else None)}
+                for item in protocols.sales_options()],
             'trial':trials.offer(customer), 'payment_mode': 'stars' if tg else c.PAYMENT_MODE, 'bot_username': c.BOT_USERNAME,
             'support': public_settings['support'],
             'receipts': not tg and os.getenv('YOOKASSA_RECEIPTS') == 'true',

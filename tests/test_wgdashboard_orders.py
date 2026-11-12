@@ -50,12 +50,13 @@ def test_wgdashboard_profile_is_explicit_and_public_response_has_no_credentials(
 
 
 def test_interface_cannot_change_after_subscription_is_bound(client):
-    from types import SimpleNamespace
-    from fastapi import HTTPException
     register(client)
     profile = {'api':'wgdashboard','url':'https://wg.example','token':'t'*40,'configuration':'wg0'}
     execute('UPDATE servers SET settings=? WHERE id=?',(c.encrypt(json.dumps(profile)),'test-wg'))
     execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state,server_id) VALUES ('bound',1,'wg',0,'pending','test-wg')")
-    data = SimpleNamespace(version=1,settings=profile | {'configuration':'wg1'},state='disabled',name='WG',location='',capacity=0)
-    with pytest.raises(HTTPException) as error:servers.update('test-wg',data)
-    assert error.value.status_code == 409
+    data = dict(version=1,settings=profile | {'configuration':'wg1'},state='disabled',name='WG',location='',capacity=0)
+    # Проверяем настоящий HTTP-контракт, включая значения новых полей по умолчанию.
+    response = client.put('/api/admin/servers/test-wg', json=data,
+                          headers={'Authorization':'Bearer '+c.ADMIN_TOKEN})
+    assert response.status_code == 409
+    assert servers.decode(one('SELECT * FROM servers WHERE id=?', ('test-wg',))) == profile
