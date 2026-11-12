@@ -893,3 +893,7 @@ test('updates schedule conflict can be recovered by loading saved settings',asyn
  page.reply(updatesStatus({settings:{enabled:false,check_time:'18:00',timezone:'UTC',version:2}}));await reset;
  assert.equal(page.element('updates-time').value,'18:00');assert.equal(page.run('updatesVersion'),2);
 });
+test('updates date falls back to explicitly labelled UTC for a newer server timezone',()=>{
+ const page=adminPage();
+ assert.match(page.run("updatesDate(1794502800,'Unknown/New-Timezone')"),/ UTC$/);
+});

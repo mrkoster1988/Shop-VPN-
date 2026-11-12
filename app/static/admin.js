@@ -9,7 +9,10 @@ const updatesErrors = {network_error:'Нет связи с GitHub. Повтор�
   source_unavailable:'Источник релизов временно недоступен.', invalid_release:'Не удалось подтвердить стабильный релиз.',
   interrupted:'Предыдущая проверка была прервана. Она будет повторена.', check_error:'Проверка не завершилась. Повторите позже.'};
 function updatesDate(value, zone) {
-  return value ? new Date(value * 1000).toLocaleString('ru-RU', {timeZone:zone}) : 'ещё не выполнялась';
+  if (!value) return 'ещё не выполнялась';
+  const date = new Date(value * 1000);
+  try {return date.toLocaleString('ru-RU', {timeZone:zone});}
+  catch {return date.toLocaleString('ru-RU', {timeZone:'UTC'})+' UTC';}
 }
 function updateLinks(tag) {
   if (typeof tag !== 'string' || !/^v(?:0|[1-9][0-9]{0,5})\.[0-9]{3}$/.test(tag)) return null;

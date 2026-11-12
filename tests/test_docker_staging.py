@@ -124,3 +124,37 @@ def test_upgrade_preserves_sui_passwords_and_allows_only_empty_new_table(monkeyp
     with pytest.raises(s.StageError,match='changed='+table):stage.compare(baseline,cleared=False)
     del current['table_digests'][table]
     with pytest.raises(s.StageError,match='missing='+table):stage.compare(baseline,cleared=False)
+
+
+def test_upgrade_allows_exact_initial_update_settings_and_preserves_existing_rows(monkeypatch):
+    stage=s.Staging(type('Args',(),{})())
+    base={'table_digests':{'users':'users-hash'},'counts':{'sessions':1,'tickets':1}}
+    current={'table_digests':{'users':'users-hash','update_checker':'default-settings'},
+             'counts':{'sessions':1,'tickets':1,'update_checker':1}}
+    settings={'id':1,'enabled':1,'check_time':'21:00','timezone':'Europe/Moscow','version':1,
+              'next_check':0,'last_attempt':None,'last_success':None,'error_code':None,'release_json':None,
+              'etag':'','failures':0,'retry_at':0,'lease_token':None,'lease_until':0}
+    monkeypatch.setattr(stage,'snapshot',lambda:current)
+    monkeypatch.setattr(stage,'data',lambda command:dict(settings))
+    stage.compare(base,cleared=False)
+    settings['check_time']='12:00'
+    with pytest.raises(s.StageError,match='Unexpected initial update'):stage.compare(base,cleared=False)
+    existing={**current,'table_digests':dict(current['table_digests'])}
+    stage.compare(existing,cleared=False)
+    current['table_digests']['update_checker']='changed-settings'
+    with pytest.raises(s.StageError,match='changed=update_checker'):stage.compare(existing,cleared=False)
+    del current['table_digests']['update_checker']
+    with pytest.raises(s.StageError,match='missing=update_checker'):stage.compare(existing,cleared=False)
+
+
+def test_custom_update_schedule_survives_real_encrypted_backup_restore(client,tmp_path):
+    import sqlite3
+    from app import config as c,updates
+    from test_backup import b
+    updates.save_schedule(updates.Schedule(enabled=False,check_time='22:30',timezone='UTC',version=1))
+    with sqlite3.connect(c.DB) as conn:before=conn.execute('SELECT * FROM update_checker').fetchall()
+    archive=tmp_path/'schedule.pvb'
+    b.create(c.DB,('ENCRYPTION_KEY='+os.environ['ENCRYPTION_KEY']+'\n').encode(),archive,'test-backup-password-long')
+    b.restore(archive,'test-backup-password-long',tmp_path/'restored-schedule')
+    with sqlite3.connect(tmp_path/'restored-schedule/shop.db') as conn:after=conn.execute('SELECT * FROM update_checker').fetchall()
+    assert after==before and after[0][1:4]==(0,'22:30','UTC')
