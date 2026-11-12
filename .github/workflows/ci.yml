@@ -73,3 +73,15 @@ jobs:
       - name: Real WireGuard purchase and data-plane acceptance
         run: |
           sudo python3 tests/wireguard_staging.py --disposable --source "$GITHUB_WORKSPACE" --report "$RUNNER_TEMP/shop-wireguard-staging.json"
+
+  installer-staging:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout installer candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Real installer CLI on Ubuntu 24.04 with existing Docker
+        run: |
+          sudo python3 tests/installer_staging.py --disposable --source "$GITHUB_WORKSPACE" --report "$RUNNER_TEMP/shop-installer-staging.json"
