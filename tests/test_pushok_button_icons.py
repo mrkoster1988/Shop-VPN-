@@ -26,6 +26,18 @@ class TestButtonIcons(unittest.TestCase):
                 self.assertEqual(configured_icons(), {})
                 self.assertEqual(decorate({"text": "Ок"}, "buy"), {"text": "Ок"})
 
+    def test_shop_purchase_button_keeps_original_action(self):
+        with patch.dict(os.environ, {
+            "PUSHOK_BUTTON_ICONS_ENABLED": "1",
+            "PUSHOK_BUTTON_EMOJI_JSON": '{"buy":"123456789012","support":"123456789013"}',
+        }):
+            buy = {"text": "Купить", "web_app": {"url": "https://example.org/shop"}}
+            result = decorate(buy, "buy")
+            self.assertEqual(result["web_app"], buy["web_app"])
+            self.assertEqual(result["icon_custom_emoji_id"], "123456789012")
+            self.assertEqual(decorate({"text": "Кабинет", "url": "https://example.org"}, "account"),
+                             {"text": "Кабинет", "url": "https://example.org"})
+
 
 if __name__ == "__main__":
     unittest.main()
