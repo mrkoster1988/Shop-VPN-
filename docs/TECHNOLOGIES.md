@@ -63,6 +63,8 @@
 
 **S-UI** используется для Hysteria2 и TUIC: [установка](https://github.com/alireza0/s-ui#install--upgrade-to-latest-version) · [Hysteria2 в Shop](HYSTERIA2.md) · [TUIC в Shop](TUIC.md). Панель устанавливается отдельно.
 
+**NX Panel · 🟡 Диагностика API** — проверка токена и шаблона; выдача подписок в разработке: [установка](https://docs.nx-panel.org/start/install-panel) · [проверка и план интеграции](NX_PANEL.md) · [документация](https://docs.nx-panel.org/).
+
 ### Протоколы, реализованные в Shop
 
 Ссылка «Установка» ведёт к серверной реализации, которую использует адаптер Shop. Сам протокол отдельно не устанавливается. Для VLESS также доступна Remnawave, для WireGuard — собственный агент магазина.
