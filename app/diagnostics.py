@@ -3,7 +3,7 @@ import os
 import time
 import sqlite3
 from contextlib import closing
-from . import config as c, shop_settings
+from . import config as c, shop_settings, protocols as protocol_catalog
 
 VERSION='v0.054'
 QUEUE_SPECS={
@@ -46,7 +46,7 @@ def report(worker):
         if expiration[0] and now-expiration[1]>=600:warn('expiry_wait_over_10m')
         if not enabled and (any(q['pending'] for q in queues.values()) or expiration[0]):warn('queues_paused')
         protocols={}
-        for protocol in ('xui','wg'):
+        for protocol in protocol_catalog.supported_drivers():
             rows=conn.execute("""SELECT state,health,checked_at,capacity,
                 (SELECT count(*) FROM subscriptions s WHERE s.server_id=v.id AND
                  (s.state='pending' OR (s.state='active' AND s.expires>?))) AS occupied

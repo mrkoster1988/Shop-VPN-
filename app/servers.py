@@ -7,7 +7,7 @@ import uuid
 from urllib.parse import urlsplit
 from typing import Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from fastapi import HTTPException
 from . import config as c
 from .db import db, one, all_rows
@@ -120,6 +120,47 @@ class ClientsProfile(VLESSProfile):
     valid_header = field_validator('token')(WGProfile.valid_header.__func__)
 
 
+class VMessProfile(Profile):
+    """Структурированный профиль VMess AEAD; TLS включён всегда."""
+    api: Literal['clients']
+    token: str = Field(min_length=32, max_length=2048)
+    inbound_id: int = Field(ge=1, le=2147483647, strict=True)
+    address: str = Field(min_length=1, max_length=253)
+    port: int = Field(ge=1, le=65535, strict=True)
+    network: Literal['tcp', 'ws']
+    sni: str = Field(min_length=1, max_length=253)
+    ws_host: str = Field(default='', max_length=253)
+    path: str = Field(default='', max_length=256)
+    valid_header = field_validator('token')(WGProfile.valid_header.__func__)
+
+    @field_validator('address', 'sni', 'ws_host')
+    @classmethod
+    def hostname(cls, value, info):
+        if not value and info.field_name == 'ws_host':
+            return value
+        try:
+            ipaddress.ip_address(value)
+            if '%' in value:
+                raise ValueError()
+            return value
+        except ValueError:
+            import re
+            if (not value or len(value) > 253 or any(not re.fullmatch(
+                    r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?', label)
+                    for label in value.split('.'))):
+                raise ValueError('Укажите IP или DNS-имя без схемы, порта, пути и пробелов') from None
+        return value
+
+    @model_validator(mode='after')
+    def transport_fields(self):
+        if self.network == 'tcp' and (self.path or self.ws_host):
+            raise ValueError('Для TCP не задавайте путь и Host WebSocket')
+        if self.network == 'ws' and (not self.path.startswith('/') or any(
+                ord(ch) < 33 or ch in '?#\\' for ch in self.path)):
+            raise ValueError('Для WebSocket укажите путь /vpn без query, fragment и пробелов')
+        return self
+
+
 def validated(protocol, settings):
     if protocol == 'xui':
         mode = settings.get('api', 'legacy')
@@ -131,6 +172,8 @@ def validated(protocol, settings):
         model = WGDashboardProfile if mode == 'wgdashboard' else WGProfile if mode is None else None
         if model is None:
             raise ValueError('Неизвестный режим API WireGuard')
+    elif protocol == 'vmess':
+        model = VMessProfile
     else:
         raise ValueError('Неизвестный VPN-протокол')
     return model.model_validate(settings).model_dump()
@@ -148,6 +191,8 @@ def public(row):
     result = {key: row[key] for key in fields}
     if row['protocol'] == 'xui':
         result['profile'] = {'legacy':'legacy_vless','clients':'clients_vless','remnawave':'remnawave_vless'}.get(decode(row).get('api','legacy'),'legacy_vless')
+    elif row['protocol'] == 'vmess':
+        result['profile'] = 'clients_vmess'
     else:
         profile = decode(row)
         result['profile'] = 'wgdashboard' if profile.get('api') == 'wgdashboard' else 'wireguard_agent'
@@ -241,10 +286,13 @@ def update(sid, data):
         bound = conn.execute('SELECT count(*) FROM subscriptions WHERE server_id=?',(sid,)).fetchone()[0]
         identity = (('url','api','squad_uuids') if profile.get('api') == 'remnawave'
                     else ('url','api','inbound_id','link_template','flow')) if before['protocol']=='xui' else ('url','api','configuration')
+        if before['protocol'] == 'vmess':
+            identity = ('url','api','inbound_id','address','port','network','sni','path','ws_host')
         if bound and any(profile.get(k)!=replacement.get(k) for k in identity):
             raise HTTPException(409,'У сервера есть подписки. Для другого endpoint создайте отдельный сервер.')
         requires_recheck = any(profile.get(key) != replacement.get(key)
-                               for key in ('url','api','token','configuration','username','password'))
+                               for key in ('url','api','token','configuration','username','password',
+                                           'inbound_id','address','port','network','sni','path','ws_host'))
         health = 'unknown' if requires_recheck else before['health']
         if data.state == 'active' and (requires_recheck or before['state']!='active') and health != 'ok':
             raise HTTPException(409,'Сначала сохраните настройки и успешно проверьте сервер, затем включите продажи.')

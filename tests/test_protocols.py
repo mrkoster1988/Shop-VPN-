@@ -11,7 +11,7 @@ from app.security import digest
 from test_shop import client, register
 
 
-PLANNED = ('vmess', 'trojan', 'shadowsocks', 'hysteria2', 'tuic', 'anytls',
+PLANNED = ('trojan', 'shadowsocks', 'hysteria2', 'tuic', 'anytls',
            'amneziawg', 'openvpn', 'ikev2-ipsec')
 OWNER = {'Authorization': 'Bearer ' + 'a' * 48}
 
@@ -27,7 +27,7 @@ def test_catalog_is_read_only_and_never_reads_server_secrets(client, monkeypatch
     data = response.json()
     assert data['external_checks_performed'] is False
     rows = {p['id']: p for p in data['protocols']}
-    assert set(rows) == {'vless', 'wireguard', *PLANNED}
+    assert set(rows) == {'vless', 'wireguard', 'vmess', *PLANNED}
     assert rows['vless']['driver_id'] == 'xui'
     assert rows['wireguard']['driver_id'] == 'wg'
     for name in PLANNED:
@@ -85,9 +85,10 @@ def test_sales_keep_driver_ids_and_check_availability_per_customer(client, monke
     monkeypatch.setattr(providers, 'available', available)
     data = client.get('/api/catalog').json()['protocols']
     assert data == [{'id':'xui','name':'VLESS','available':False},
-                    {'id':'wg','name':'WireGuard','available':True}]
-    assert calls == [('xui',1),('wg',1)]
+                    {'id':'wg','name':'WireGuard','available':True},
+                    {'id':'vmess','name':'VMess','available':False}]
+    assert calls == [('xui',1),('wg',1),('vmess',1)]
     # Экземпляры ответа не должны менять реестр и будущий каталог продаж.
     catalog = protocols.catalog()
     catalog['protocols'][0]['driver_id'] = 'vmess'
-    assert protocols.supported_drivers() == ('xui','wg')
+    assert protocols.supported_drivers() == ('xui','wg','vmess')

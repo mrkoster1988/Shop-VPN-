@@ -196,6 +196,36 @@ test('changing API mode requires a complete replacement profile', async () => {
   assert.ok(page.element('server-form-error').textContent.includes('полный профиль'));
 });
 
+test('VMess form sends explicit Clients JSON settings without stale VLESS or WG secrets', async () => {
+  class Fields { constructor(form){this.fields=form.fields;} get(name){return this.fields[name];} }
+  const page=adminPage({FormData:Fields});
+  const request=page.run(`$('server-form').onsubmit({preventDefault(){},target:{fields:{name:'VMess',capacity:'2',protocol:'vmess',url:'https://panel.example/private',vmess_token:'vmess-token',vmess_inbound_id:'7',vmess_address:'vpn.example',vmess_port:'443',vmess_network:'ws',vmess_path:'/vpn',vmess_host:'vpn.example',vmess_sni:'vpn.example',api:'legacy',username:'stale-user',password:'stale-password',token:'stale-wg',link_template:'vless://stale'},querySelector(){return {disabled:false};}}})`);
+  assert.deepEqual(page.bodies[0],{name:'VMess',location:'',capacity:2,protocol:'vmess',settings:{url:'https://panel.example/private',api:'clients',token:'vmess-token',inbound_id:7,address:'vpn.example',port:443,network:'ws',path:'/vpn',ws_host:'vpn.example',sni:'vpn.example'}});
+  page.replyAt(0,uiServer({protocol:'vmess',profile:'clients_vmess'})); await new Promise(setImmediate);
+  page.replyAt(1,{servers:[uiServer({protocol:'vmess',profile:'clients_vmess'})],unassigned_subscriptions:0}); await request;
+  assert.match(page.element('server-list').innerHTML,/VMess AEAD/);
+});
+
+test('VMess field visibility does not expose unrelated panel controls', () => {
+  const page=adminPage();page.element('server-protocol').value='vmess';
+  page.element('server-api').value='remnawave';page.element('server-wg-api').value='wgdashboard';
+  page.element('server-vmess-network').value='ws';page.run('showServerFields()');
+  assert.equal(page.element('server-vmess-fields').hidden,false);
+  assert.equal(page.element('server-vmess-ws-fields').hidden,false);
+  for(const id of ['server-xui-fields','server-wg-fields','server-remnawave-help','server-wgdashboard-help','server-wg-configuration']) assert.equal(page.element(id).hidden,true);
+  page.element('server-vmess-network').value='tcp';page.run('showServerFields()');
+  assert.equal(page.element('server-vmess-ws-fields').hidden,true);
+});
+
+test('editing VMess without a replacement profile preserves the encrypted settings', async () => {
+  class Fields { constructor(form){this.fields=form.fields;} get(name){return this.fields[name];} }
+  const page=adminPage({FormData:Fields});
+  const request=page.run(`editingServer={id:'vmess-a',protocol:'vmess',profile:'clients_vmess',state:'active',version:3}; $('server-form').onsubmit({preventDefault(){},target:{fields:{name:'Renamed',capacity:'0',url:'',vmess_network:'tcp'},querySelector(){return {disabled:false};}}})`);
+  assert.deepEqual(page.bodies[0],{name:'Renamed',location:'',capacity:0,version:3,state:'active'});
+  page.replyAt(0,uiServer()); await new Promise(setImmediate);
+  page.replyAt(1,{servers:[],unassigned_subscriptions:0}); await request;
+});
+
 test('tariff editor displays a zero profile limit without substituting the default',()=>{
   const page=adminPage();
   const markup=page.run("planForm({id:'single',name:'Один',days:30,price:100,stars:10,version:1,enabled:true,device_limit:0})");
@@ -230,7 +260,7 @@ test('diagnostics escapes unknown codes and shows cached rather than live eviden
   p.reply(diagnosticReport({warnings:['<img src=x>']}));await request;
   const html=p.element('diagnostics-report').innerHTML;
   assert.ok(html.includes('&lt;img src=x&gt;'));assert.ok(!html.includes('<img'));
-  assert.ok(html.includes('Недавние успешные API-проверки'));
+  assert.ok(html.includes('недавние успешные API-проверки'));
   assert.equal(JSON.parse(p.element('diagnostics-json').value).format,1);
 });
 

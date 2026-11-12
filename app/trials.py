@@ -6,7 +6,7 @@ import uuid
 from fastapi import HTTPException
 from pydantic import BaseModel,Field
 from typing import Literal
-from . import config as c,servers,shop_settings
+from . import config as c,servers,shop_settings,protocols
 from .db import db,one
 
 class PolicyUpdate(BaseModel):
@@ -18,7 +18,7 @@ class PolicyUpdate(BaseModel):
 
 class Claim(BaseModel):
     model_config={'extra':'forbid'}
-    protocol: Literal['xui','wg']
+    protocol: protocols.SalesProtocol
     policy_version: int=Field(ge=1,strict=True)
     accept_terms: bool=Field(default=False,strict=True)
 

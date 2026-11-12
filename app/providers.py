@@ -19,8 +19,8 @@ async def probe_server(row):
     _require_vpn_protocol(row['protocol'])
     profile = servers.decode(row)
     async with httpx.AsyncClient(timeout=25, follow_redirects=False, trust_env=False) as client:
-        if row['protocol']=='xui':
-            await panel.adapter(profile).check(client)
+        if row['protocol'] in ('xui', 'vmess'):
+            await panel.adapter(profile, row['protocol']).check(client)
         elif profile.get('api') == 'wgdashboard':
             await wgdashboard.WGDashboard(profile).check(client)
         else:
@@ -33,12 +33,12 @@ async def probe_server(row):
 async def xui_client(sub, enabled=True):
     _, profile = servers.for_subscription(sub, revoking=not enabled)
     async with httpx.AsyncClient(timeout=25, follow_redirects=False, trust_env=False) as client:
-        return await panel.adapter(profile).apply(client, sub, enabled)
+        return await panel.adapter(profile, sub['protocol']).apply(client, sub, enabled)
 
 
 async def provision(sub):
     _require_vpn_protocol(sub['protocol'])
-    if sub['protocol'] == 'xui':
+    if sub['protocol'] in ('xui', 'vmess'):
         return await xui_client(sub)
     row, profile = servers.for_subscription(sub)
     if profile.get('api') == 'wgdashboard':
@@ -60,7 +60,7 @@ async def provision(sub):
 
 async def disable(sub):
     _require_vpn_protocol(sub['protocol'])
-    if sub['protocol'] == 'xui':
+    if sub['protocol'] in ('xui', 'vmess'):
         await xui_client(sub, enabled=False)
     else:
         row, profile = servers.for_subscription(sub, revoking=True)
