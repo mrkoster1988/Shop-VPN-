@@ -11,6 +11,8 @@ let adsPolicy=null,adsPage=1,adsRequest=0,adsPaymentIntents=new Map();
 let token = '', role = '', authEpoch = 0, usersPage = 1, usersQuery = '', usersRequest = 0, shopSettingsVersion = 0, commerceAnalyticsRequest = 0;
 let selectedUser = null, profilePage = 1, profileRequest = 0;
 let serverCache = [], editingServer = null;
+let serverWizardStep = 3, serverDialogEpoch = 0, serverSubmitting = false;
+let credentialsServer = null, credentialsEpoch = 0, credentialsSubmitting = false;
 let protocolCache = [], protocolsRequest = 0;
 let ordersPage = 1, ordersRequest = 0, ordersFilters = {q:'', status:'', method:'', protocol:''};
 async function api(path, {method = 'GET', data} = {}) {
@@ -314,6 +316,7 @@ $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method
   ordersRequest++; ordersPage = 1; ordersFilters = {q:'', status:'', method:'', protocol:''};
   serverCache = []; editingServer = null; $('server-list').replaceChildren(); $('servers-notice').textContent = '';
   if ($('server-dialog').open) $('server-dialog').close();
+  if ($('server-credentials-dialog').open) $('server-credentials-dialog').close();
   $('server-form').reset();
   $('orders-search').reset(); $('orders-state').textContent = ''; $('orders-page').textContent = '';
   $('orders-prev').disabled = true; $('orders-next').disabled = true;
@@ -486,7 +489,7 @@ const serverState = {active:'Принимать новых', draining:'Толь�
 function serverCard(server) {
   const health = server.health === 'ok' ? 'API доступен' : server.health === 'error' ? 'Ошибка API' : 'Ещё не проверен';
   const panelExpiry = server.profile === 'wgdashboard' ? `<label><input name="schedule_expiry" type="checkbox" ${server.schedule_expiry?'checked':''}> Дублировать срок подписки заданием WGDashboard</label><label>Часовой пояс ОС панели<input name="panel_timezone" value="${esc(server.panel_timezone || 'UTC')}" maxlength="100" placeholder="Europe/Moscow" required></label><p class="muted">Панель удалит peer по расписанию, даже если Shop временно выключен. Укажите часовой пояс самого сервера WGDashboard.</p>` : '';
-  return `<form class="plan-editor" data-server="${esc(server.id)}" data-version="${server.version}"><h3>${esc(server.name)}</h3><p>${esc(protocolLabel(server.protocol))} · ${esc(serverProfileLabel[server.profile] || server.profile)} · ${health}</p><p>Проверка: ${esc(dateTime(server.checked_at))}</p><p>Занято: ${server.occupied} · Всего привязано: ${server.bound_subscriptions}</p><label>Название<input name="name" value="${esc(server.name)}" maxlength="80" required></label><label>Локация<input name="location" value="${esc(server.location)}" maxlength="80"></label><label>Лимит занятых подписок (0 — без лимита)<input name="capacity" type="number" min="0" max="1000000" value="${server.capacity}" required></label><label>Режим<select name="state">${Object.entries(serverState).map(([id,label])=>`<option value="${id}" ${server.state===id?'selected':''}>${label}</option>`).join('')}</select></label>${panelExpiry}<button type="submit" class="small">Сохранить настройки сервера</button><button type="button" class="small secondary" data-server-check="${esc(server.id)}">Проверить API</button><button type="button" class="text-link" data-server-edit="${esc(server.id)}">Профиль подключения</button></form>`;
+  return `<form class="plan-editor" data-server="${esc(server.id)}" data-version="${server.version}"><h3>${esc(server.name)}</h3><p>${esc(protocolLabel(server.protocol))} · ${esc(serverProfileLabel[server.profile] || server.profile)} · ${health}</p><p>Проверка: ${esc(dateTime(server.checked_at))}</p><p>Занято: ${server.occupied} · Всего привязано: ${server.bound_subscriptions}</p><label>Название<input name="name" value="${esc(server.name)}" maxlength="80" required></label><label>Локация<input name="location" value="${esc(server.location)}" maxlength="80"></label><label>Лимит занятых подписок (0 — без лимита)<input name="capacity" type="number" min="0" max="1000000" value="${server.capacity}" required></label><label>Режим<select name="state">${Object.entries(serverState).map(([id,label])=>`<option value="${id}" ${server.state===id?'selected':''}>${label}</option>`).join('')}</select></label>${panelExpiry}<button type="submit" class="small">Сохранить настройки сервера</button><button type="button" class="small secondary" data-server-check="${esc(server.id)}">Проверить API</button><button type="button" class="text-link" data-server-edit="${esc(server.id)}">Профиль подключения</button><button type="button" class="text-link" data-server-credentials="${esc(server.id)}">Обновить доступ</button></form>`;
 }
 async function refreshServers() {
   const data = await api('servers');
@@ -494,6 +497,107 @@ async function refreshServers() {
   $('server-list').innerHTML = data.servers.map(serverCard).join('');
   $('servers-notice').textContent = data.unassigned_subscriptions ? 'Есть подписки без привязки: '+data.unassigned_subscriptions+'. Автоматический перенос запрещён; проверьте настройки миграции.' : data.servers.length ? '' : 'Добавьте первый сервер для продажи VPN.';
 }
+function setServerStep(step) {
+  serverWizardStep = step;
+  for (const n of [1,2,3]) {
+    $('server-step-'+n).hidden = n !== step;
+    $('server-step-label-'+n).setAttribute?.('aria-current', n === step ? 'step' : 'false');
+  }
+  $('server-back').hidden = step === 1;
+  $('server-next').hidden = step === 3;
+  $('server-save').hidden = step !== 3;
+  const fields = $('server-form').elements;
+  if (step === 3 && fields) {
+    const name = String(fields.name.value || '').trim(), location = String(fields.location.value || '').trim();
+    $('server-review').innerHTML = '<h3>'+esc(name)+'</h3><p>'+esc(protocolLabel(fields.protocol.value))+
+      (location ? ' · '+esc(location) : '')+'</p><p>Лимит подписок: '+esc(Number(fields.capacity.value) || 'без лимита')+'</p>'+
+      '<p>Доступ к панели будет проверен отдельной кнопкой после сохранения.</p>';
+  }
+}
+function updateServerRequirements() {
+  const form = $('server-form'), p = $('server-protocol').value, mode = $('server-api').value;
+  const names = p === 'tuic' ? ['tuic_token','tuic_inbound_id','tuic_address','tuic_port','tuic_sni']
+    : p === 'hysteria2' ? ['hy_token','hy_inbound_id','hy_address','hy_port','hy_sni']
+    : p === 'vmess' ? ['vmess_token','vmess_inbound_id','vmess_address','vmess_port','vmess_sni']
+    : p === 'wg' ? ['token',...($('server-wg-api').value === 'wgdashboard' ? ['configuration'] : [])]
+    : mode === 'remnawave' ? ['remnawave_token']
+    : [...(mode === 'clients' ? ['api_token'] : ['username','password']),'inbound_id','link_template'];
+  const replacement = !editingServer || Boolean(form.elements?.url?.value);
+  for (const field of form.querySelectorAll?.('input,select,textarea') || []) {
+    field.required = ['name','capacity'].includes(field.name) ||
+      (replacement && ['url',...names].includes(field.name));
+  }
+}
+function validateServerStep(step) {
+  setServerStep(step); updateServerRequirements();
+  for (const field of $('server-step-'+step).querySelectorAll?.('input,select,textarea') || []) {
+    if (!field.disabled && !field.closest('[hidden]') && !field.reportValidity()) return false;
+  }
+  return true;
+}
+function nextServerStep() {
+  if (!serverSubmitting && validateServerStep(serverWizardStep)) {
+    $('server-form-error').textContent = '';
+    setServerStep(Math.min(3, serverWizardStep + 1));
+    $('server-step-'+serverWizardStep).querySelector?.('input,select,textarea')?.focus();
+  }
+}
+$('server-next').onclick = nextServerStep;
+$('server-back').onclick = () => { if (!serverSubmitting) setServerStep(Math.max(1,serverWizardStep-1)); };
+
+function clearServerCredentials() {
+  for (const id of ['username','password','token']) $('server-credentials-'+id).value = '';
+  $('server-credentials-target').textContent = '';
+  $('server-credentials-error').textContent = '';
+}
+function openServerCredentials(server) {
+  if (!server || !serverProfileLabel[server.profile]) return;
+  credentialsEpoch++; credentialsServer = server; credentialsSubmitting = false;
+  clearServerCredentials(); $('server-credentials-save').disabled = false;
+  const legacy = server.profile === 'legacy_vless';
+  $('server-credentials-target').textContent = server.name+' · '+serverProfileLabel[server.profile];
+  $('server-credentials-legacy').hidden = !legacy;
+  $('server-credentials-token-label').hidden = legacy;
+  $('server-credentials-token').disabled = legacy;
+  $('server-credentials-token').required = !legacy;
+  $('server-credentials-username').disabled = !legacy;
+  $('server-credentials-password').disabled = !legacy;
+  $('server-credentials-dialog').showModal();
+}
+$('server-credentials-close').onclick = () => $('server-credentials-dialog').close();
+$('server-credentials-dialog').addEventListener('close', () => {
+  credentialsEpoch++; credentialsServer = null; credentialsSubmitting = false; clearServerCredentials();
+});
+$('server-credentials-form').onsubmit = async event => {
+  event.preventDefault();
+  if (!credentialsServer || credentialsSubmitting) return;
+  const server = credentialsServer, epoch = credentialsEpoch;
+  const data = {version:server.version};
+  if (server.profile === 'legacy_vless') {
+    const username = $('server-credentials-username').value;
+    const password = $('server-credentials-password').value;
+    if (username) data.username = username;
+    if (password) data.password = password;
+    if (!username && !password) { $('server-credentials-error').textContent = 'Введите новый логин или пароль.'; return; }
+  } else {
+    data.token = $('server-credentials-token').value;
+    if (!data.token) { $('server-credentials-error').textContent = 'Введите новый токен API.'; return; }
+  }
+  credentialsSubmitting = true; $('server-credentials-save').disabled = true;
+  $('server-credentials-error').textContent = '';
+  try {
+    await api('servers/'+encodeURIComponent(server.id)+'/credentials', {method:'PATCH',data});
+    if (epoch !== credentialsEpoch) return;
+    $('server-credentials-dialog').close();
+    await refreshServers();
+    $('admin-notice').textContent = 'Новый доступ сохранён. Проверьте API и включите нужный режим сервера.';
+  } catch (error) {
+    if (epoch === credentialsEpoch) $('server-credentials-error').textContent = error.message;
+  } finally {
+    if (epoch === credentialsEpoch) { credentialsSubmitting = false; $('server-credentials-save').disabled = false; }
+  }
+};
+
 function showServerFields() {
   const xui = $('server-protocol').value === 'xui';
   const wg = $('server-protocol').value === 'wg';
@@ -513,13 +617,15 @@ function showServerFields() {
   $('server-wg-configuration').hidden = !dashboard;
   $('server-wg-interface').disabled = !dashboard;
   $('server-wgdashboard-help').hidden = !dashboard;
+  updateServerRequirements();
 }
 $('server-protocol').onchange = showServerFields;
 $('server-api').onchange = showServerFields;
 $('server-wg-api').onchange = showServerFields;
 $('server-vmess-network').onchange = showServerFields;
 function openServer(server = null) {
-  editingServer = server;
+  editingServer = server; serverDialogEpoch++; serverSubmitting = false;
+  $('server-save').disabled = false;
   const form = $('server-form'); form.reset();
   form.elements.name.value = server?.name || ''; form.elements.location.value = server?.location || '';
   form.elements.capacity.value = server?.capacity || 0; form.elements.protocol.value = server?.protocol || 'xui';
@@ -527,13 +633,18 @@ function openServer(server = null) {
   form.elements.wg_api.value = server?.profile === 'wgdashboard' ? 'wgdashboard' : 'agent';
   form.elements.protocol.disabled = !!server; form.elements.url.required = !server;
   $('server-title').textContent = server ? 'Профиль сервера' : 'Новый сервер';
-  $('server-form-error').textContent = ''; showServerFields(); $('server-dialog').showModal();
+  $('server-form-error').textContent = ''; showServerFields(); setServerStep(1); $('server-dialog').showModal();
 }
 $('new-server').onclick = () => openServer();
 $('server-close').onclick = () => $('server-dialog').close();
-$('server-dialog').addEventListener('close', () => { $('server-form').reset(); editingServer = null; });
+$('server-dialog').addEventListener('close', () => { serverDialogEpoch++; serverSubmitting = false; $('server-form').reset(); editingServer = null; });
 $('server-form').onsubmit = async event => {
   event.preventDefault();
+  if (serverSubmitting) return;
+  if (serverWizardStep < 3) { nextServerStep(); return; }
+  if ($('server-dialog').open && (!validateServerStep(1) || !validateServerStep(2))) return;
+  setServerStep(3);
+  const epoch = serverDialogEpoch; serverSubmitting = true;
   const form = event.target, values = new FormData(form), button = form.querySelector('button[type="submit"]');
   button.disabled = true; $('server-form-error').textContent = '';
   const original = editingServer, protocol = original?.protocol || String(values.get('protocol'));
@@ -566,10 +677,11 @@ $('server-form').onsubmit = async event => {
     if (original) { data.version=original.version; data.state=profile ? 'disabled' : original.state; if (profile) data.settings=profile; }
     else { data.protocol=protocol; data.settings=profile; }
     await api(original ? 'servers/'+encodeURIComponent(original.id) : 'servers', {method:original?'PUT':'POST',data});
+    if (epoch !== serverDialogEpoch) return;
     $('server-dialog').close(); await refreshServers();
     $('admin-notice').textContent = profile ? 'Профиль сохранён. Проверьте API сервера перед включением продаж.' : 'Сервер сохранён.';
-  } catch (error) { $('server-form-error').textContent=error.message; }
-  finally { button.disabled=false; }
+  } catch (error) { if (epoch === serverDialogEpoch) $('server-form-error').textContent=error.message; }
+  finally { if (epoch === serverDialogEpoch) { button.disabled=false; serverSubmitting=false; } }
 };
 $('server-list').onsubmit = async event => {
   event.preventDefault(); const form=event.target.closest('[data-server]'); if (!form) return;
@@ -580,6 +692,8 @@ $('server-list').onsubmit = async event => {
   } catch (error) { $('error').textContent=error.message; button.disabled=false; }
 };
 $('server-list').onclick = async event => {
+  const credentials=event.target.closest('[data-server-credentials]');
+  if (credentials) { openServerCredentials(serverCache.find(s=>s.id===credentials.dataset.serverCredentials)); return; }
   const edit=event.target.closest('[data-server-edit]');
   if (edit) { openServer(serverCache.find(s=>s.id===edit.dataset.serverEdit)); return; }
   const check=event.target.closest('[data-server-check]'); if (!check) return;

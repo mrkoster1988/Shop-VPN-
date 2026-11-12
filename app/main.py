@@ -207,6 +207,13 @@ class ServerUpdate(ServerFields):
     schedule_expiry: bool | None = None
     panel_timezone: str | None = Field(default=None, max_length=100)
 
+class ServerCredentials(BaseModel):
+    model_config = {'extra':'forbid'}
+    version: int = Field(ge=1, strict=True)
+    username: str | None = Field(default=None, min_length=1, max_length=256)
+    password: str | None = Field(default=None, min_length=1, max_length=2048, repr=False)
+    token: str | None = Field(default=None, min_length=32, max_length=2048, repr=False)
+
 
 def email_address(raw):
     value = raw.strip().lower()
@@ -926,6 +933,14 @@ async def update_server(sid: str, data: ServerUpdate):
             return servers.update(sid,data)
         except (ValidationError, ValueError):
             raise HTTPException(422,'Проверьте профиль подключения. Секреты в ответе не возвращаются.') from None
+
+@app.patch('/api/admin/servers/{sid}/credentials', dependencies=[Depends(admin)])
+async def update_server_credentials(sid: str, data: ServerCredentials):
+    async with service.lock:
+        try:
+            return servers.update_credentials(sid, data)
+        except (ValidationError, ValueError):
+            raise HTTPException(422, 'Проверьте новые данные доступа для выбранного режима API.') from None
 
 @app.post('/api/admin/servers/{sid}/check', dependencies=[Depends(admin)])
 async def check_server(sid: str):
