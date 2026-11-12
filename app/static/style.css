@@ -99,3 +99,9 @@ html[data-telegram-theme="dark"] .miniapp-nav [aria-current="page"]{background:#
 .updates-notes{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:14px;max-height:360px;overflow:auto;padding:12px;border-radius:10px;background:#ffffffb3}#updates-timing,#updates-status{overflow-wrap:anywhere}#updates-schedule{border-top:1px solid var(--line);margin-top:22px;padding-top:12px}
 #updates-dialog{width:min(640px,calc(100vw - 32px));box-sizing:border-box}#updates-dialog li{margin-bottom:12px}.updates-guide-link{display:block;margin:18px 0;overflow-wrap:anywhere}#updates-dialog-close{width:100%}
 @media(max-width:560px){.updates-panel{padding:16px}.updates-schedule-fields{grid-template-columns:1fr}.updates-actions button{width:100%}.updates-versions>div{padding:12px}.updates-versions strong{font-size:23px}}
+
+
+/* Pushok Sketch Icons — original icon family on web/Mini App surfaces. */
+.pushok-icon{display:inline-block;width:20px;height:20px;flex-shrink:0;vertical-align:middle}
+html[data-telegram-theme] .miniapp-nav .pushok-icon{width:20px;height:20px}
+.nav button .pushok-icon{margin-right:5px}
