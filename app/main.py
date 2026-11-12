@@ -1051,7 +1051,7 @@ async def admin_user(user_id: int = APIPath(ge=1, le=9223372036854775807),
 async def admin_orders(q: str = Query(default='', max_length=100),
                        status: Literal['', 'pending', 'checkout', 'paid', 'active', 'canceled'] = '',
                        method: Literal['', 'manual', 'yookassa', 'sbp', 'stars','trial','referral'] = '',
-                       protocol: Literal['', 'xui', 'wg', 'vmess'] = '',
+                       protocol: Literal['', 'xui', 'wg', 'vmess', 'hysteria2'] = '',
                        page: int = Query(default=1, ge=1, le=1000000),
                        page_size: int = Query(default=25, ge=1, le=100)):
     conditions, args = [], []

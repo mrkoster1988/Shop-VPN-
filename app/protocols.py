@@ -2,7 +2,7 @@
 from dataclasses import asdict, dataclass
 from typing import Literal
 
-SalesProtocol = Literal['xui', 'wg', 'vmess']
+SalesProtocol = Literal['xui', 'wg', 'vmess', 'hysteria2']
 
 
 @dataclass(frozen=True)
@@ -44,9 +44,9 @@ PROTOCOLS = (
              'Нужна поддержка конкретного метода шифрования; 2022 не равнозначен старым методам.',
              'https://sing-box.sagernet.org/manual/proxy-protocol/shadowsocks/'),
     Protocol('hysteria2', 'Hysteria2', 'Прокси на базе QUIC для сетей с потерями.',
-             'Кандидат: S-UI; сервер Hysteria2',
-             'Клиент Hysteria2, доступный UDP/QUIC и согласованные настройки TLS.',
-             'https://v2.hysteria.network/'),
+             'S-UI apiv2',
+             'Hysteria2: UDP/QUIC + TLS, при необходимости Salamander; доступный UDP-порт.',
+             'https://v2.hysteria.network/', 'hysteria2', ('S-UI apiv2 · QUIC/TLS',)),
     Protocol('tuic', 'TUIC', 'Прокси на базе QUIC для передачи TCP и UDP.',
              'Кандидат: S-UI; реализация sing-box',
              'Совпадающая версия TUIC на сервере и клиенте; доступный UDP/QUIC.',

@@ -662,3 +662,33 @@ test('panel-specific fields and limitations follow current protocol selection',(
   assert.equal(page.element('server-wgdashboard-help').hidden,true);
   assert.equal(page.element('server-remnawave-help').hidden,false);
 });
+
+
+test('Hysteria2 form sends only S-UI credentials and connection fields',async()=>{
+  class Fields {constructor(form){this.fields=form.fields;}get(name){return this.fields[name];}}
+  const page=adminPage({FormData:Fields});
+  const request=page.run(`$('server-form').onsubmit({preventDefault(){},target:{fields:{name:'HY',protocol:'hysteria2',capacity:'0',url:'https://panel.example/app',hy_token:'hy-token',hy_inbound_id:'7',hy_address:'vpn.example',hy_port:'443',hy_sni:'vpn.example',hy_obfs_password:'salamander-secret',api:'clients',api_token:'stale-secret',vmess_token:'stale-vmess',token:'stale-wg'},querySelector(){return {disabled:false};}}})`);
+  assert.equal(page.bodies[0].protocol,'hysteria2');
+  assert.deepEqual(page.bodies[0].settings,{url:'https://panel.example/app',api:'sui',token:'hy-token',inbound_id:7,address:'vpn.example',port:443,sni:'vpn.example',obfs_password:'salamander-secret'});
+  page.replyAt(0,{});await new Promise(setImmediate);page.replyAt(1,{servers:[]});await request;
+});
+
+test('Hysteria2 selection hides other adapters and keeps coupon scope',()=>{
+  const page=adminPage();page.element('server-protocol').value='hysteria2';
+  page.element('server-api').value='remnawave';page.element('server-wg-api').value='wgdashboard';
+  page.run('showServerFields()');
+  assert.equal(page.element('server-hysteria2-fields').hidden,false);
+  for(const id of ['server-wg-fields','server-xui-fields','server-vmess-fields','server-remnawave-help','server-wgdashboard-help']) assert.equal(page.element(id).hidden,true);
+  assert.match(page.run("couponForm({id:'c',protocol:'hysteria2',version:1,code:'HY10',percent:10,max_uses:100,used:0,enabled:true})"),/value="hysteria2" selected/);
+});
+
+test('blank Hysteria2 edit preserves encrypted profile, partial fields cannot overwrite it',async()=>{
+  class Fields {constructor(form){this.fields=form.fields;}get(name){return this.fields[name];}}
+  const page=adminPage({FormData:Fields});
+  const request=page.run(`editingServer={id:'a',protocol:'hysteria2',profile:'sui_hysteria2',state:'active',version:3};$('server-form').onsubmit({preventDefault(){},target:{fields:{name:'Renamed',capacity:'0',url:''},querySelector(){return {disabled:false};}}})`);
+  assert.deepEqual(page.bodies[0],{name:'Renamed',location:'',capacity:0,state:'active',version:3});
+  page.replyAt(0,{});await new Promise(setImmediate);page.replyAt(1,{servers:[]});await request;
+  const second=adminPage({FormData:Fields});
+  await second.run(`editingServer={id:'a',protocol:'hysteria2',state:'active',version:3};$('server-form').onsubmit({preventDefault(){},target:{fields:{name:'HY',url:'',hy_obfs_password:'changed'},querySelector(){return {disabled:false};}}})`);
+  assert.equal(second.requests.length,0);assert.notEqual(second.element('server-form-error').textContent,'');
+});
