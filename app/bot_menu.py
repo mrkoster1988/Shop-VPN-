@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from . import config as c
 from .db import db
+from .pushok_button_icons import decorate, configured_icons
 
 IDS = ('buy', 'account', 'support', 'terms', 'link1', 'link2')
 LABELS = ('Купить / продлить VPN', 'Открыть кабинет в браузере',
@@ -110,6 +111,7 @@ def update(data):
 def keyboard(user_id, make_ticket):
     """Создаёт приватную кнопку входа только при необходимости, без предпросмотра токена."""
     rows = {}
+    icons = configured_icons()
     for item in get()['buttons']:
         if not item['enabled']:
             continue
@@ -122,5 +124,5 @@ def keyboard(user_id, make_ticket):
             button = {'text': label, 'callback_data': 'shop:' + kind}
         else:
             button = {'text': label, 'url': item['url']}
-        rows.setdefault(item['row'], []).append(button)
+        rows.setdefault(item['row'], []).append(decorate(button, kind, icons))
     return {'inline_keyboard': [rows[key] for key in sorted(rows)]}
