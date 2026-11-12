@@ -108,18 +108,19 @@ def test_upgrade_preserves_expiration_jobs_and_only_allows_empty_initial_table(m
         stage.compare(existing,cleared=False)
 
 
-def test_upgrade_preserves_hysteria_passwords_and_allows_only_empty_new_table(monkeypatch):
+@pytest.mark.parametrize('table',['hysteria2_credentials','tuic_credentials'])
+def test_upgrade_preserves_sui_passwords_and_allows_only_empty_new_table(monkeypatch,table):
     stage=s.Staging(type('Args',(),{})())
     base={'table_digests':{'users':'users-hash'},'counts':{'sessions':1,'tickets':1}}
-    current={'table_digests':{'users':'users-hash','hysteria2_credentials':'empty-hash'},
-             'counts':{'sessions':1,'tickets':1,'hysteria2_credentials':0}}
+    current={'table_digests':{'users':'users-hash',table:'empty-hash'},
+             'counts':{'sessions':1,'tickets':1,table:0}}
     monkeypatch.setattr(stage,'snapshot',lambda:current)
     stage.compare(base,cleared=False)
-    current['counts']['hysteria2_credentials']=1
+    current['counts'][table]=1
     with pytest.raises(s.StageError,match='Unexpected credentials'):stage.compare(base,cleared=False)
     baseline={**current,'table_digests':dict(current['table_digests'])}
     stage.compare(baseline,cleared=False)
-    current['table_digests']['hysteria2_credentials']='modified-secret'
-    with pytest.raises(s.StageError,match='changed=hysteria2_credentials'):stage.compare(baseline,cleared=False)
-    del current['table_digests']['hysteria2_credentials']
-    with pytest.raises(s.StageError,match='missing=hysteria2_credentials'):stage.compare(baseline,cleared=False)
+    current['table_digests'][table]='modified-secret'
+    with pytest.raises(s.StageError,match='changed='+table):stage.compare(baseline,cleared=False)
+    del current['table_digests'][table]
+    with pytest.raises(s.StageError,match='missing='+table):stage.compare(baseline,cleared=False)

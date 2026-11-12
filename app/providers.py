@@ -21,8 +21,9 @@ async def probe_server(row):
     async with httpx.AsyncClient(timeout=25, follow_redirects=False, trust_env=False) as client:
         if row['protocol'] in ('xui', 'vmess'):
             await panel.adapter(profile, row['protocol']).check(client)
-        elif row['protocol'] == 'hysteria2':
-            await sui.SUIHysteria2(profile).check(client)
+        elif row['protocol'] in ('hysteria2', 'tuic'):
+            adapter = sui.SUITUIC if row['protocol'] == 'tuic' else sui.SUIHysteria2
+            await adapter(profile).check(client)
         elif profile.get('api') == 'wgdashboard':
             await wgdashboard.WGDashboard(profile).check(client)
         else:
@@ -38,19 +39,20 @@ async def xui_client(sub, enabled=True):
         return await panel.adapter(profile, sub['protocol']).apply(client, sub, enabled)
 
 
-async def hysteria2_client(sub, enabled=True):
+async def sui_client(sub, enabled=True):
     row, profile = servers.for_subscription(sub, revoking=not enabled)
-    password = sui.stored_password(row['id'], sub['id'], create=enabled)
+    password = sui.stored_password(row['id'], sub['id'], create=enabled, protocol=sub['protocol'])
     async with httpx.AsyncClient(timeout=25, follow_redirects=False, trust_env=False) as client:
-        return await sui.SUIHysteria2(profile).apply(client, sub, password, enabled)
+        adapter = sui.SUITUIC if sub['protocol'] == 'tuic' else sui.SUIHysteria2
+        return await adapter(profile).apply(client, sub, password, enabled)
 
 
 async def provision(sub):
     _require_vpn_protocol(sub['protocol'])
     if sub['protocol'] in ('xui', 'vmess'):
         return await xui_client(sub)
-    if sub['protocol'] == 'hysteria2':
-        return await hysteria2_client(sub)
+    if sub['protocol'] in ('hysteria2', 'tuic'):
+        return await sui_client(sub)
     row, profile = servers.for_subscription(sub)
     if profile.get('api') == 'wgdashboard':
         private_key = wgdashboard.stored_private_key(row['id'], sub['id'])
@@ -73,8 +75,8 @@ async def disable(sub):
     _require_vpn_protocol(sub['protocol'])
     if sub['protocol'] in ('xui', 'vmess'):
         await xui_client(sub, enabled=False)
-    elif sub['protocol'] == 'hysteria2':
-        await hysteria2_client(sub, enabled=False)
+    elif sub['protocol'] in ('hysteria2', 'tuic'):
+        await sui_client(sub, enabled=False)
     else:
         row, profile = servers.for_subscription(sub, revoking=True)
         if profile.get('api') == 'wgdashboard':

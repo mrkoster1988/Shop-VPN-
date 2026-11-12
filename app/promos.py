@@ -16,7 +16,7 @@ class CouponFields(BaseModel):
     expires_at: int=Field(default=0,ge=0,le=4102444800,strict=True)
     max_uses: int=Field(default=100,ge=1,le=100000,strict=True)
     plan_id: str | None=Field(default=None,max_length=32,pattern=r'^[a-z][a-z0-9_-]*$')
-    protocol: Literal['all','xui','wg','vmess','hysteria2']='all'
+    protocol: Literal['all','xui','wg','vmess','hysteria2','tuic']='all'
 
 class CouponCreate(CouponFields):
     code: str=Field(min_length=4,max_length=32,pattern=r'^[A-Z0-9][A-Z0-9_-]{3,31}$')

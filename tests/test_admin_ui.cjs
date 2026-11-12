@@ -692,3 +692,33 @@ test('blank Hysteria2 edit preserves encrypted profile, partial fields cannot ov
   await second.run(`editingServer={id:'a',protocol:'hysteria2',state:'active',version:3};$('server-form').onsubmit({preventDefault(){},target:{fields:{name:'HY',url:'',hy_obfs_password:'changed'},querySelector(){return {disabled:false};}}})`);
   assert.equal(second.requests.length,0);assert.notEqual(second.element('server-form-error').textContent,'');
 });
+
+
+test('TUIC form submits explicit settings without other adapter credentials',async()=>{
+  class Fields {constructor(form){this.fields=form.fields;}get(name){return this.fields[name];}}
+  const page=adminPage({FormData:Fields});
+  const request=page.run(`$('server-form').onsubmit({preventDefault(){},target:{fields:{name:'TUIC',protocol:'tuic',capacity:'0',url:'https://panel.example/app',tuic_token:'tuic-token',tuic_inbound_id:'7',tuic_address:'vpn.example',tuic_port:'443',tuic_sni:'vpn.example',tuic_congestion:'bbr',tuic_udp:'quic',hy_token:'stale',hy_obfs_password:'stale',vmess_token:'stale'},querySelector(){return {disabled:false};}}})`);
+  assert.equal(page.bodies[0].protocol,'tuic');
+  assert.deepEqual(page.bodies[0].settings,{url:'https://panel.example/app',api:'sui',token:'tuic-token',inbound_id:7,address:'vpn.example',port:443,sni:'vpn.example',congestion_control:'bbr',udp_relay_mode:'quic'});
+  page.replyAt(0,{});await new Promise(setImmediate);page.replyAt(1,{servers:[]});await request;
+});
+
+test('TUIC fields and coupon scope follow selection',()=>{
+  const page=adminPage();page.element('server-protocol').value='tuic';page.run('showServerFields()');
+  assert.equal(page.element('server-tuic-fields').hidden,false);
+  for(const id of ['server-wg-fields','server-xui-fields','server-vmess-fields','server-hysteria2-fields']) assert.equal(page.element(id).hidden,true);
+  assert.match(page.run("couponForm({id:'c',protocol:'tuic',version:1,code:'TUIC10',percent:10,max_uses:100,used:0,enabled:true})"),/value="tuic" selected/);
+});
+
+test('TUIC blank edit preserves profile and partial settings are refused',async()=>{
+  class Fields {constructor(form){this.fields=form.fields;}get(name){return this.fields[name];}}
+  const page=adminPage({FormData:Fields});
+  const request=page.run(`editingServer={id:'a',protocol:'tuic',profile:'sui_tuic',state:'active',version:3};$('server-form').onsubmit({preventDefault(){},target:{fields:{name:'Renamed',capacity:'0',url:'',tuic_congestion:'cubic',tuic_udp:'native'},querySelector(){return {disabled:false};}}})`);
+  assert.deepEqual(page.bodies[0],{name:'Renamed',location:'',capacity:0,state:'active',version:3});
+  page.replyAt(0,{});await new Promise(setImmediate);page.replyAt(1,{servers:[]});await request;
+  for(const fields of [{tuic_congestion:'bbr'},{tuic_udp:'quic'},{tuic_token:'changed'}]){
+    const other=adminPage({FormData:Fields});
+    await other.run(`editingServer={id:'a',protocol:'tuic',state:'active',version:3};$('server-form').onsubmit({preventDefault(){},target:{fields:${JSON.stringify({name:'TUIC',url:'',...fields})},querySelector(){return {disabled:false};}}})`);
+    assert.equal(other.requests.length,0);assert.notEqual(other.element('server-form-error').textContent,'');
+  }
+});

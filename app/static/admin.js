@@ -377,7 +377,7 @@ $('create-plan-form').onsubmit = async event => {
 };
 
 const orderStatus = {pending:'Ожидает оплаты', checkout:'Оплата не завершена', paid:'Готовим доступ', active:'Доступ выдан', canceled:'Отменён'};
-const protocolLabel = value => ({wg:'WireGuard',xui:'VLESS',vmess:'VMess AEAD',hysteria2:'Hysteria2'})[value] || value;
+const protocolLabel = value => ({wg:'WireGuard',xui:'VLESS',vmess:'VMess AEAD',hysteria2:'Hysteria2',tuic:'TUIC v5'})[value] || value;
 const dateTime = value => value ? new Date(value * 1000).toLocaleString('ru-RU') : '—';
 async function refreshUsers() {
   const request = ++usersRequest;
@@ -481,7 +481,7 @@ $('orders-reset').onclick = () => { $('orders-search').reset(); ordersFilters = 
 $('orders-prev').onclick = () => showOrders(Math.max(1, ordersPage-1));
 $('orders-next').onclick = () => showOrders(ordersPage+1);
 
-const serverProfileLabel = {legacy_vless:'Legacy API', clients_vless:'Clients JSON API', clients_vmess:'3x-ui Clients JSON · VMess', sui_hysteria2:'S-UI apiv2 · Hysteria2', remnawave_vless:'Remnawave v3 API', wireguard_agent:'Pushok WG-агент', wgdashboard:'WGDashboard'};
+const serverProfileLabel = {legacy_vless:'Legacy API', clients_vless:'Clients JSON API', clients_vmess:'3x-ui Clients JSON · VMess', sui_hysteria2:'S-UI apiv2 · Hysteria2', sui_tuic:'S-UI apiv2 · TUIC v5', remnawave_vless:'Remnawave v3 API', wireguard_agent:'Pushok WG-агент', wgdashboard:'WGDashboard'};
 const serverState = {active:'Принимать новых', draining:'Только продления', maintenance:'Обслуживание', disabled:'Выдача выключена'};
 function serverCard(server) {
   const health = server.health === 'ok' ? 'API доступен' : server.health === 'error' ? 'Ошибка API' : 'Ещё не проверен';
@@ -502,6 +502,7 @@ function showServerFields() {
   $('server-xui-fields').hidden = !xui; $('server-wg-fields').hidden = !wg;
   $('server-vmess-fields').hidden = !vmess;
   $('server-hysteria2-fields').hidden = $('server-protocol').value !== 'hysteria2';
+  $('server-tuic-fields').hidden = $('server-protocol').value !== 'tuic';
   $('server-vmess-ws-fields').hidden = !vmess || $('server-vmess-network').value !== 'ws';
   $('server-legacy-auth').hidden = mode !== 'legacy';
   $('server-clients-auth').hidden = mode !== 'clients';
@@ -543,14 +544,17 @@ $('server-form').onsubmit = async event => {
     if (protocol === 'wg' && !['agent','wgdashboard'].includes(wgMode)) throw new Error('Выберите панель WireGuard.');
     const originalWGMode = original?.profile === 'wgdashboard' ? 'wgdashboard' : 'agent';
     const originalMode = original?.profile === 'clients_vless' ? 'clients' : original?.profile === 'remnawave_vless' ? 'remnawave' : 'legacy';
-    const fields = protocol === 'hysteria2' ? ['hy_token','hy_inbound_id','hy_address','hy_port','hy_sni','hy_obfs_password'] : protocol === 'vmess' ? ['vmess_token','vmess_inbound_id','vmess_address','vmess_port','vmess_sni','vmess_path','vmess_host'] : protocol !== 'xui' ? ['token','configuration'] : mode === 'remnawave' ? ['remnawave_token','squad_uuids'] : mode === 'clients' ? ['api_token','inbound_id','link_template','flow'] : ['username','password','inbound_id','link_template','flow'];
+    const fields = protocol === 'tuic' ? ['tuic_token','tuic_inbound_id','tuic_address','tuic_port','tuic_sni'] : protocol === 'hysteria2' ? ['hy_token','hy_inbound_id','hy_address','hy_port','hy_sni','hy_obfs_password'] : protocol === 'vmess' ? ['vmess_token','vmess_inbound_id','vmess_address','vmess_port','vmess_sni','vmess_path','vmess_host'] : protocol !== 'xui' ? ['token','configuration'] : mode === 'remnawave' ? ['remnawave_token','squad_uuids'] : mode === 'clients' ? ['api_token','inbound_id','link_template','flow'] : ['username','password','inbound_id','link_template','flow'];
     if (original?.protocol === 'xui' && !url && mode !== originalMode) throw new Error('Для смены режима API введите полный профиль.');
     if (original?.protocol === 'wg' && !url && wgMode !== originalWGMode) throw new Error('Для смены панели введите полный профиль.');
     if (!url && fields.some(key=>values.get(key))) throw new Error('Для замены профиля укажите адрес и все данные подключения.');
+    if (!url && protocol === 'tuic' && ((values.get('tuic_congestion') || 'cubic') !== 'cubic' || (values.get('tuic_udp') || 'native') !== 'native')) throw new Error('Для изменения режимов TUIC введите полный профиль.');
     if (!url && protocol === 'vmess' && values.get('vmess_network') === 'ws') throw new Error('Для изменения транспорта VMess введите полный профиль.');
     if (url && protocol === 'wg' && wgMode === 'wgdashboard' && !/^[A-Za-z0-9_=+.\-]{1,64}$/.test(String(values.get('configuration') || '').trim())) throw new Error('Укажите интерфейс WireGuard, например wg0.');
     const network = String(values.get('vmess_network') || 'tcp');
-    const profile = url ? protocol === 'hysteria2'
+    const profile = url ? protocol === 'tuic'
+      ? {url,api:'sui',token:String(values.get('tuic_token') || ''),inbound_id:Number(values.get('tuic_inbound_id')),address:String(values.get('tuic_address') || '').trim(),port:Number(values.get('tuic_port')),sni:String(values.get('tuic_sni') || '').trim(),congestion_control:String(values.get('tuic_congestion') || 'cubic'),udp_relay_mode:String(values.get('tuic_udp') || 'native')}
+      : protocol === 'hysteria2'
       ? {url,api:'sui',token:String(values.get('hy_token') || ''),inbound_id:Number(values.get('hy_inbound_id')),address:String(values.get('hy_address') || '').trim(),port:Number(values.get('hy_port')),sni:String(values.get('hy_sni') || '').trim(),obfs_password:String(values.get('hy_obfs_password') || '')}
       : protocol === 'vmess'
       ? {url,api:'clients',token:String(values.get('vmess_token') || ''),inbound_id:Number(values.get('vmess_inbound_id')),address:String(values.get('vmess_address') || '').trim(),port:Number(values.get('vmess_port')),network,sni:String(values.get('vmess_sni') || '').trim(),path:network==='ws'?String(values.get('vmess_path') || ''):'',ws_host:network==='ws'?String(values.get('vmess_host') || '').trim():''}
@@ -601,7 +605,7 @@ function couponDate(ts) {
   const d=new Date(ts*1000);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);
 }
 function couponForm(p) {
-  return `<form class="plan-editor" data-coupon="${esc(p.id)}" data-version="${p.version}"><h3>${esc(p.code)}</h3><p>Оформлено: ${p.used} из ${p.max_uses}. Применения не сбрасываются.</p><label>Скидка, %<input name="percent" type="number" min="1" max="90" required value="${p.percent}"></label><label>Лимит заказов<input name="max_uses" type="number" min="1" max="100000" required value="${p.max_uses}"></label><label>Окончание (часовой пояс браузера)<input name="expires_at" type="datetime-local" value="${couponDate(p.expires_at)}"></label><label>Код тарифа (пусто — все)<input name="plan_id" maxlength="32" value="${esc(p.plan_id || '')}"></label><label>Протокол<select name="protocol">${[['all','Все'],['xui','VLESS'],['wg','WireGuard'],['vmess','VMess AEAD'],['hysteria2','Hysteria2']].map(([id,label])=>`<option value="${id}" ${p.protocol===id?'selected':''}>${label}</option>`).join('')}</select></label><label class="plan-enabled"><input name="enabled" type="checkbox" ${p.enabled?'checked':''}> Включён</label><button type="submit" class="small">Сохранить</button></form>`;
+  return `<form class="plan-editor" data-coupon="${esc(p.id)}" data-version="${p.version}"><h3>${esc(p.code)}</h3><p>Оформлено: ${p.used} из ${p.max_uses}. Применения не сбрасываются.</p><label>Скидка, %<input name="percent" type="number" min="1" max="90" required value="${p.percent}"></label><label>Лимит заказов<input name="max_uses" type="number" min="1" max="100000" required value="${p.max_uses}"></label><label>Окончание (часовой пояс браузера)<input name="expires_at" type="datetime-local" value="${couponDate(p.expires_at)}"></label><label>Код тарифа (пусто — все)<input name="plan_id" maxlength="32" value="${esc(p.plan_id || '')}"></label><label>Протокол<select name="protocol">${[['all','Все'],['xui','VLESS'],['wg','WireGuard'],['vmess','VMess AEAD'],['hysteria2','Hysteria2'],['tuic','TUIC v5']].map(([id,label])=>`<option value="${id}" ${p.protocol===id?'selected':''}>${label}</option>`).join('')}</select></label><label class="plan-enabled"><input name="enabled" type="checkbox" ${p.enabled?'checked':''}> Включён</label><button type="submit" class="small">Сохранить</button></form>`;
 }
 async function refreshCoupons(){const result=await api('coupons');$('coupons-list').innerHTML=result.coupons.map(couponForm).join('');}
 function couponFields(values){return {percent:Number(values.get('percent')),max_uses:Number(values.get('max_uses')),expires_at:values.get('expires_at')?Math.floor(new Date(values.get('expires_at')).getTime()/1000):0,plan_id:String(values.get('plan_id') || '').trim() || null,protocol:String(values.get('protocol')),enabled:values.has('enabled')};}
@@ -631,7 +635,7 @@ $('referral-policy-editor').onsubmit=async event=>{
   catch(e){$('referral-policy-error').textContent=e.message;button.disabled=false;}
 };
 
-const diagnosticWarnings={worker_disabled:'Фоновые задачи выключены настройками',encryption_key_invalid:'Неверный формат ключа шифрования',worker_failed:'Последний цикл worker завершился ошибкой',worker_not_observed:'Цикл worker ещё не наблюдался в этом процессе',worker_slow:'Цикл worker выполняется больше 3 минут',worker_stale:'Нет свежего успешного цикла worker',queue_errors:'В очереди есть задания с ошибками',queue_wait_over_10m:'Задания выдачи или устройств ожидают больше 10 минут',expiry_wait_over_10m:'Есть доступы с просроченным отзывом больше 10 минут',queues_paused:'Фоновые задачи выключены при непустой очереди',server_probe_not_recent_ok:'Не все включённые серверы имеют успешную API-проверку за сутки',no_new_assignments_xui:'Нет сервера VLESS для новых назначений',no_new_assignments_wg:'Нет сервера WireGuard для новых назначений',no_new_assignments_vmess:'Нет сервера VMess для новых назначений',no_new_assignments_hysteria2:'Нет сервера Hysteria2 для новых назначений',no_active_plans:'Нет опубликованных тарифов',no_assignable_servers:'Нет серверов для новых назначений',payment_settings_incomplete:'Не заполнены настройки оплаты',telegram_sales_settings_incomplete:'Не заполнены настройки продаж в Telegram'};
+const diagnosticWarnings={worker_disabled:'Фоновые задачи выключены настройками',encryption_key_invalid:'Неверный формат ключа шифрования',worker_failed:'Последний цикл worker завершился ошибкой',worker_not_observed:'Цикл worker ещё не наблюдался в этом процессе',worker_slow:'Цикл worker выполняется больше 3 минут',worker_stale:'Нет свежего успешного цикла worker',queue_errors:'В очереди есть задания с ошибками',queue_wait_over_10m:'Задания выдачи или устройств ожидают больше 10 минут',expiry_wait_over_10m:'Есть доступы с просроченным отзывом больше 10 минут',queues_paused:'Фоновые задачи выключены при непустой очереди',server_probe_not_recent_ok:'Не все включённые серверы имеют успешную API-проверку за сутки',no_new_assignments_xui:'Нет сервера VLESS для новых назначений',no_new_assignments_wg:'Нет сервера WireGuard для новых назначений',no_new_assignments_vmess:'Нет сервера VMess для новых назначений',no_new_assignments_hysteria2:'Нет сервера Hysteria2 для новых назначений',no_new_assignments_tuic:'Нет сервера TUIC для новых назначений',no_active_plans:'Нет опубликованных тарифов',no_assignable_servers:'Нет серверов для новых назначений',payment_settings_incomplete:'Не заполнены настройки оплаты',telegram_sales_settings_incomplete:'Не заполнены настройки продаж в Telegram'};
 const diagnosticWorker={disabled:'Выключен настройками',not_observed:'Ещё не наблюдался',failed:'Ошибка последнего цикла',busy:'Выполняет цикл',slow:'Длительный цикл',stale:'Нет свежего успешного цикла',recent_success:'Недавно завершил цикл'};
 function diagnosticsMarkup(r) {
   const labels={issuance:'Выдача и продление',payment_poll:'Сверка ЮKassa',devices:'Создание/отзыв устройств',device_rotations:'Смена ключей устройств',primary_rotations:'Смена основного ключа'};

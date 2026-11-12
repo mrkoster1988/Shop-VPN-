@@ -11,7 +11,7 @@ from app.security import digest
 from test_shop import client, register
 
 
-PLANNED = ('trojan', 'shadowsocks', 'tuic', 'anytls',
+PLANNED = ('trojan', 'shadowsocks', 'anytls',
            'amneziawg', 'openvpn', 'ikev2-ipsec')
 OWNER = {'Authorization': 'Bearer ' + 'a' * 48}
 
@@ -27,7 +27,7 @@ def test_catalog_is_read_only_and_never_reads_server_secrets(client, monkeypatch
     data = response.json()
     assert data['external_checks_performed'] is False
     rows = {p['id']: p for p in data['protocols']}
-    assert set(rows) == {'vless', 'wireguard', 'vmess', 'hysteria2', *PLANNED}
+    assert set(rows) == {'vless', 'wireguard', 'vmess', 'hysteria2', 'tuic', *PLANNED}
     assert rows['vless']['driver_id'] == 'xui'
     assert rows['wireguard']['driver_id'] == 'wg'
     for name in PLANNED:
@@ -87,9 +87,10 @@ def test_sales_keep_driver_ids_and_check_availability_per_customer(client, monke
     assert data == [{'id':'xui','name':'VLESS','available':False},
                     {'id':'wg','name':'WireGuard','available':True},
                     {'id':'vmess','name':'VMess','available':False},
-                    {'id':'hysteria2','name':'Hysteria2','available':False}]
-    assert calls == [('xui',1),('wg',1),('vmess',1),('hysteria2',1)]
+                    {'id':'hysteria2','name':'Hysteria2','available':False},
+                    {'id':'tuic','name':'TUIC','available':False}]
+    assert calls == [('xui',1),('wg',1),('vmess',1),('hysteria2',1),('tuic',1)]
     # Экземпляры ответа не должны менять реестр и будущий каталог продаж.
     catalog = protocols.catalog()
     catalog['protocols'][0]['driver_id'] = 'vmess'
-    assert protocols.supported_drivers() == ('xui','wg','vmess','hysteria2')
+    assert protocols.supported_drivers() == ('xui','wg','vmess','hysteria2','tuic')
