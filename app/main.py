@@ -30,7 +30,7 @@ from . import shop_settings, platforms, protocols, bot_menu as menu_editor, paym
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, mail, partner, commerce_analytics
+from . import staff, mail, partner, commerce_analytics, updates
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -57,6 +57,7 @@ async def lifespan(app):
     tasks = []
     if os.getenv('BACKGROUND_TASKS', 'true') == 'true' and os.getenv('MAINTENANCE_MODE')!='true':
         tasks.append(asyncio.create_task(service.worker()))
+        tasks.append(asyncio.create_task(updates.worker()))
         if c.BOT_TOKEN:
             tasks.append(asyncio.create_task(service.bot_loop()))
     yield
@@ -276,6 +277,21 @@ async def staff_logout(request: Request, response: Response):
         with db() as conn: conn.execute('DELETE FROM staff_sessions WHERE token_hash=?',(digest(raw),))
     response.delete_cookie('staff_session',path=c.COOKIE_PATH)
     return {'ok':True}
+@app.get('/api/admin/updates', dependencies=[Depends(admin)])
+async def updates_status():
+    return updates.status()
+
+
+@app.put('/api/admin/updates/schedule', dependencies=[Depends(admin)])
+async def updates_schedule(data: updates.Schedule):
+    return updates.save_schedule(data)
+
+
+@app.post('/api/admin/updates/check', dependencies=[Depends(admin)])
+async def updates_check():
+    return await updates.check(manual=True)
+
+
 @app.get('/api/admin/shop-settings',dependencies=[Depends(admin)])
 async def shop_settings_get(request: Request):
     if request.state.admin_actor['role']!='owner':

@@ -813,3 +813,87 @@ test('logout clears credential inputs and ignores late server errors',async()=>{
   assert.equal(page.element('server-credentials-error').textContent,'');
   assert.equal(page.element('server-credentials-dialog').open,false);
 });
+
+function updatesStatus(extra={}) {
+ return {current_version:'v0.055',state:'available',checking:false,
+  settings:{enabled:true,check_time:'21:00',timezone:'Europe/Moscow',version:1},scheduler_running:true,
+  last_attempt:1794502800,last_success:1794502800,next_check:1794506400,error_code:null,stale:false,
+  release:{tag:'v0.056',notes:'Исправления',url:'javascript:alert(1)',guide_url:'https://evil.example'},
+  can_open_guide:true,update_available:true,...extra};
+}
+test('updates show safe release notes and a pinned manual upgrade guide',async()=>{
+ const page=adminPage(),req=page.run("role='owner';refreshUpdates()");
+ const data=updatesStatus();data.release.notes='<img src=x onerror=alert(1)>';
+ page.reply(data);await req;
+ assert.equal(page.element('updates-notes').textContent,data.release.notes);
+ assert.equal(page.element('updates-notes').innerHTML,'');
+ assert.equal(page.element('updates-open').hidden,false);
+ page.run("$('updates-open').onclick()");
+ assert.equal(page.element('updates-dialog').open,true);
+ assert.equal(page.element('updates-guide-link').href,'https://github.com/mrkoster1988/Shop-VPN-/blob/v0.056/docs/UPGRADE.md');
+ assert.equal(page.requests.length,1);
+});
+test('updates never offer an unverified stale or invalid release',async()=>{
+ const page=adminPage();page.run("role='owner'");
+ for(const data of [updatesStatus({can_open_guide:false,stale:true,error_code:'network_error',state:'check_failed'}),
+   updatesStatus({release:{tag:'../../main',notes:'bad'}})]){
+  const req=page.run('refreshUpdates()');page.reply(data);await req;
+  assert.equal(page.element('updates-open').hidden,true);
+  page.run("$('updates-open').onclick()");
+  assert.equal(page.element('updates-dialog').open,false);
+ }
+});
+test('updates settings stay editable across polling and stale revision is preserved',async()=>{
+ const page=adminPage(),req=page.run("role='owner';refreshUpdates()");page.reply(updatesStatus());await req;
+ page.element('updates-time').value='22:30';page.run("$('updates-schedule').oninput()");
+ const poll=page.run('refreshUpdates()');page.reply(updatesStatus({settings:{enabled:true,check_time:'19:00',timezone:'UTC',version:2}}));await poll;
+ assert.equal(page.element('updates-time').value,'22:30');assert.equal(page.run('updatesVersion'),1);
+ const save=page.run("$('updates-schedule').onsubmit({preventDefault(){}})");
+ assert.deepEqual(page.bodies.at(-1),{enabled:true,check_time:'22:30',timezone:'Europe/Moscow',version:1});
+ page.replyAt(page.requests.length-1,{detail:'Расписание уже изменено'},409);await save;
+ assert.match(page.element('updates-error').textContent,/уже изменено/);
+ assert.equal(page.element('updates-time').value,'22:30');
+});
+test('updates check serializes double click and reenables controls after failure',async()=>{
+ const page=adminPage();page.run("role='owner'");
+ const req=page.run("$('updates-check').onclick()");await page.run("$('updates-check').onclick()");
+ assert.equal(page.requests.length,1);assert.equal(page.element('updates-check').disabled,true);
+ page.replyAt(0,{detail:'Подождите минуту'},429);await req;
+ assert.equal(page.element('updates-check').disabled,false);
+ assert.equal(page.element('updates-open').hidden,true);
+ assert.match(page.element('updates-error').textContent,/Подождите/);
+});
+test('updates ignore old reads overtaken by a manual check',async()=>{
+ const page=adminPage(),old=page.run("role='owner';refreshUpdates()");
+ const manual=page.run("$('updates-check').onclick()");
+ page.replyAt(1,updatesStatus());await manual;
+ page.replyAt(0,updatesStatus({state:'not_checked',release:null,can_open_guide:false}));await old;
+ assert.equal(page.element('updates-latest').textContent,'v0.056');
+});
+test('updates hide data after logout and reject late responses and other roles',async()=>{
+ const page=adminPage(),req=page.run("role='owner';refreshUpdates()");
+ page.run("$('exit').onclick()");page.replyAt(0,updatesStatus());await req;
+ assert.equal(page.element('updates-panel').hidden,true);
+ assert.equal(page.element('updates-notes').textContent,'');
+ const count=page.requests.length;
+ await page.run("role='support';refreshUpdates()");assert.equal(page.requests.length,count);
+ page.run("$('updates-open').onclick()");assert.equal(page.element('updates-dialog').open,false);
+});
+test('updates failed status read closes upgrade guide until refreshed',async()=>{
+ const page=adminPage(),req=page.run("role='owner';refreshUpdates()");page.reply(updatesStatus());await req;
+ page.run("$('updates-open').onclick()");
+ const failed=page.run('refreshUpdates()');page.replyAt(page.requests.length-1,{detail:'Нет доступа'},403);await failed;
+ assert.equal(page.element('updates-dialog').open,false);
+ assert.equal(page.element('updates-open').hidden,true);assert.equal(page.run('updatesCache'),null);
+});
+test('updates schedule conflict can be recovered by loading saved settings',async()=>{
+ const page=adminPage(),req=page.run("role='owner';refreshUpdates()");page.reply(updatesStatus());await req;
+ page.element('updates-time').value='23:00';page.run("$('updates-schedule').oninput()");
+ const reset=page.run("$('updates-reset').onclick()");
+ page.reply(updatesStatus({settings:{enabled:false,check_time:'18:00',timezone:'UTC',version:2}}));await reset;
+ assert.equal(page.element('updates-time').value,'18:00');assert.equal(page.run('updatesVersion'),2);
+});
+test('updates date falls back to explicitly labelled UTC for a newer server timezone',()=>{
+ const page=adminPage();
+ assert.match(page.run("updatesDate(1794502800,'Unknown/New-Timezone')"),/ UTC$/);
+});

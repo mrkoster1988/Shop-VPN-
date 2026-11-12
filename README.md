@@ -6,7 +6,7 @@
 
 Сайт · Telegram-бот · Mini App · Управление подключениями через API
 
-[Установка](docs/INSTALL_QUICKSTART.md) · [Возможности](#возможности-магазина) · [Технологии](#технологии-подключения) · [План развития](docs/ROADMAP.md)
+[Установка](docs/INSTALL_QUICKSTART.md) · [Возможности](#возможности-магазина) · [Технологии](#технологии-подключения) · [План развития](docs/ROADMAP.md) · [Обновления](docs/UPDATE_CHECKER.md)
 
 [![CI](https://github.com/mrkoster1988/Shop-VPN-/actions/workflows/ci.yml/badge.svg)](https://github.com/mrkoster1988/Shop-VPN-/actions/workflows/ci.yml)
 [![Релиз](https://img.shields.io/github/v/release/mrkoster1988/Shop-VPN-?label=release&color=00a89d)](https://github.com/mrkoster1988/Shop-VPN-/releases)

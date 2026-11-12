@@ -107,8 +107,14 @@ class Staging:
         allowed_new={'admin_audit','password_reset_tokens','staff_sessions','staff_users',
                      'store_settings','support_cases','support_messages','partner_events',
                      'order_history_state','order_milestones','bot_menu_settings','wgdashboard_keys',
-                     'wgdashboard_expirations','hysteria2_credentials','tuic_credentials'}
+                     'wgdashboard_expirations','hysteria2_credentials','tuic_credentials','update_checker'}
         added=sorted(set(new)-set(old))
+        if 'update_checker' in added:
+            check(current['counts'].get('update_checker') == 1 and self.data('updates') == {
+                'id':1,'enabled':1,'check_time':'21:00','timezone':'Europe/Moscow','version':1,
+                'next_check':0,'last_attempt':None,'last_success':None,'error_code':None,
+                'release_json':None,'etag':'','failures':0,'retry_at':0,'lease_token':None,'lease_until':0},
+                'Unexpected initial update checker settings')
         check('tuic_credentials' not in added or current['counts'].get('tuic_credentials') == 0,
               'Unexpected credentials during initial TUIC migration')
         check('hysteria2_credentials' not in added or current['counts'].get('hysteria2_credentials') == 0,
@@ -198,6 +204,11 @@ class Staging:
         self.controller(self.args.source,'rollback','rolled_back');self.compare(managed,cleared=managed_origin)
         self.event('managed_prepare_and_rollback_verified' if managed_origin else 'direct_prepare_and_rollback_verified')
         self.controller(self.args.source,'prepare','ready');self.controller(self.args.source,'activate','committed');self.compare(managed,cleared=True)
+        update_config={'enabled':False,'check_time':'22:30','timezone':'UTC','version':1}
+        saved,_=self.http('/api/admin/updates/schedule',body=update_config,method='PUT')
+        check(json.loads(saved)['settings']=={**update_config,'version':2},'Update schedule API mismatch')
+        expected_updates=self.data('updates')
+        self.event('update_schedule_saved_without_network_check')
         managed=self.snapshot()
         settings=self.data('settings')
         check(settings=={'support_text':'Disposable CI fixture','terms_configured':False},
@@ -226,6 +237,9 @@ class Staging:
         restored_settings=self.data('settings',database='/tmp/final-restore/shop.db')
         check(restored_settings=={'support_text':'Disposable CI fixture','terms_configured':False},
               'Store settings were not preserved by backup restore')
+        check(self.data('updates',database='/tmp/final-restore/shop.db')==expected_updates,
+              'Update schedule was not preserved by backup restore')
+        self.event('update_schedule_backup_restore_verified')
         self.run('refuse overwrite',base+['restore','/tmp/final.pvb','--target','/tmp/final-restore'],env=env,ok=(1,))
         diagnostic=self.json('status CLI',['docker','exec',cid,'python','scripts/status.py','--url',self.backend_url],ok=(0,1))
         check(diagnostic['scope']['external_requests'] is False and diagnostic['release']==version(self.args.source),'Diagnostic scope/version mismatch')

@@ -93,6 +93,11 @@ def main():
         path=Path(sys.argv[2]) if len(sys.argv)>2 else Path(os.environ.get('DATA_DIR','data'))/'shop.db'
         with sqlite3.connect(path) as conn:row=conn.execute('SELECT support_text,terms_text FROM store_settings WHERE id=1').fetchone()
         result={'support_text':row[0],'terms_configured':bool(row[1].strip())} if row else {}
+    elif command=='updates':
+        path=Path(sys.argv[2]) if len(sys.argv)>2 else Path(os.environ.get('DATA_DIR','data'))/'shop.db'
+        with sqlite3.connect(path) as conn:
+            conn.row_factory=sqlite3.Row
+            result=dict(conn.execute('SELECT * FROM update_checker WHERE id=1').fetchone())
     elif command=='sentinel':
         from app.db import execute
         execute("INSERT INTO meta(key,value) VALUES ('docker_staging_sentinel',?)",(json.load(sys.stdin)['value'],));result={'written':True}

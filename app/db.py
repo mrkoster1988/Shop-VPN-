@@ -247,6 +247,14 @@ def init_db():
         CREATE TABLE IF NOT EXISTS store_settings (
           id INTEGER PRIMARY KEY CHECK(id=1), support_text TEXT NOT NULL, terms_text TEXT NOT NULL,
           version INTEGER NOT NULL DEFAULT 1, updated INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS update_checker (
+          id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+          check_time TEXT NOT NULL DEFAULT '21:00', timezone TEXT NOT NULL DEFAULT 'Europe/Moscow',
+          version INTEGER NOT NULL DEFAULT 1, next_check INTEGER NOT NULL DEFAULT 0,
+          last_attempt INTEGER, last_success INTEGER, error_code TEXT, release_json TEXT,
+          etag TEXT NOT NULL DEFAULT '', failures INTEGER NOT NULL DEFAULT 0,
+          retry_at INTEGER NOT NULL DEFAULT 0, lease_token TEXT, lease_until INTEGER NOT NULL DEFAULT 0);
+        INSERT OR IGNORE INTO update_checker(id) VALUES (1);
         CREATE TABLE IF NOT EXISTS bot_menu_settings (
           id INTEGER PRIMARY KEY CHECK(id=1), content TEXT NOT NULL,
           version INTEGER NOT NULL DEFAULT 1, updated INTEGER NOT NULL DEFAULT 0);
