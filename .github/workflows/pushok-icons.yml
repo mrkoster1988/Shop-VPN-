@@ -1,0 +1,89 @@
+name: Pushok Icons - Telegram emoji pack
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'app/static/**'
+      - 'tests/icons_browser.cjs'
+      - 'scripts/export_pushok_emoji.py'
+      - 'tests/test_export_pushok_emoji.py'
+      - 'scripts/build_pushok_emoji_manifest.py'
+      - 'tests/test_pushok_emoji_manifest.py'
+      - '.github/workflows/pushok-icons.yml'
+permissions:
+  contents: read
+jobs:
+  telegram-emoji:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install local render dependencies
+        run: python -m pip install 'CairoSVG==2.7.1' 'Pillow==11.3.0'
+      - name: Validate icon source
+        run: python -m unittest discover -s tests -p test_export_pushok_emoji.py -v
+      - name: Export PNG icons for Telegram
+        run: python scripts/export_pushok_emoji.py --sprite app/static/pushok-icons.svg --output .build/pushok-emoji
+      - name: Test action-to-icon manifest
+        run: python -m unittest discover -s tests -p test_pushok_emoji_manifest.py -v
+      - name: Create verifiable Telegram emoji manifest
+        run: python scripts/build_pushok_emoji_manifest.py --input .build/pushok-emoji --output .build/pushok-emoji/manifest.json
+      - name: Verify exported PNG files
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          files = sorted(Path('.build/pushok-emoji').glob('*.png'))
+          assert len(files) >= 8, 'Unexpectedly small emoji pack'
+          for file in files:
+              with Image.open(file) as image:
+                  assert image.format == 'PNG', file
+                  assert image.size == (100, 100), file
+                  assert image.mode in ('RGBA', 'LA'), file
+                  assert image.getbbox() is not None, file
+              assert file.stat().st_size <= 128 * 1024, file
+          print(f'Validated {len(files)} PNG emoji files')
+          PY
+      - name: Upload generated assets (no Telegram publication)
+        uses: actions/upload-artifact@v4
+        with:
+          name: pushok-custom-emoji-png
+          path: |
+            .build/pushok-emoji/*.png
+            .build/pushok-emoji/manifest.json
+          retention-days: 14
+          if-no-files-found: error
+
+  icons-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - name: Install pinned browser runtime
+        run: |
+          npm install --prefix "$RUNNER_TEMP/icons-ui" --ignore-scripts --no-audit --no-fund playwright@1.62.1
+          "$RUNNER_TEMP/icons-ui/node_modules/.bin/playwright" install --with-deps chromium webkit
+      - name: Check customer icons, paths and navigation
+        env:
+          NODE_PATH: ${{ runner.temp }}/icons-ui/node_modules
+          ICON_UI_OUTPUT: ${{ runner.temp }}/icons-ui-screenshots
+          ICON_UI_LOG_PREVIEWS: '1'
+        run: node tests/icons_browser.cjs
+      - name: Upload fixture screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pushok-icons-browser
+          path: ${{ runner.temp }}/icons-ui-screenshots/*.png
+          retention-days: 14
+          if-no-files-found: warn

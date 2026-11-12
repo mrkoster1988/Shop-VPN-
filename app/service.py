@@ -10,6 +10,7 @@ import httpx
 from . import config as c, providers, servers, referrals, shop_settings, bot_menu as menu_editor
 from .db import db, one, all_rows, execute
 from .security import digest
+from .pushok_button_icons import without_icons
 
 log = logging.getLogger('pushok')
 lock = asyncio.Lock()
@@ -47,8 +48,20 @@ async def send(tg_id, text, **kwargs):
     if not c.BOT_TOKEN or not tg_id:
         return
     async with httpx.AsyncClient(timeout=15) as client:
-        r = await client.post('https://api.telegram.org/bot' + c.BOT_TOKEN + '/sendMessage',
-                              json={'chat_id': tg_id, 'text': text, **kwargs})
+        url = 'https://api.telegram.org/bot' + c.BOT_TOKEN + '/sendMessage'
+        payload = {'chat_id': tg_id, 'text': text, **kwargs}
+        r = await client.post(url, json=payload)
+        plain_menu = without_icons(kwargs.get('reply_markup'))
+        if plain_menu is not None and r.status_code == 400:
+            try:
+                refusal = r.json()
+            except ValueError:
+                refusal = None
+            if isinstance(refusal, dict) and refusal.get('ok') is False and refusal.get('error_code') == 400:
+                # Telegram явно отклонил сообщение: один повтор только без декора.
+                # Тайм-ауты, 429/5xx и неоднозначные ответы не повторяем здесь.
+                log.warning('Telegram отклонил меню со значками; отправляем обычное меню')
+                r = await client.post(url, json={**payload, 'reply_markup': plain_menu})
         r.raise_for_status()
         if not r.json().get('ok'):
             raise RuntimeError('Telegram send failed')

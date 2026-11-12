@@ -149,7 +149,7 @@ function clearPrivate(clearPromoIntent=true) {
   for (const id of ['identity','subscriptions','orders','payment-result','checkout-info','support-list','support-thread']) $(id).replaceChildren();
   supportRequest++;selectedSupportCase=null;$('support-create').reset();$('support-reply').reset();$('support-reply').hidden=true;$('support-status').textContent='';
   $('auth-form').reset(); $('receipt-label').querySelector('input').value = '';
-  $('account-btn').textContent = 'Личный кабинет ↗';
+  $('account-label').textContent = 'Личный кабинет ↗';
 }
 async function refreshMe() {
   const request = ++meRequest, epoch = sessionEpoch;
@@ -161,7 +161,7 @@ async function refreshMe() {
   if (me && me.id !== customer?.id) { sessionEpoch++; clearPrivate(); }
   else if (!customer) clearPrivate(false);
   me = customer; catalog = nextCatalog; renderPlans();
-  $('account-btn').textContent = me ? 'Мой кабинет ↗' : 'Личный кабинет ↗';
+  $('account-label').textContent = me ? 'Мой кабинет ↗' : 'Личный кабинет ↗';
   if (connection) {
     const current = me?.subscriptions.find(s=>s.id===connection.id);
     if (!current || current.state!=='active' || current.expires*1000<=Date.now() || (!connection.deviceId && (current.primary_key_state || 'active')!=='active')) {
