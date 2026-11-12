@@ -6,6 +6,8 @@ on:
       - 'app/static/pushok-icons.svg'
       - 'scripts/export_pushok_emoji.py'
       - 'tests/test_export_pushok_emoji.py'
+      - 'scripts/build_pushok_emoji_manifest.py'
+      - 'tests/test_pushok_emoji_manifest.py'
       - '.github/workflows/pushok-icons.yml'
 permissions:
   contents: read
@@ -28,6 +30,10 @@ jobs:
         run: python -m unittest discover -s tests -p test_export_pushok_emoji.py -v
       - name: Export PNG icons for Telegram
         run: python scripts/export_pushok_emoji.py --sprite app/static/pushok-icons.svg --output .build/pushok-emoji
+      - name: Test action-to-icon manifest
+        run: python -m unittest discover -s tests -p test_pushok_emoji_manifest.py -v
+      - name: Create verifiable Telegram emoji manifest
+        run: python scripts/build_pushok_emoji_manifest.py --input .build/pushok-emoji --output .build/pushok-emoji/manifest.json
       - name: Verify exported PNG files
         run: |
           python - <<'PY'
@@ -48,6 +54,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: pushok-custom-emoji-png
-          path: .build/pushok-emoji/*.png
+          path: |
+            .build/pushok-emoji/*.png
+            .build/pushok-emoji/manifest.json
           retention-days: 14
           if-no-files-found: error
