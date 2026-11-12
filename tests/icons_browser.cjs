@@ -48,7 +48,9 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
      assert.ok(sprites.length>0,'Браузер запросил внешний SVG');
      assert.ok(sprites.every(p=>p===base+'/static/pushok-icons.svg'));
      const visible=page.locator('.pushok-icon:visible');
-     assert.equal(await visible.count(),theme==='browser'?2:6);
+     // В Mini App верхняя кнопка кабинета штатно скрыта: её заменяет нижняя.
+     assert.equal(await visible.count(),theme==='browser'?2:5);
+     assert.equal(await page.locator('#account-btn').isVisible(),theme==='browser');
      for(const icon of await visible.all()){
       assert.equal(await icon.getAttribute('aria-hidden'),'true');
       assert.equal(await icon.getAttribute('focusable'),'false');
