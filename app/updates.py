@@ -70,6 +70,7 @@ def _row(conn):
 
 
 def status(now=None):
+    from . import update_install
     now = int(time.time()) if now is None else now
     with db() as conn:
         row = _row(conn)
@@ -108,7 +109,7 @@ def status(now=None):
         'manual_allowed_at': max(cooldown, row['lease_until'] if checking else 0),
         'error_code': error, 'release': release, 'stale': stale,
         'update_available': available, 'can_open_guide': available and not stale and not checking,
-        'installation_mode': 'manual', 'releases_url': RELEASES_URL,
+        'installation_mode': 'host' if update_install.configuration() else 'manual', 'releases_url': RELEASES_URL,
     }
 
 

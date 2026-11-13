@@ -29,6 +29,7 @@ def test_loopback_only_and_public_fields_allowlisted(client,monkeypatch):
     r=client.get('/api/admin/updates/operation',headers=admin_headers())
     assert r.json()['job']=={'id':'test','state':'ready'} and 'secret' not in r.text
     assert str(calls[0].url)=='http://127.0.0.1:9079/v1/status'
+    assert client.get('/api/admin/updates',headers=admin_headers()).json()['installation_mode']=='host'
 
 
 @pytest.mark.parametrize('status',[302,403,500])
