@@ -36,7 +36,7 @@ fs.mkdirSync(output,{recursive:true});
   }
   return route.fulfill({status:401,json:{detail:'Fixture only'}});
  });
- await page.goto('http://pushok.test/shop/admin');
+ await page.goto('https://pushok.test/shop/admin');
  await page.evaluate(async()=>{role='owner';document.getElementById('dashboard').hidden=false;document.getElementById('admin-login').hidden=true;await refreshUpdates();});
  assert.equal(await page.locator('#updates-time').inputValue(),'21:00');
  assert.equal(await page.locator('#updates-timezone').inputValue(),'Europe/Moscow');

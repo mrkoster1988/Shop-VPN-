@@ -175,3 +175,10 @@ def test_unsupported_target_protocol_cannot_be_applied(host,monkeypatch):
     monkeypatch.setattr(h,'run_upgrade',lambda *a,**k:{'target':'v0.056','previous':'v0.055','plan_only':True,'backup':'encrypted','activation':'explicit'})
     c.submit('plan',request());c.process_one()
     assert c.status()['job']['state']=='failed'
+
+
+def test_expanded_stream_limit_includes_archive_headers(tmp_path,monkeypatch):
+    archive=tmp_path/'test.tar.gz';make_tar(archive,[('root/file',tarfile.REGTYPE)])
+    monkeypatch.setattr(h.update_source,'MAX_EXPANDED',1024)
+    with pytest.raises(ValueError,match='expanded_archive_limit'):
+        h.update_source.extract(archive,tmp_path/'out')

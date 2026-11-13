@@ -1,5 +1,6 @@
 """Загрузка только стабильного релиза своего репозитория с привязкой к commit SHA."""
 import ast
+import gzip
 import json
 from pathlib import Path, PurePosixPath
 import re
@@ -12,6 +13,20 @@ REPO = 'mrkoster1988/Shop-VPN-'
 API = 'https://api.github.com/repos/' + REPO
 TAG = re.compile(r'v(0|[1-9][0-9]{0,5})\.([0-9]{3})')
 SHA = re.compile(r'[a-f0-9]{40}')
+MAX_EXPANDED = 72 * 1024 * 1024  # Включая заголовки tar/PAX, не только файлы.
+
+
+class BoundedReader:
+    def __init__(self, stream):
+        self.stream, self.total = stream, 0
+
+    def read(self, size=-1):
+        remaining = MAX_EXPANDED - self.total + 1
+        raw = self.stream.read(min(size, remaining) if size >= 0 else remaining)
+        self.total += len(raw)
+        if self.total > MAX_EXPANDED:
+            raise ValueError('expanded_archive_limit')
+        return raw
 
 
 def version(tag):
@@ -72,11 +87,11 @@ def extract(archive, destination):
     destination = Path(destination)
     destination.mkdir(mode=0o700)
     seen, top, size = set(), set(), 0
-    with tarfile.open(archive, mode='r:gz') as source:
+    with gzip.open(archive, 'rb') as compressed, tarfile.open(fileobj=BoundedReader(compressed), mode='r|') as source:
         for index, member in enumerate(source):
             path = PurePosixPath(member.name)
             size += member.size
-            if (index >= 2000 or size > 64 * 1024 * 1024 or path.is_absolute()
+            if (index >= 2000 or member.size < 0 or size > 64 * 1024 * 1024 or path.is_absolute()
                     or '..' in path.parts or not path.parts or member.name in seen
                     or any(ord(ch) < 32 for ch in member.name)
                     or not (member.isfile() or member.isdir())):
