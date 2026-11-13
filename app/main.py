@@ -30,7 +30,7 @@ from . import shop_settings, platforms, protocols, bot_menu as menu_editor, paym
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, mail, partner, commerce_analytics, updates
+from . import staff, mail, partner, commerce_analytics, updates, update_install
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -279,7 +279,22 @@ async def staff_logout(request: Request, response: Response):
     return {'ok':True}
 @app.get('/api/admin/updates', dependencies=[Depends(admin)])
 async def updates_status():
-    return updates.status()
+    return {**updates.status(), 'installer':await update_install.status()}
+
+
+@app.post('/api/admin/updates/plan', dependencies=[Depends(admin)])
+async def updates_plan(data: update_install.Plan):
+    return await update_install.plan(data)
+
+
+@app.post('/api/admin/updates/apply', dependencies=[Depends(admin)])
+async def updates_apply(data: update_install.Apply):
+    return await update_install.request('apply', data.model_dump(mode='json'))
+
+
+@app.get('/api/admin/updates/operation', dependencies=[Depends(admin)])
+async def updates_operation():
+    return await update_install.status()
 
 
 @app.put('/api/admin/updates/schedule', dependencies=[Depends(admin)])

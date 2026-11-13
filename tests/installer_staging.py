@@ -29,6 +29,31 @@ def guard(disposable, uid, info):
 
 
 class InstallerStage(helpers.Staging):
+    def verify_host_service(self):
+        unit='pushok-updater-'+self.project+'.service';work=Path('/var/lib/pushok-updater')/self.project
+        unit_file=Path('/etc/systemd/system')/unit
+        check(not work.exists() and not unit_file.exists(),'Host service fixture namespace exists')
+        with socket.socket() as sock:sock.bind(('127.0.0.1',0));port=sock.getsockname()[1]
+        try:
+            self.json('host setup', ['python3',str(self.args.source/'scripts/setup_host_updater.py'),'--dir',str(self.root),'--port',str(port)])
+            config=json.loads((self.root/'updater/config.json').read_text());self.secrets.append(config['token'])
+            self.secrets.append((self.root/'updater/backup-password').read_text().strip())
+            check(self.run('host service active',['systemctl','is-active',unit])[0]=='active','Host service inactive')
+            result=json.loads(self.request('/shop/api/admin/updates/operation',admin=True)[0])
+            check(result=={'enabled':True,'reachable':True,'job':None},'Shop cannot reach systemd updater')
+            self.run('restart host service',['systemctl','restart',unit])
+            import time
+            for _ in range(10):
+                result=json.loads(self.request('/shop/api/admin/updates/operation',admin=True)[0])
+                if result.get('reachable'):break
+                time.sleep(0.5)
+            check(result.get('reachable'),'Service restart did not recover')
+            self.event('systemd_host_updater_setup_loopback_client_and_restart_verified')
+        finally:
+            self.run('stop host fixture',['systemctl','disable','--now',unit],ok=(0,1,5))
+            unit_file.unlink(missing_ok=True)
+            self.run('reload systemd after fixture',['systemctl','daemon-reload'])
+            if work.exists():shutil.rmtree(work)
     def load_secrets(self):
         path = self.root / '.env'
         if path.exists():
@@ -162,6 +187,7 @@ class InstallerStage(helpers.Staging):
         self.install(expected=1, port=self.port + 1 if self.port < 65535 else self.port - 1)
         check(self.credentials_snapshot() == snapshot, 'Отказ смены порта изменил конфигурацию')
         self.request('/shop/health'); self.event('changed_identity_refused_without_outage')
+        self.verify_host_service()
         return {'status': 'passed', 'source_commit': self.commit, 'release': settings['version'], 'events': self.events,
                 'ubuntu': '24.04', 'real_installer_cli': True, 'docker_preinstalled': True, 'mode': 'external',
                 'local_https_fixture': True, 'clean_os_docker_install': False, 'public_dns_acme': False,

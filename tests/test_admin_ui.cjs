@@ -897,3 +897,30 @@ test('updates date falls back to explicitly labelled UTC for a newer server time
  const page=adminPage();
  assert.match(page.run("updatesDate(1794502800,'Unknown/New-Timezone')"),/ UTC$/);
 });
+
+function hostReady(extra={}) {return {enabled:true,reachable:true,job:{id:'11111111-1111-4111-8111-111111111111',kind:'plan',tag:'v0.056',previous:'v0.055',state:'ready',can_apply:true,commit:'a'.repeat(40),expires:Math.floor(Date.now()/1000)+600,...extra}};}
+test('host installation needs explicit confirmation and serializes duplicate clicks',async()=>{
+ const page=adminPage(),req=page.run("role='owner';refreshUpdates()");page.reply(updatesStatus({installer:hostReady()}));await req;
+ assert.equal(page.element('host-update-apply').disabled,true);
+ await page.run("mutateHostUpdate('apply')");assert.equal(page.requests.length,1);
+ page.element('host-update-ack').checked=true;page.run("$('host-update-ack').onchange()");
+ const apply=page.run("mutateHostUpdate('apply')");await page.run("mutateHostUpdate('apply')");
+ assert.equal(page.requests.length,2);assert.equal(page.bodies[1].plan_id,hostReady().job.id);
+ page.reply({enabled:true,reachable:true,job:{...page.bodies[1],id:page.bodies[1].request_id,kind:'apply',state:'running'}});await apply;
+ assert.equal(page.element('host-update-confirm').hidden,true);
+});
+test('lost update response never triggers automatic reinstallation',async()=>{
+ const page=adminPage(),req=page.run("role='owner';refreshUpdates()");page.reply(updatesStatus({installer:hostReady()}));await req;
+ page.element('host-update-ack').checked=true;
+ const apply=page.run("mutateHostUpdate('apply')");page.replyAt(1,{detail:'Ответ потерян'},503);await apply;
+ await page.run("mutateHostUpdate('apply')");assert.equal(page.requests.length,2);
+ const status=page.run('refreshHostUpdate()');assert.equal(page.requests.at(-1),'/shop/api/admin/updates/operation');
+ page.reply({enabled:true,reachable:true,job:{kind:'apply',state:'succeeded',id:'done',tag:'v0.056'}});await status;
+ assert.match(page.element('host-update-status').textContent,/завершено/);
+});
+test('expired or replaced plans clear confirmation; logout ignores late host replies',async()=>{
+ const page=adminPage(),req=page.run("role='owner';refreshUpdates()");page.reply(updatesStatus({installer:hostReady({expires:1})}));await req;
+ assert.equal(page.element('host-update-confirm').hidden,true);
+ const status=page.run('refreshHostUpdate()');page.run("$('exit').onclick()");page.replyAt(1,hostReady());await status;
+ assert.equal(page.element('host-update-panel').hidden,true);assert.equal(page.element('host-update-ack').checked,false);
+});

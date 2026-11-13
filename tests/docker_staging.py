@@ -99,6 +99,49 @@ class Staging:
                 state=json.loads((self.root/'upgrade.json').read_text());phase={k:state.get(k) for k in ('phase','failure_stage','target')}
             raise StageError('upgrade '+command+' '+json.dumps(phase)+' '+self.scrub(detail)) from None
         result=json.loads(output.getvalue());check(result['phase']==expected,'Unexpected controller phase');return result
+    def host_update(self,temp):
+        """Настоящий HTTP → журнал службы → subprocess → Docker. Источник — checkout CI."""
+        spec=importlib.util.spec_from_file_location('staging_host_updater',self.args.source/'scripts/host_updater.py')
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        work=temp/'host-cache';work.mkdir(mode=0o700)
+        (self.root/'updater').mkdir(mode=0o700)
+        shutil.copyfile(self.password_file,self.root/'updater/backup-password');(self.root/'updater/backup-password').chmod(0o600)
+        controller=module.Controller(self.root,{'work':str(work)})
+        original=module.update_source.fetch
+        def fixture_source(tag,directory):
+            check(tag==version(self.args.source),'Unexpected host target')
+            directory.mkdir(mode=0o700);source=directory/'source'
+            shutil.copytree(self.args.source,source,ignore=shutil.ignore_patterns('.git','.venv','__pycache__','.pytest_cache','.env','*.db'))
+            return source,'f'*40
+        module.update_source.fetch=fixture_source
+        token=secrets.token_hex(32);self.secrets.append(token)
+        server=ThreadingHTTPServer(('127.0.0.1',0),module.handler(controller,token))
+        threading.Thread(target=server.serve_forever,daemon=True).start()
+        def request(action,payload=None,auth=True,expected=200):
+            headers={'Content-Type':'application/json'}
+            if auth:headers['Authorization']='Bearer '+token
+            req=Request('http://127.0.0.1:'+str(server.server_port)+'/v1/'+action,headers=headers,
+                        data=json.dumps(payload).encode() if payload is not None else None)
+            try:response=urlopen(req,timeout=10)
+            except HTTPError as error:response=error
+            with response:
+                check(response.status==expected,'Host API status mismatch')
+                return json.load(response)
+        try:
+            request('status',auth=False,expected=403)
+            payload={'request_id':str(uuid.uuid4()),'tag':version(self.args.source)}
+            request('plan',payload,expected=202);request('plan',payload,expected=202)
+            check(controller.process_one(),'Missing queued host plan')
+            status=request('status');check(status['job']['state']=='ready','Host plan failed')
+            apply={'request_id':str(uuid.uuid4()),'plan_id':payload['request_id'],'tag':payload['tag']}
+            request('apply',apply,expected=202);request('apply',apply,expected=202)
+            check(controller.process_one(),'Missing queued host update')
+            status=request('status');check(status['job']['state']=='succeeded','Host apply failed: '+json.dumps(status))
+            request('apply',apply,expected=202);check(not controller.process_one(),'Duplicate update was executed')
+            request('rollback',{**apply,'request_id':str(uuid.uuid4())},expected=409)
+            self.event('host_http_plan_apply_backup_activation_idempotency_verified')
+        finally:
+            server.shutdown();server.server_close();module.update_source.fetch=original
     def compare(self,expected,*,cleared):
         current=self.snapshot()
         old=expected.get('table_digests',{});new=current.get('table_digests',{})
@@ -203,7 +246,7 @@ class Staging:
         self.controller(self.args.source,'prepare','ready');self.compare(managed,cleared=True);self.http('/api/catalog',expected=503)
         self.controller(self.args.source,'rollback','rolled_back');self.compare(managed,cleared=managed_origin)
         self.event('managed_prepare_and_rollback_verified' if managed_origin else 'direct_prepare_and_rollback_verified')
-        self.controller(self.args.source,'prepare','ready');self.controller(self.args.source,'activate','committed');self.compare(managed,cleared=True)
+        self.host_update(temp);self.compare(managed,cleared=True)
         update_config={'enabled':False,'check_time':'22:30','timezone':'UTC','version':1}
         saved,_=self.http('/api/admin/updates/schedule',body=update_config,method='PUT')
         check(json.loads(saved)['settings']=={**update_config,'version':2},'Update schedule API mismatch')

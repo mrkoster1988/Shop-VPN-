@@ -24,6 +24,7 @@ function setUpdatesBusy(busy) {
   for (const id of ['updates-check','updates-refresh','updates-save','updates-reset','updates-enabled','updates-time','updates-timezone']) $(id).disabled = busy;
 }
 function clearUpdates() {
+  clearHostUpdate();
   updatesRequest++; updatesCache = null; updatesVersion = 0; updatesDirty = false;
   if (updatesTimer !== null) clearTimeout(updatesTimer);
   updatesTimer = null; setUpdatesBusy(false);
@@ -36,6 +37,7 @@ function clearUpdates() {
 }
 function renderUpdates(data) {
   updatesCache = data;
+  if (data.installer) renderHostUpdate(data.installer);
   const labels = {not_checked:'Ещё не проверено',current:'Установлена последняя версия',available:'Доступно обновление',
     ahead:'Установленная версия новее релиза',check_failed:'Не удалось проверить',stale:'Нужна свежая проверка',unknown_version:'Версия не определена'};
   $('updates-badge').textContent = data.checking ? 'Проверяем…' : labels[data.state] || 'Статус неизвестен';
@@ -126,9 +128,98 @@ $('updates-open').onclick = () => {
   if (role !== 'owner' || updatesBusy || !data?.can_open_guide || !links) return;
   $('updates-dialog-title').textContent = 'Обновление до '+data.release.tag;
   $('updates-guide-link').href = links.guide;
+  renderHostUpdate(hostUpdate);
   $('updates-dialog').showModal();
 };
 $('updates-dialog-close').onclick = () => $('updates-dialog').close();
+// Установка выполняется службой VPS; в браузере остаются только план и статус.
+let hostUpdate=null, hostUpdateRequest=0, hostUpdateBusy=false, hostUpdateTimer=null;
+let hostPlanIntent=null, hostApplyIntent=null, hostReviewedPlan=null;
+const hostStates={queued:'Запрос принят',running:'Операция выполняется',ready:'План готов',succeeded:'Обновление завершено',
+  failed:'Операция не выполнена',rolled_back:'Возвращена предыдущая версия',recovery_required:'Нужно восстановление на VPS',interrupted:'Служба перезапущена: проверьте состояние на VPS'};
+const hostPhases={building:'Собираем образ',stopping:'Останавливаем магазин',copying:'Создаём копию',verifying_backup:'Проверяем копию',
+  backed_up:'Копия проверена',migrating:'Проверяем данные новой версии',switching:'Запускаем новую версию',ready:'Версия готова к активации',
+  activating:'Активируем магазин',committed:'Версия активирована',rolled_back:'Откат завершён',activation_failed:'Активация не подтверждена',recovery_required:'Нужна проверка на VPS'};
+function clearHostUpdate(){
+  hostUpdateRequest++;hostUpdate=null;hostUpdateBusy=false;hostPlanIntent=null;hostApplyIntent=null;hostReviewedPlan=null;
+  if(hostUpdateTimer!==null && typeof clearTimeout==='function')clearTimeout(hostUpdateTimer);
+  hostUpdateTimer=null;$('host-update-panel').hidden=true;$('host-update-controls').hidden=true;
+  $('host-update-confirm').hidden=true;$('host-update-ack').checked=false;$('host-update-apply').disabled=true;
+  for(const id of ['host-update-status','host-update-detail','host-update-review','host-update-error'])$(id).textContent='';
+}
+function hostCanApply(){
+ const job=hostUpdate?.job;
+ return role==='owner' && !hostUpdateBusy && hostUpdate?.reachable && job?.kind==='plan' && job.state==='ready'
+   && job.can_apply && job.expires*1000>Date.now() && updatesCache?.can_open_guide && job.tag===updatesCache?.release?.tag;
+}
+function renderHostUpdate(data){
+ hostUpdate=data;
+ const enabled=!!data?.enabled,job=data?.job,active=['queued','running'].includes(job?.state);
+ $('host-update-panel').hidden=!enabled;$('host-update-controls').hidden=!enabled;$('updates-manual').hidden=enabled;
+ $('updates-action-note').textContent=enabled?'Сначала проверьте план, затем подтвердите установку.':'Обновление выполняется через команды на VPS. Кнопка открывает порядок действий.';
+ $('host-update-status').textContent=!data?.reachable?'Связь со службой не подтверждена. Принятая операция может продолжаться.':job?
+   (hostStates[job.state]||'Неизвестное состояние')+(job.phase?' · '+(hostPhases[job.phase]||'Проверка состояния'):''):'Служба подключена. Обновление не запущено.';
+ $('host-update-detail').textContent=job?'Версия: '+job.tag+' · операция '+job.id+'.'+
+   (job.activation_started?' Активация началась: возврат старой базы заблокирован.':'')+
+   (['interrupted','recovery_required'].includes(job.state)?' Используйте status службы на VPS; автоматического повтора нет.':''):'';
+ $('host-update-plan').disabled=hostUpdateBusy || !data?.reachable || active || !updatesCache?.can_open_guide;
+ if(hostReviewedPlan!==job?.id){hostReviewedPlan=job?.id;$('host-update-ack').checked=false;}
+ const ready=hostCanApply();$('host-update-confirm').hidden=!ready;
+ $('host-update-apply').disabled=!ready || !$('host-update-ack').checked;
+ $('host-update-review').textContent=job?.kind==='plan'&&job.state==='ready'?
+  job.previous+' → '+job.tag+' · коммит '+job.commit+' · план до '+updatesDate(job.expires,'Europe/Moscow')+'.'+(ready?'':' План сейчас недоступен для установки; подготовьте новый.'):
+  job ? (hostStates[job.state]||'Проверяем состояние') : '';
+ scheduleHostPoll();
+}
+function scheduleHostPoll(){
+ if(hostUpdateTimer!==null && typeof clearTimeout==='function')clearTimeout(hostUpdateTimer);
+ hostUpdateTimer=null;
+ if(role!=='owner'||!hostUpdate?.enabled||typeof setTimeout!=='function')return;
+ hostUpdateTimer=setTimeout(()=>{hostUpdateTimer=null;void refreshHostUpdate();},5000);
+}
+async function refreshHostUpdate(){
+ if(role!=='owner'||hostUpdateBusy)return;
+ const request=++hostUpdateRequest,epoch=authEpoch;
+ try{
+  const data=await api('updates/operation');if(request!==hostUpdateRequest||epoch!==authEpoch)return;
+  renderHostUpdate(data);
+ }catch(error){
+  if(request!==hostUpdateRequest||epoch!==authEpoch)return;
+  renderHostUpdate({...hostUpdate,reachable:false});
+  $('host-update-error').textContent='Связь с магазином прервана. Дождитесь запуска и войдите снова при необходимости. Принятая службой операция продолжается; повторная установка не отправлена.';
+ }
+}
+async function mutateHostUpdate(action){
+ if(role!=='owner'||hostUpdateBusy||!hostUpdate?.reachable)return;
+ let data;
+ if(action==='plan'){
+  if(!updatesCache?.can_open_guide)return;
+  const tag=updatesCache.release.tag;
+  if(!hostPlanIntent||hostPlanIntent.tag!==tag||hostUpdate.job?.id===hostPlanIntent.request_id)hostPlanIntent={tag,request_id:crypto.randomUUID()};
+  data=hostPlanIntent;
+ }else{
+  if(!hostCanApply()||!$('host-update-ack').checked)return;
+  const job=hostUpdate.job;
+  if(!hostApplyIntent||hostApplyIntent.plan_id!==job.id)hostApplyIntent={plan_id:job.id,tag:job.tag,request_id:crypto.randomUUID()};
+  data=hostApplyIntent;
+ }
+ const request=++hostUpdateRequest,epoch=authEpoch;hostUpdateBusy=true;
+ renderHostUpdate(hostUpdate);$('host-update-error').textContent='';
+ try{
+  const result=await api('updates/'+action,{method:'POST',data});
+  if(request!==hostUpdateRequest||epoch!==authEpoch)return;
+  hostUpdate=result;
+ }catch(error){
+  if(request!==hostUpdateRequest||epoch!==authEpoch)return;
+  hostUpdate={...hostUpdate,reachable:false};$('host-update-error').textContent=error.message+' Сначала проверьте ход операции.';
+ }finally{
+  if(request===hostUpdateRequest&&epoch===authEpoch){hostUpdateBusy=false;renderHostUpdate(hostUpdate);}
+ }
+}
+$('host-update-refresh').onclick=()=>refreshHostUpdate();
+$('host-update-plan').onclick=()=>mutateHostUpdate('plan');
+$('host-update-apply').onclick=()=>mutateHostUpdate('apply');
+$('host-update-ack').onchange=()=>{$('host-update-apply').disabled=!hostCanApply()||!$('host-update-ack').checked;};
 let diagnosticsRequest=0;
 let adsFinanceRequest=0,adsFinancePage=1,adsExpenseIntents=new Map();
 let adsBookingIntents=new Map(),adsBookingRequest=0,adsBookingPage=1;

@@ -416,3 +416,12 @@ def test_failed_archive_stream_removes_partial_output(tmp_path):
     target=tmp_path/'backup.pvb'
     with pytest.raises(subprocess.CalledProcessError):u.receive_archive([sys.executable,'-c',"import sys;sys.stdout.buffer.write(b'partial');sys.exit(1)"],target)
     assert not target.exists() and not list(tmp_path.glob('.archive-*'))
+
+
+def test_host_plan_fingerprint_checked_under_install_lock(installation):
+    root,source,calls,_,_=installation
+    signature=u.installation_fingerprint(root)
+    (root/'.env').write_text('changed-after-plan')
+    with pytest.raises(ValueError,match='изменилась'):
+        u.main(['prepare','--dir',str(root),'--source',str(source),'--expected-fingerprint',signature])
+    assert not calls and not (root/'upgrade.json').exists()

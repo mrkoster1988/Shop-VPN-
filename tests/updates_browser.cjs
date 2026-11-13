@@ -6,7 +6,7 @@ fs.mkdirSync(output,{recursive:true});
 (async()=>{
  const browser=await chromium.launch({headless:true,args:['--no-sandbox']});
  const page=await browser.newPage({viewport:{width:1100,height:900}});
- const errors=[],writes=[];let networkFailed=false;
+ const errors=[],writes=[];let networkFailed=false,hostState=null;const hostWrites=[];
  let status={current_version:'v0.055',state:'available',checking:false,
   settings:{enabled:true,check_time:'21:00',timezone:'Europe/Moscow',version:1},scheduler_running:true,
   last_attempt:1794502800,last_success:1794502800,next_check:1794506400,error_code:null,stale:false,
@@ -18,6 +18,13 @@ fs.mkdirSync(output,{recursive:true});
   if(url.hostname!=='pushok.test')return route.abort();
   if(p==='/shop/admin')return route.fulfill({contentType:'text/html',body:fs.readFileSync(root+'/app/static/admin.html','utf8').replaceAll('__BASE_PATH__','/shop')});
   if(p.startsWith('/shop/static/'))return route.fulfill({contentType:p.endsWith('.js')?'text/javascript':'text/css',body:fs.readFileSync(root+'/app/static/'+p.split('/').pop(),'utf8')});
+  if(p==='/shop/api/admin/updates/operation')return route.fulfill({json:hostState});
+  if(p==='/shop/api/admin/updates/plan'){
+   const data=request.postDataJSON();hostWrites.push(data);hostState={enabled:true,reachable:true,job:{id:data.request_id,kind:'plan',state:'ready',tag:data.tag,previous:'v0.055',commit:'a'.repeat(40),expires:Math.floor(Date.now()/1000)+600,can_apply:true}};return route.fulfill({json:hostState});
+  }
+  if(p==='/shop/api/admin/updates/apply'){
+   const data=request.postDataJSON();hostWrites.push(data);hostState={enabled:true,reachable:true,job:{id:data.request_id,plan_id:data.plan_id,kind:'apply',state:'running',tag:data.tag,phase:'copying'}};return route.fulfill({json:hostState});
+  }
   if(p==='/shop/api/admin/updates')return route.fulfill({json:status});
   if(p==='/shop/api/admin/updates/schedule'){
    const body=request.postDataJSON();writes.push(body);status={...status,settings:{...body,version:body.version+1}};
@@ -29,7 +36,7 @@ fs.mkdirSync(output,{recursive:true});
   }
   return route.fulfill({status:401,json:{detail:'Fixture only'}});
  });
- await page.goto('http://pushok.test/shop/admin');
+ await page.goto('https://pushok.test/shop/admin');
  await page.evaluate(async()=>{role='owner';document.getElementById('dashboard').hidden=false;document.getElementById('admin-login').hidden=true;await refreshUpdates();});
  assert.equal(await page.locator('#updates-time').inputValue(),'21:00');
  assert.equal(await page.locator('#updates-timezone').inputValue(),'Europe/Moscow');
@@ -52,7 +59,22 @@ fs.mkdirSync(output,{recursive:true});
  await page.waitForFunction(()=>document.getElementById('updates-status').textContent.includes('Нет связи'));
  assert.equal(await page.locator('#updates-open').isVisible(),false);
  assert.equal(await page.locator('#updates-latest').textContent(),'v0.056');
+ hostState={enabled:true,reachable:true,job:null};status={...status,state:'available',error_code:null,stale:false,can_open_guide:true,installer:hostState};
+ await page.evaluate(()=>refreshUpdates());await page.locator('#updates-open').click();
+ assert.equal(await page.locator('#updates-manual').isVisible(),false);
+ await page.locator('#host-update-plan').click();await page.locator('#host-update-confirm').waitFor({state:'visible'});
+ assert.equal(await page.locator('#host-update-apply').isDisabled(),true);
+ assert.ok(await page.evaluate(()=>{const e=document.getElementById('updates-dialog');return e.scrollWidth<=e.clientWidth;}));
+ await page.locator('#updates-dialog').screenshot({path:path.join(output,'host-update-confirm-mobile.png')});
+ if(process.env.HOST_UI_LOG_PREVIEWS==='1')console.log('HOST_PREVIEW mobile '+(await page.locator('#updates-dialog').screenshot({type:'jpeg',quality:50})).toString('base64'));
+ await page.locator('#host-update-ack').check();await page.locator('#host-update-apply').click();
+ await page.waitForFunction(()=>document.getElementById('host-update-status').textContent.includes('Создаём копию'));
+ assert.equal(hostWrites.length,2);assert.equal(hostWrites[1].plan_id,hostWrites[0].request_id);
+ hostState={...hostState,job:{...hostState.job,state:'succeeded',phase:'committed'}};
+ await page.locator('#updates-dialog-close').click();await page.locator('#host-update-refresh').click();
+ await page.waitForFunction(()=>document.getElementById('host-update-status').textContent.includes('завершено'));
+ await page.setViewportSize({width:1100,height:900});await page.locator('#updates-panel').screenshot({path:path.join(output,'host-update-completed-desktop.png')});
  assert.deepEqual(errors,[]);
- console.log(JSON.stringify({status:'passed',viewports:[1100,390],checks:['default schedule','safe notes','schedule save','pinned manual guide','mobile layout','failure keeps previous release without update action','no browser errors']}));
+ console.log(JSON.stringify({status:'passed',viewports:[1100,390],checks:['default schedule','safe notes','schedule save','pinned manual guide','mobile layout','failure keeps previous release without update action','host plan and explicit confirmation','host progress and completion','no browser errors']}));
  await browser.close();
 })().catch(e=>{console.error(e);process.exit(1)});

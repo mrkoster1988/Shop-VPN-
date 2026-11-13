@@ -21,6 +21,7 @@ from urllib.parse import urlsplit
 spec=importlib.util.spec_from_file_location('shop_installer',Path(__file__).with_name('install.py'))
 i=importlib.util.module_from_spec(spec);spec.loader.exec_module(i)
 VERSION='v0.055'
+HOST_UPDATER_PROTOCOL=1
 SUPPORTED={'v0.021','v0.022','v0.023','v0.024','v0.025','v0.026','v0.027','v0.028','v0.029','v0.030','v0.031','v0.032','v0.033','v0.034','v0.035','v0.036','v0.037','v0.038','v0.039','v0.040','v0.041','v0.042','v0.043','v0.044','v0.045','v0.046','v0.047','v0.048','v0.049','v0.050','v0.051','v0.052','v0.053','v0.054'}
 IGNORE=shutil.ignore_patterns('.git','.env','.env.*','data','wg-data','.venv','__pycache__','.pytest_cache','backups','upgrades','*.pvb','*.db','*.db-wal','*.db-shm','*.zip')
 CHECK_KEY="""import os,sys
@@ -65,6 +66,11 @@ def receive_archive(args,path):
 
 
 def sha(raw):return hashlib.sha256(raw).hexdigest()
+
+
+def installation_fingerprint(root):
+    values={name:sha(private_file(root/name)) for name in ('.env','installer.json','compose.install.json')}
+    return sha(json.dumps(values,sort_keys=True,separators=(',',':')).encode())
 
 
 def private_file(path):
@@ -247,7 +253,8 @@ def plan(root,source):
     settings,config=load(root);check_source(source,root)
     terminal(root)
     return {'previous':settings['version'],'target':VERSION,'url':settings['url'],'downtime':True,
-            'new_volume':True,'activation':'explicit','backup':'encrypted','plan_only':True}
+            'new_volume':True,'activation':'explicit','backup':'encrypted','plan_only':True,
+            'host_updater_protocol':HOST_UPDATER_PROTOCOL}
 
 
 def health(settings):
@@ -380,12 +387,16 @@ def main(argv=None):
     parser=argparse.ArgumentParser(description='Обновление v0.021–v0.054 → '+VERSION+' в новый volume, с резервной копией и отдельной активацией')
     parser.add_argument('command',choices=['plan','prepare','status','activate','rollback'])
     parser.add_argument('--dir',default='/opt/pushok-vpn');parser.add_argument('--source',type=Path,default=Path(__file__).resolve().parents[1]);parser.add_argument('--password-file')
+    parser.add_argument('--expected-fingerprint', help='Контроль плана службы под общей блокировкой установки')
     args=parser.parse_args(argv);root=i.install_path(args.dir);source=args.source.resolve()
     if args.command=='plan':result=plan(root,source)
     elif args.command=='status':result=report(root)
     else:
         if os.geteuid()!=0:raise ValueError('Нужны права root')
         with locked(root):
+            if args.expected_fingerprint and (args.command!='prepare' or not re.fullmatch(r'[a-f0-9]{64}',args.expected_fingerprint)
+                    or installation_fingerprint(root)!=args.expected_fingerprint):
+                raise ValueError('Установка изменилась после плана; подготовка не начата')
             if args.command=='prepare':result=prepare(root,source,password(args))
             elif args.command=='activate':result=activate(root,state(root))
             else:result=rollback(root,state(root))
