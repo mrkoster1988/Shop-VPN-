@@ -9,6 +9,10 @@ on:
       - 'tests/test_export_pushok_emoji.py'
       - 'scripts/build_pushok_emoji_manifest.py'
       - 'tests/test_pushok_emoji_manifest.py'
+      - 'scripts/sync_pushok_emoji.py'
+      - 'tests/test_sync_pushok_emoji.py'
+      - 'app/pushok_button_icons.py'
+      - 'tests/test_button_icon_delivery.py'
       - '.github/workflows/pushok-icons.yml'
 permissions:
   contents: read
@@ -26,7 +30,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install local render dependencies
-        run: python -m pip install 'CairoSVG==2.7.1' 'Pillow==11.3.0'
+        run: python -m pip install 'CairoSVG==2.7.1' 'Pillow==11.3.0' 'pytest==9.2.0'
+      - name: Test published pack discovery without bot secrets or network
+        run: python -m pytest -q tests/test_sync_pushok_emoji.py tests/test_pushok_button_icons.py tests/test_prepare_pushok_emoji_ids.py
       - name: Validate icon source
         run: python -m unittest discover -s tests -p test_export_pushok_emoji.py -v
       - name: Export PNG icons for Telegram
