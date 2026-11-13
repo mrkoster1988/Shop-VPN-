@@ -182,3 +182,23 @@ def test_expanded_stream_limit_includes_archive_headers(tmp_path,monkeypatch):
     monkeypatch.setattr(h.update_source,'MAX_EXPANDED',1024)
     with pytest.raises(ValueError,match='expanded_archive_limit'):
         h.update_source.extract(archive,tmp_path/'out')
+
+
+def test_child_docker_cache_stays_in_writable_service_directory(tmp_path,monkeypatch):
+    root=tmp_path/'installed';(root/'updater').mkdir(parents=True)
+    captured=[]
+    def process(args,**kwargs):
+        captured.append((args,kwargs['env']))
+        kwargs['stdout'].write(b'{"phase":"ready"}')
+        class Child:
+            returncode=0
+            def wait(self,**kwargs):pass
+        return Child()
+    monkeypatch.setattr(h.subprocess,'Popen',process)
+    monkeypatch.setenv('HTTP_PROXY','http://private-proxy')
+    monkeypatch.setenv('PUSHOK_BACKUP_PASSWORD','do-not-inherit')
+    assert h.run_upgrade(tmp_path/'source',root,'plan')=={'phase':'ready'}
+    env=captured[0][1]
+    assert env['DOCKER_CONFIG']==str(root/'updater/docker-client')
+    assert (root/'updater/docker-client').stat().st_mode&0o777==0o700
+    assert 'HTTP_PROXY' not in env and 'PUSHOK_BACKUP_PASSWORD' not in env

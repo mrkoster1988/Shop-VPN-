@@ -61,10 +61,13 @@ def run_upgrade(source, root, command, password_file=None, expected=None):
         args += ['--password-file', str(password_file)]
     if expected:
         args += ['--expected-fingerprint', hashlib.sha256(json.dumps(expected,sort_keys=True,separators=(',',':')).encode()).hexdigest()]
+    docker_config = root / 'updater/docker-client'
+    docker_config.mkdir(mode=0o700, exist_ok=True)
+    private_dir(docker_config)
     # Вывод Docker не публикуется; никаких команд/путей из HTTP-запроса.
     with tempfile.TemporaryFile() as output:
         environment = {'PATH':'/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
-                       'LANG':'C.UTF-8', 'PYTHONDONTWRITEBYTECODE':'1'}
+                       'LANG':'C.UTF-8', 'PYTHONDONTWRITEBYTECODE':'1', 'DOCKER_CONFIG':str(docker_config)}
         if os.getenv('SSL_CERT_FILE'):
             environment['SSL_CERT_FILE'] = os.environ['SSL_CERT_FILE']
         proc = subprocess.Popen(args, stdout=output, stderr=subprocess.DEVNULL, start_new_session=True,
