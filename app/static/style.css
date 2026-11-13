@@ -114,3 +114,10 @@ html[data-telegram-theme="dark"] .hero h1 em{color:#183c30}
 /* Нижнее меню не наследует заливку основной кнопки действия. */
 html[data-telegram-theme="dark"] #miniapp-nav :is(a,button){background:transparent;color:var(--muted)}
 html[data-telegram-theme="dark"] #miniapp-nav [aria-current="page"]{background:#233329;color:var(--ink)}
+
+#host-update-panel{margin-top:20px;padding-top:16px;border-top:1px solid var(--line)}
+#host-update-review,#host-update-detail{overflow-wrap:anywhere}
+#host-update-confirm{margin:18px 0;padding:16px;border:1px solid var(--line);border-radius:14px;background:var(--bg)}
+#host-update-confirm label{display:flex;align-items:flex-start;gap:10px;line-height:1.5}
+#host-update-ack{width:auto;flex-shrink:0;margin-top:4px}
+#host-update-apply{margin-top:12px}
