@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "observed_at_utc": "2026-11-22 18:50:39 UTC",
+  "repository": "mrkoster1988/Shop-VPN-",
+  "commit_sha": "63c032faae578362411a2d8297f09034596d9290",
+  "sources": {
+    "workflow_runs": "https://api.github.com/repos/mrkoster1988/Shop-VPN-/actions/runs?head_sha=63c032faae578362411a2d8297f09034596d9290&per_page=20",
+    "release": "https://api.github.com/repos/mrkoster1988/Shop-VPN-/releases/tags/v0.056",
+    "tag": "https://api.github.com/repos/mrkoster1988/Shop-VPN-/git/ref/tags/v0.056"
+  },
+  "github_workflows": [
+    {
+      "id": 45056867109,
+      "name": "CI",
+      "url": "https://github.com/mrkoster1988/Shop-VPN-/actions/runs/45056867109",
+      "head_sha": "63c032faae578362411a2d8297f09034596d9290",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "updated_at": "2026-11-22T18:49:37Z",
+      "jobs": [
+        {
+          "id": 137313919547,
+          "name": "panel-wizard-browser",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/mrkoster1988/Shop-VPN-/actions/runs/45056867109/job/137313919547"
+        },
+        {
+          "id": 137313919705,
+          "name": "tests",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/mrkoster1988/Shop-VPN-/actions/runs/45056867109/job/137313919705"
+        },
+        {
+          "id": 137313919745,
+          "name": "installer-staging",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/mrkoster1988/Shop-VPN-/actions/runs/45056867109/job/137313919745"
+        },
+        {
+          "id": 137313919800,
+          "name": "docker-staging",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/mrkoster1988/Shop-VPN-/actions/runs/45056867109/job/137313919800"
+        },
+        {
+          "id": 137313919804,
+          "name": "wireguard-staging",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/mrkoster1988/Shop-VPN-/actions/runs/45056867109/job/137313919804"
+        }
+      ],
+      "test_summary": {
+        "pytest_passed": 1269,
+        "pytest_subtests_passed": 14,
+        "node_passed": 184,
+        "node_failed": 0,
+        "log_summary": [
+          "2026-11-22T18:47:49.5783991Z 1269 passed, 1 warning, 14 subtests passed in 127.25s (0:02:07)",
+          "2026-11-22T18:47:50.5895657Z ℹ tests 184",
+          "2026-11-22T18:47:50.5896052Z ℹ pass 184",
+          "2026-11-22T18:47:50.5896243Z ℹ fail 0"
+        ]
+      }
+    },
+    {
+      "id": 45056867100,
+      "name": "Release",
+      "url": "https://github.com/mrkoster1988/Shop-VPN-/actions/runs/45056867100",
+      "head_sha": "63c032faae578362411a2d8297f09034596d9290",
+      "status": "completed",
+      "conclusion": "success",
+      "attempt": 1,
+      "updated_at": "2026-11-22T18:49:23Z",
+      "jobs": [
+        {
+          "id": 137313919848,
+          "name": "checks / installer-staging",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/mrkoster1988/Shop-VPN-/actions/runs/45056867100/job/137313919848"
+        },
+        {
+          "id": 137313920083,
+          "name": "checks / docker-staging",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/mrkoster1988/Shop-VPN-/actions/runs/45056867100/job/137313920083"
+        },
+        {
+          "id": 137313920098,
+          "name": "checks / wireguard-staging",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/mrkoster1988/Shop-VPN-/actions/runs/45056867100/job/137313920098"
+        },
+        {
+          "id": 137313920143,
+          "name": "checks / panel-wizard-browser",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/mrkoster1988/Shop-VPN-/actions/runs/45056867100/job/137313920143"
+        },
+        {
+          "id": 137313920255,
+          "name": "checks / tests",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/mrkoster1988/Shop-VPN-/actions/runs/45056867100/job/137313920255"
+        },
+        {
+          "id": 137315038421,
+          "name": "release",
+          "status": "completed",
+          "conclusion": "success",
+          "url": "https://github.com/mrkoster1988/Shop-VPN-/actions/runs/45056867100/job/137315038421"
+        }
+      ],
+      "test_summary": {
+        "pytest_passed": 1269,
+        "pytest_subtests_passed": 14,
+        "node_passed": 184,
+        "node_failed": 0,
+        "log_summary": [
+          "2026-11-22T18:47:54.9128338Z 1269 passed, 1 warning, 14 subtests passed in 140.37s (0:02:20)",
+          "2026-11-22T18:47:55.9454789Z ℹ tests 184",
+          "2026-11-22T18:47:55.9455851Z ℹ pass 184",
+          "2026-11-22T18:47:55.9456283Z ℹ fail 0"
+        ]
+      }
+    }
+  ],
+  "release": {
+    "id": 454669427,
+    "tag": "v0.056",
+    "name": "v0.056",
+    "url": "https://github.com/mrkoster1988/Shop-VPN-/releases/tag/v0.056",
+    "target_commitish": "63c032faae578362411a2d8297f09034596d9290",
+    "published_at": "2026-11-22T18:49:20Z",
+    "draft": false,
+    "prerelease": false,
+    "assets": []
+  },
+  "git_tag": {
+    "ref": "refs/tags/v0.056",
+    "object_type": "commit",
+    "commit_sha": "63c032faae578362411a2d8297f09034596d9290"
+  },
+  "local_checks": {
+    "full_pytest": {
+      "command": "python -m pytest -q",
+      "passed": 1269,
+      "subtests_passed": 14,
+      "duration_seconds": 75.65,
+      "warnings": 1,
+      "warning_summary": "Existing FastAPI/Starlette httpx deprecation warning; no failed tests",
+      "logSha256": "a95ad1b6f60bb6473b95c4549462a622e42a4488bcaf73dd17a5e0881ad7a1f1"
+    },
+    "targeted_python": {
+      "command": "python -m pytest -q tests/test_flow_import.py tests/test_subscription_links.py tests/test_installer.py",
+      "passed": 82
+    },
+    "targeted_node": {
+      "command": "node --test tests/test_customer_ui.cjs tests/test_flow_import_ui.cjs",
+      "passed": 85
+    },
+    "diff_check": "passed before publication"
+  },
+  "limitations": [
+    "No live VPS deployment performed by this task.",
+    "No live payment acceptance performed by this task.",
+    "Physical Android Telegram-to-Flow handoff and real Flow tunnel still require phone acceptance."
+  ],
+  "actions_taken": "Read-only GitHub monitoring; no workflow reruns, bot messages or VPS deployments."
+}
