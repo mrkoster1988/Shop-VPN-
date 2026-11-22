@@ -34,10 +34,19 @@ def test_env_is_private_valid_and_does_not_interpolate(tmp_path):
     i.atomic_text(path,i.environment({'url':'https://example.com/shop','support':"Support $HOME ${TOKEN} 'yes' \\ literal"}))
     env=dotenv_values(path,interpolate=False)
     assert env['SUPPORT_TEXT']=="Support $HOME ${TOKEN} 'yes' \\ literal"
+    assert env['BOT_USERNAME']=='pushok_app' and env['BOT_TOKEN']==''
     assert len(env['ADMIN_TOKEN'])>=32 and len(env['WG_AGENT_TOKEN'])>=32
     Fernet(env['ENCRYPTION_KEY'].encode())
     assert path.stat().st_mode & 0o777==0o600
     with pytest.raises(ValueError):i.quote_env('bad\nvalue')
+
+
+def test_installer_preserves_explicit_bot_identity(tmp_path):
+    path=tmp_path/'.env'
+    i.atomic_text(path,i.environment({'url':'https://example.com/shop','support':'Support'},
+        bot_token='123:private-token',bot_username='another_bot'))
+    env=dotenv_values(path,interpolate=False)
+    assert env['BOT_USERNAME']=='another_bot' and env['BOT_TOKEN']=='123:private-token'
 
 @pytest.mark.parametrize('info',[{'ID':'debian','VERSION_ID':'12'},{'ID':'ubuntu','VERSION_ID':'20.04'}])
 def test_unsupported_os_fails_before_changes(info):

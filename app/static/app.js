@@ -13,7 +13,7 @@ let adsPolicy=null,adsPage=1,adsRequest=0,adsMutation=0,adsIntent=new Map();
 let passwordOperation=null, logoutPending=false, supportRequest=0, selectedSupportCase=null;
 let paymentOrder=null,paymentRequest=0,paymentBusy=false;
 let catalog, me, protocol = 'xui', selectedPlan, checkoutTrial=null, register = false, toastTimer;
-let linkSubscription=null, linkRequest=0, linkState=null;
+let linkSubscription=null, linkRequest=0, linkState=null, flowLaunchUrl=null;
 let sessionEpoch = 0, meRequest = 0, connectionRequest = 0, connection = null, connectionTimer;
 let deviceSubscription=null, deviceRequest=0, deviceIntent=null, deviceCache=[], rotationIntents=new Map(), primaryRotationIntents=new Map();
 async function api(path, data, method) {
@@ -171,6 +171,13 @@ async function refreshMe() {
       $('config-summary').textContent=protocolName(current.protocol)+' · доступ до '+date(connection.expires);
       scheduleConnectionExpiry();
     }
+  }
+  if (linkSubscription) {
+    const current = me?.subscriptions.find(s=>s.id===linkSubscription);
+    if (!current || current.state!=='active' || current.expires*1000<=Date.now() ||
+        (current.primary_key_state || 'active')!=='active') {
+      $('link-dialog').close(); clearLink();
+    } else if (linkState) renderFlowLink(linkState, current);
   }
   if (me) renderAccount();
   if (deviceSubscription) await refreshDevices();
@@ -492,8 +499,27 @@ async function beginTrial() {
   $('terms-text').textContent=catalog.terms;$('accept-terms').checked=false;$('accept-terms').required=true;show('checkout-dialog');
 }
 $('trial-start').onclick=()=>beginTrial().catch(e=>toast(e.message));
+function clearFlowLink() {
+  flowLaunchUrl=null;
+  $('flow-open').disabled=true;
+  $('flow-open-note').textContent='Для Pushok Flow 0.41 и новее нужна включённая HTTPS-ссылка подписки.';
+}
+function flowUrlFor(state, parent) {
+  if (typeof PushokFlowLinks==='undefined' || state?.enabled!==true || parent?.protocol!=='xui' ||
+      parent.state!=='active' || !Number.isFinite(parent.expires) || parent.expires*1000<=Date.now() ||
+      (parent.primary_key_state || 'active')!=='active') return null;
+  return PushokFlowLinks.landingUrl(state.url, 'Подписка Pushok', location.origin, basePath);
+}
+function renderFlowLink(state, parent) {
+  flowLaunchUrl=flowUrlFor(state,parent);
+  $('flow-open').disabled=!flowLaunchUrl;
+  $('flow-open-note').textContent=flowLaunchUrl
+    ? 'Откроется страница передачи подписки. Подтвердите добавление в Pushok Flow.'
+    : 'Для Pushok Flow 0.41 и новее нужна включённая HTTPS-ссылка подписки.';
+}
 function clearLink() {
   linkRequest++;linkSubscription=null;linkState=null;
+  clearFlowLink();
   $('link-value').value='';$('link-status').textContent='';$('link-follow').checked=false;
   for(const id of ['copy-link','link-enable','link-rotate','link-disable'])$(id).disabled=true;
 }
@@ -501,6 +527,7 @@ function renderLink(state) {
   linkState=state;$('link-value').value=state.url || '';$('link-follow').checked=state.follow_rotation;
   $('copy-link').disabled=!state.enabled;$('link-rotate').disabled=!state.enabled;$('link-disable').disabled=!state.enabled;
   const parent=me?.subscriptions.find(s=>s.id===linkSubscription);
+  renderFlowLink(state,parent);
   $('link-enable').disabled=!parent || parent.state!=='active' || parent.expires*1000<=Date.now() || (parent.primary_key_state || 'active')!=='active';
   $('link-enable').textContent=state.enabled?'Сохранить настройки':'Создать ссылку';
   $('link-status').textContent=state.enabled?'Ссылка включена. Импортируйте её как URL подписки.':'Ссылка отключена.';
@@ -511,7 +538,7 @@ async function openLink(sid) {
 async function refreshLink() {
   if(!linkSubscription)return;
   const sid=linkSubscription,request=++linkRequest;
-  linkState=null;$('link-value').value='';
+  linkState=null;$('link-value').value='';clearFlowLink();
   for(const id of ['copy-link','link-enable','link-rotate','link-disable'])$(id).disabled=true;
   const state=await api('/api/subscriptions/'+encodeURIComponent(sid)+'/link');
   if(request===linkRequest && $('link-dialog').open)renderLink(state);
@@ -520,14 +547,33 @@ async function changeLink(action) {
   if(!linkSubscription || !linkState)return;
   const sid=linkSubscription,version=linkState.version,request=++linkRequest;
   for(const id of ['copy-link','link-enable','link-rotate','link-disable'])$(id).disabled=true;
-  $('link-value').value='';
+  linkState=null;$('link-value').value='';clearFlowLink();
   try {
     const state=await api('/api/subscriptions/'+encodeURIComponent(sid)+'/link',{action,version,follow_rotation:$('link-follow').checked},'PUT');
     if(request!==linkRequest || !$('link-dialog').open)return;
     renderLink(state);await refreshMe();
-  } catch(e) { if(request===linkRequest) $('link-status').textContent=e.message+' Нажмите «Обновить» перед повтором.'; }
+  } catch(e) {
+    if(request===linkRequest) {
+      linkState=null;$('link-value').value='';clearFlowLink();
+      for(const id of ['copy-link','link-enable','link-rotate','link-disable'])$(id).disabled=true;
+      $('link-status').textContent=e.message+' Нажмите «Обновить» перед повтором.';
+    }
+  }
 }
 $('link-dialog').addEventListener('close',clearLink);
+$('flow-open').onclick=()=>{
+  const parent=me?.subscriptions.find(s=>s.id===linkSubscription);
+  const target=flowUrlFor(linkState,parent);
+  if (!target || target!==flowLaunchUrl || !$('link-dialog').open || $('flow-open').disabled) {
+    clearFlowLink();return;
+  }
+  try {
+    if (telegramApp?.initData && typeof telegramApp.openLink==='function') {
+      // Telegram Mini Apps accept HTTP(S) openLink URLs; the landing owns the explicit native-app action.
+      telegramApp.openLink(target,{try_instant_view:false});
+    } else window.open(target,'_blank','noopener,noreferrer');
+  } catch { toast('Не удалось открыть страницу. Скопируйте ссылку подписки и добавьте её в Pushok Flow.'); }
+};
 $('link-form').onsubmit=event=>{event.preventDefault();changeLink('enable');};
 $('link-refresh').onclick=()=>refreshLink().catch(e=>toast(e.message));
 $('link-rotate').onclick=()=>{if(window.confirm('Заменить ссылку? Прежний URL перестанет работать. Его нужно заменить в VPN-клиенте.'))changeLink('rotate');};

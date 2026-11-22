@@ -19,7 +19,7 @@ import time
 from urllib.parse import urlsplit
 from urllib.request import urlopen
 
-VERSION = 'v0.055'
+VERSION = 'v0.056'
 
 
 def run(args, **kwargs):
@@ -93,6 +93,7 @@ def quote_env(value):
 
 
 def environment(settings, bot_token='',bot_username='',terms=''):
+    bot_username=bot_username or 'pushok_app'
     if bot_token and not re.fullmatch(r'[0-9]+:[A-Za-z0-9_-]+',bot_token):raise ValueError('Некорректный токен Telegram')
     if bot_username and not re.fullmatch(r'[A-Za-z0-9_]{5,32}',bot_username):raise ValueError('Некорректное имя бота')
     values={'PUBLIC_URL':settings['url'],'ADMIN_TOKEN':secrets.token_urlsafe(48),
@@ -343,11 +344,12 @@ def main(argv=None):
         if not (root/'.env').exists():
             bot='';username='';terms=''
             if not args.yes:
-                print('Токен выдаёт @BotFather командой /newbot. Не отправляйте его в чат или поддержку.')
+                print('Токен выбранного бота выдаёт @BotFather. Основной бот проекта — @pushok_app.')
+                print('Не отправляйте токен в чат или поддержку.')
                 print('Можно нажать Enter и подключить бота позже через настройки .env.')
                 bot=ask('Токен Telegram-бота (Enter — настроить позже)',secret=True)
                 if bot:
-                    username=ask('Имя бота без @');terms=ask('Условия продажи для Telegram (можно настроить позже)')
+                    username=ask('Имя бота без @','pushok_app');terms=ask('Условия продажи для Telegram (можно настроить позже)')
             atomic_text(root/'.env',environment(settings,bot,username,terms))
         else:os.chmod(root/'.env',0o600)
         atomic_text(root/'compose.install.json',compose(settings,root))

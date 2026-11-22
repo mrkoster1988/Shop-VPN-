@@ -122,6 +122,10 @@ async def safety(request, call_next):
     response.headers['Referrer-Policy'] = 'no-referrer'
     if path.startswith(('/api/', '/login','/sub/')):
         response.headers['Cache-Control'] = 'no-store'
+    if path == '/static/flow-import.html':
+        response.headers['Cache-Control'] = 'no-store'
+        response.headers['X-Frame-Options'] = 'DENY'
+        response.headers['Content-Security-Policy'] = "default-src 'none'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; connect-src 'none'; object-src 'none'; frame-ancestors 'none'"
     return response
 
 class Credentials(BaseModel):

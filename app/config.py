@@ -19,7 +19,7 @@ BASE_PATH = _public.path
 COOKIE_PATH = BASE_PATH + '/'
 SECURE_COOKIE = _public.scheme == 'https'
 BOT_TOKEN = os.getenv('BOT_TOKEN', '')
-BOT_USERNAME = os.getenv('BOT_USERNAME', '').lstrip('@')
+BOT_USERNAME = (os.getenv('BOT_USERNAME') or 'pushok_app').lstrip('@')
 ADMIN_TOKEN = os.getenv('ADMIN_TOKEN', '')
 PAYMENT_MODE = os.getenv('PAYMENT_MODE', 'manual')
 PARTNER_WEBHOOK_SECRET = os.getenv('PARTNER_WEBHOOK_SECRET', '')

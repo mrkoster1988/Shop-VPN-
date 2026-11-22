@@ -9,7 +9,8 @@ async function customerPage(options={}) {
   let timerId=0,elementId=0;
   const catalog={protocols:[{id:'xui',name:'VLESS',available:true},{id:'wg',name:'WireGuard',available:true}],plans:[{id:'month',name:'Месяц',days:30,price:199,version:1}],currency:'RUB',support:'Поддержка: @support',bot_username:'',terms:'Условия',payment_mode:'manual'};
   const subscription={id:'sub-a',protocol:'xui',state:'active',expires:Math.floor(clock.now/1000)+3600};
-  const state={customer:{id:1,email:'buyer@example.com',subscriptions:[subscription],orders:[]},devices:[],catalog,config:{protocol:'xui',config:'vless://private-secret@vpn.example'},copied:[]};
+  const state={customer:{id:1,email:'buyer@example.com',subscriptions:[subscription],orders:[]},devices:[],catalog,config:{protocol:'xui',config:'vless://private-secret@vpn.example'},copied:[],opened:[],telegramOpened:[]};
+  const telegram={initData:'',openLink:(...args)=>state.telegramOpened.push(args)};
   if(options.anonymous)state.customer=null;
   function element(id) {
     if (!elements.has(id)) elements.set(id,{value:'',textContent:'',innerHTML:'',hidden:false,open:false,disabled:false,attrs:{},listeners:{},children:[],
@@ -34,11 +35,12 @@ async function customerPage(options={}) {
   const context=vm.createContext({document:{getElementById:element,querySelector:()=>({content:'/shop'}),querySelectorAll:()=>[],createElement:tag=>element('created-'+tag+'-'+(++elementId))},
     fetch,URL,URLSearchParams,FormData:class {constructor(form){this.fields=form.fields;}get(name){return this.fields[name];}},crypto:require('node:crypto').webcrypto,Date:class extends Date { static now(){return clock.now;} },
     navigator:{platform:'Linux x86_64',userAgent:'Android',clipboard:{writeText:async value=>state.copied.push(value)}},
-    window:{confirm:()=>true},location:{search:options.search || ''},history:{replaceState(){}},
+    window:{confirm:()=>true,open:(...args)=>state.opened.push(args),...(options.telegram?{Telegram:{WebApp:telegram}}:{})},location:{search:options.search || '',origin:options.origin || 'https://shop.example'},history:{replaceState(){}},
     setTimeout:(fn,delay)=>{const id=++timerId;timers.set(id,{fn,delay});return id;},clearTimeout:id=>timers.delete(id),setInterval:fn=>{intervals.push(fn);return intervals.length;}});
+  vm.runInContext(fs.readFileSync('app/static/flow-links.js','utf8'),context);
   vm.runInContext(fs.readFileSync('app/static/app.js','utf8'),context);
   await tick();
-  return {state,element,calls,timers,clock,intervals,run:code=>vm.runInContext(code,context),
+  return {state,element,calls,timers,clock,intervals,telegram,run:code=>vm.runInContext(code,context),
     defer(path){let resolve;overrides.set(path,()=>new Promise(r=>resolve=r));return (body,status=200)=>resolve({ok:status<400,status,json:async()=>body});},
     respond(path,body,status=200){overrides.set(path,async()=>({ok:status<400,status,json:async()=>body}));}};
 }
@@ -300,6 +302,107 @@ test('failed link refresh removes the previously displayed URL',async()=>{
   const p=await customerPage();p.respond('/shop/api/subscriptions/sub-a/link',{enabled:true,follow_rotation:false,version:1,url:'private-url'});
   await p.run("openLink('sub-a')");p.respond('/shop/api/subscriptions/sub-a/link',{detail:'Login'},401);
   await assert.rejects(p.run('refreshLink()'));assert.equal(p.element('link-value').value,'');assert.equal(p.element('copy-link').disabled,true);
+});
+
+test('Flow import opens a HTTPS landing only after a click and keeps the token in its fragment',async()=>{
+  const p=await customerPage();const secret='https://vpn.example/sub/private-token?mode=one';
+  p.respond('/shop/api/subscriptions/sub-a/link',{enabled:true,version:1,url:secret});
+  await p.run("openLink('sub-a')");
+  assert.equal(p.element('flow-open').disabled,false);
+  assert.equal(p.state.opened.length,0);assert.equal(p.state.telegramOpened.length,0);
+  const requests=p.calls.length;
+  p.element('flow-open').onclick();
+  assert.equal(p.calls.length,requests);
+  const [target,frame,features]=p.state.opened[0];const landing=new URL(target);
+  assert.equal(frame,'_blank');assert.equal(features,'noopener,noreferrer');
+  assert.equal(landing.origin,'https://shop.example');assert.equal(landing.pathname,'/shop/static/flow-import.html');
+  assert.equal(landing.search,'');assert.ok(!landing.pathname.includes('private-token'));
+  assert.equal(new URLSearchParams(landing.hash.slice(1)).get('url'),secret);
+  assert.ok(!p.element('flow-open-note').textContent.includes('private-token'));
+});
+
+test('Telegram Flow import uses openLink with HTTPS instead of a custom-scheme URL',async()=>{
+  const p=await customerPage({telegram:true});p.telegram.initData='signed-test-data';
+  p.respond('/shop/api/subscriptions/sub-a/link',{enabled:true,version:1,url:'https://vpn.example/sub/private-token'});
+  await p.run("openLink('sub-a')");assert.equal(p.state.telegramOpened.length,0);
+  p.element('flow-open').onclick();
+  assert.equal(p.state.opened.length,0);assert.equal(p.state.telegramOpened.length,1);
+  assert.equal(new URL(p.state.telegramOpened[0][0]).protocol,'https:');
+  assert.equal(p.state.telegramOpened[0][1].try_instant_view,false);
+});
+
+test('Flow launch is cleared on close, logout and an in-flight refresh including failure',async()=>{
+  const p=await customerPage();const state={enabled:true,version:1,url:'https://vpn.example/sub/private-token'};
+  p.respond('/shop/api/subscriptions/sub-a/link',state);await p.run("openLink('sub-a')");
+  p.element('link-dialog').close();
+  assert.equal(p.run('flowLaunchUrl'),null);assert.equal(p.element('flow-open').disabled,true);
+  p.element('flow-open').onclick();assert.equal(p.state.opened.length,0);
+  await p.run("openLink('sub-a')");
+  const reply=p.defer('/shop/api/subscriptions/sub-a/link'),refresh=p.run('refreshLink()');
+  assert.equal(p.run('flowLaunchUrl'),null);assert.equal(p.element('flow-open').disabled,true);
+  p.element('flow-open').onclick();assert.equal(p.state.opened.length,0);
+  reply({detail:'Temporarily unavailable'},503);await assert.rejects(refresh);
+  assert.equal(p.run('flowLaunchUrl'),null);assert.equal(p.run('linkState'),null);
+  p.respond('/shop/api/subscriptions/sub-a/link',state);await p.run('refreshLink()');
+  await p.element('logout').onclick();
+  assert.equal(p.run('flowLaunchUrl'),null);assert.equal(p.element('flow-open').disabled,true);
+});
+
+test('Flow ignores a late response after closing and clears an old URL during rotation',async()=>{
+  const p=await customerPage(),path='/shop/api/subscriptions/sub-a/link';
+  const old={enabled:true,version:1,url:'https://vpn.example/sub/old-token'};
+  const reply=p.defer(path),opening=p.run("openLink('sub-a')");
+  p.element('link-dialog').close();reply(old);await opening;
+  assert.equal(p.run('flowLaunchUrl'),null);assert.equal(p.element('flow-open').disabled,true);
+  p.respond(path,old);await p.run("openLink('sub-a')");
+  const rotateReply=p.defer(path),rotation=p.run("changeLink('rotate')");
+  assert.equal(p.run('flowLaunchUrl'),null);assert.equal(p.run('linkState'),null);
+  assert.equal(p.element('link-value').value,'');assert.equal(p.element('flow-open').disabled,true);
+  rotateReply({enabled:true,version:2,url:'https://vpn.example/sub/new-token'});await rotation;
+  assert.equal(p.element('flow-open').disabled,false);
+  p.element('flow-open').onclick();assert.ok(!p.state.opened[0][0].includes('old-token'));
+  assert.ok(p.state.opened[0][0].includes('new-token'));
+});
+
+test('Flow cannot use an inactive, expired, unknown or unsupported subscription',async()=>{
+  const p=await customerPage();const parent=p.state.customer.subscriptions[0];
+  p.respond('/shop/api/subscriptions/sub-a/link',{enabled:true,version:1,url:'https://vpn.example/sub/private-token'});
+  await p.run("openLink('sub-a')");
+  p.clock.now+=7200000;p.element('flow-open').onclick();
+  assert.equal(p.state.opened.length,0);assert.equal(p.element('flow-open').disabled,true);
+  parent.expires=Math.floor(p.clock.now/1000)+3600;
+  for(const [key,value] of [['protocol','wg'],['state','expired'],['expires',undefined],['primary_key_state','rotating']]) {
+    const original=parent[key];parent[key]=value;await p.run('refreshLink()');
+    assert.equal(p.element('flow-open').disabled,true);parent[key]=original;
+  }
+  for(const state of [{enabled:false,url:'https://vpn.example/sub/private-token'},
+      {enabled:true,url:'http://vpn.example/sub/private-token'},
+      {enabled:true,url:'https://127.0.0.1/sub/private-token'},
+      {enabled:'true',url:'https://vpn.example/sub/private-token'}]) {
+    p.respond('/shop/api/subscriptions/sub-a/link',{version:1,...state});await p.run('refreshLink()');
+    assert.equal(p.element('flow-open').disabled,true);assert.equal(p.run('flowLaunchUrl'),null);
+  }
+});
+
+test('Flow clears failed link mutations including an account refresh lost after the mutation',async()=>{
+  const p=await customerPage(),path='/shop/api/subscriptions/sub-a/link';
+  const state={enabled:true,version:1,url:'https://vpn.example/sub/private-token'};
+  p.respond(path,state);await p.run("openLink('sub-a')");
+  p.respond(path,{detail:'Conflict'},409);await p.run("changeLink('rotate')");
+  assert.equal(p.run('flowLaunchUrl'),null);assert.equal(p.run('linkState'),null);
+  assert.equal(p.element('link-value').value,'');assert.equal(p.element('flow-open').disabled,true);
+  p.respond(path,state);await p.run('refreshLink()');
+  p.respond('/shop/api/me',{detail:'Unavailable'},503);await p.run("changeLink('rotate')");
+  assert.equal(p.run('flowLaunchUrl'),null);assert.equal(p.run('linkState'),null);
+  assert.equal(p.element('link-value').value,'');assert.equal(p.element('flow-open').disabled,true);
+});
+
+test('account refresh clears the prepared Flow link after key revocation',async()=>{
+  const p=await customerPage();p.respond('/shop/api/subscriptions/sub-a/link',{enabled:true,version:1,url:'https://vpn.example/sub/private-token'});
+  await p.run("openLink('sub-a')");p.state.customer.subscriptions[0].primary_key_state='rotating';
+  await p.run('refreshMe()');
+  assert.equal(p.element('link-dialog').open,false);assert.equal(p.run('flowLaunchUrl'),null);
+  assert.equal(p.element('link-value').value,'');
 });
 
 test('trial offer requires Telegram and accepted claim links to the account',async()=>{
