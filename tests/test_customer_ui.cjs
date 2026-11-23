@@ -371,7 +371,7 @@ test('Flow cannot use an inactive, expired, unknown or unsupported subscription'
   p.clock.now+=7200000;p.element('flow-open').onclick();
   assert.equal(p.state.opened.length,0);assert.equal(p.element('flow-open').disabled,true);
   parent.expires=Math.floor(p.clock.now/1000)+3600;
-  for(const [key,value] of [['protocol','wg'],['state','expired'],['expires',undefined],['primary_key_state','rotating']]) {
+  for(const [key,value] of [['protocol','vmess'],['state','expired'],['expires',undefined],['primary_key_state','rotating']]) {
     const original=parent[key];parent[key]=value;await p.run('refreshLink()');
     assert.equal(p.element('flow-open').disabled,true);parent[key]=original;
   }
