@@ -249,6 +249,9 @@ async def protocol_catalog():
 
 def html_page(name):
     html = (STATIC / name).read_text().replace('__BASE_PATH__', c.BASE_PATH)
+    if name=='index.html':
+        from .flow_shop_pairing import enabled
+        html=html.replace('__FLOW_PAIRING_HIDDEN__', '' if enabled() else 'hidden')
     return HTMLResponse(html, headers={'Cache-Control': 'no-cache'})
 
 @app.get('/')
