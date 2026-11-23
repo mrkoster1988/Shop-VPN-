@@ -217,6 +217,17 @@ def init_db():
           created INTEGER NOT NULL, next_attempt INTEGER NOT NULL,
           attempts INTEGER NOT NULL DEFAULT 0);
         CREATE INDEX IF NOT EXISTS flow_auto_queue ON flow_auto_grants(state,next_attempt,created);
+        CREATE TABLE IF NOT EXISTS flow_shop_pairings (
+          code_hash TEXT PRIMARY KEY, challenge TEXT NOT NULL UNIQUE,
+          state TEXT NOT NULL CHECK(state IN ('pending','approved','denied','exchanged')),
+          user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+          browser_session TEXT REFERENCES sessions(token) ON DELETE CASCADE,
+          created INTEGER NOT NULL, request_expires INTEGER NOT NULL,
+          token_hash TEXT UNIQUE, token_expires INTEGER);
+        CREATE INDEX IF NOT EXISTS flow_shop_pairings_expiry
+          ON flow_shop_pairings(request_expires,token_expires);
+        CREATE UNIQUE INDEX IF NOT EXISTS flow_shop_single_session
+          ON flow_shop_pairings(user_id) WHERE state='exchanged';
         CREATE TABLE IF NOT EXISTS flow_wireguard_links (
           subscription_id TEXT PRIMARY KEY REFERENCES subscriptions(id) ON DELETE CASCADE,
           token_hash TEXT NOT NULL UNIQUE, token_secret TEXT NOT NULL,

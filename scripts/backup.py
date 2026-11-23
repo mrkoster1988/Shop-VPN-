@@ -182,6 +182,10 @@ def restore(path,password,target):
     with tempfile.TemporaryDirectory(prefix='pushok-restore-') as temp:
         database=Path(temp)/'shop.db';database.write_bytes(files['shop.db']);report=validate(database,files['.env'])
         with closing(sqlite3.connect(database)) as conn:
+            # Не переносим действующие или ожидающие сеансы Flow на восстановленную установку.
+            pairing_table=conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='flow_shop_pairings'").fetchone()
+            if pairing_table:
+                conn.execute('DELETE FROM flow_shop_pairings')
             sessions=conn.execute('DELETE FROM sessions').rowcount;tickets=conn.execute('DELETE FROM tickets').rowcount;conn.commit()
         # No extraction, replacement, container startup or mutation of the source installation.
         target=Path(target);target.mkdir(mode=0o700)
