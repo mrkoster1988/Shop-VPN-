@@ -121,3 +121,13 @@ html[data-telegram-theme="dark"] #miniapp-nav [aria-current="page"]{background:#
 #host-update-confirm label{display:flex;align-items:flex-start;gap:10px;line-height:1.5}
 #host-update-ack{width:auto;flex-shrink:0;margin-top:4px}
 #host-update-apply{margin-top:12px}
+
+/* Навигация кабинета управления: одна страница, доступные по роли разделы. */
+.management-header{padding:20px;border:1px solid var(--line);border-radius:18px;background:var(--white);margin:20px 0}
+.management-header h2{margin:4px 0}.management-header p{margin:4px 0 14px;color:var(--muted)}
+.management-nav{display:flex;flex-wrap:wrap;gap:8px}.management-nav a{font-weight:700;border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:var(--bg)}
+.management-nav a:hover{border-color:var(--ink)}.management-nav a:focus-visible{outline:2px solid #14988c;outline-offset:2px}
+#dashboard section[id]{scroll-margin-top:16px}.permission-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:8px;margin:12px 0}
+.permission-choice{display:flex;align-items:center;gap:9px;line-height:1.45;padding:8px;border:1px solid var(--line);border-radius:9px}
+.permission-choice input{width:auto;flex-shrink:0}.staff-role{font-weight:800}.staff-role-owner{color:#7454b4}.staff-role-administrator{color:#aa2435}.staff-role-moderator{color:#16735e}
+@media(max-width:560px){.management-header{padding:14px}.management-nav{gap:6px}.management-nav a{padding:7px 9px;font-size:13px}.permission-grid{grid-template-columns:1fr}}
