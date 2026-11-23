@@ -137,3 +137,87 @@ def test_link_never_issues_for_unpaid_or_pending_user(client):
     assert client.put(path,json={'action':'enable','version':0}).status_code==409
     with db() as conn:
         assert conn.execute('SELECT count(*) FROM flow_wireguard_links').fetchone()[0]==0
+
+
+def test_flow_feed_reads_token_and_profile_in_one_write_transaction(client, monkeypatch):
+    """A revision must not publish a stale snapshot after a competing renewal."""
+    from contextlib import contextmanager
+    from app import flow_wireguard as flow
+
+    register(client)
+    _seed(1, 'owned-primary', int(time.time()) + 86400)
+    link = client.put('/api/flow/wireguard/subscriptions/owned-primary/link',
+                      json={'action': 'enable', 'version': 0}).json()
+    token = link['url'].rsplit('/', 1)[-1]
+    real_db = flow.db
+    transactions = []
+
+    @contextmanager
+    def traced_db():
+        with real_db() as conn:
+            statements = []
+            transactions.append(statements)
+            conn.set_trace_callback(lambda sql: statements.append(sql.upper()))
+            try:
+                yield conn
+            finally:
+                conn.set_trace_callback(None)
+
+    monkeypatch.setattr(flow, 'db', traced_db)
+    response = client.get('/flow/wireguard/' + token)
+    assert response.status_code == 200
+    assert len(transactions) == 1
+    statements = transactions[0]
+    assert statements[0] == 'BEGIN IMMEDIATE'
+    token_read = next(i for i, s in enumerate(statements) if 'FROM FLOW_WIREGUARD_LINKS' in s)
+    profile_read = next(i for i, s in enumerate(statements) if 'FROM SUBSCRIPTIONS WHERE USER_ID=' in s)
+    revision_read = next(i for i, s in enumerate(statements) if 'FROM FLOW_WIREGUARD_VERSIONS' in s)
+    assert 0 < token_read < profile_read < revision_read
+
+    transactions.clear()
+    response = client.get('/api/flow/wireguard/subscriptions/owned-primary')
+    assert response.status_code == 200 and response.json()['revision'] == 1
+    assert len(transactions) == 1 and transactions[0][0] == 'BEGIN IMMEDIATE'
+
+
+def test_flow_public_feed_private_errors_and_maintenance(client, monkeypatch):
+    response = client.get('/flow/wireguard/' + 'x' * 43)
+    assert response.status_code == 404
+    assert response.headers['cache-control'] == 'no-store'
+    assert response.headers['referrer-policy'] == 'no-referrer'
+    assert 'noindex' in response.headers['x-robots-tag']
+    assert 'x' * 43 not in response.text
+    monkeypatch.setenv('MAINTENANCE_MODE', 'true')
+    response = client.get('/flow/wireguard/' + 'x' * 43)
+    assert response.status_code == 503
+    assert response.headers['content-type'].startswith('application/json')
+    assert response.headers['cache-control'] == 'no-store'
+    assert response.headers['retry-after'] == '60'
+
+
+def test_flow_feed_uses_same_bounded_rate_limit_as_vless(client):
+    from app.main import hits
+
+    hits.clear()
+    # Public requests, even invalid tokens, share the subscription quota.
+    for _ in range(30):
+        assert client.get('/sub/' + 'x' * 43).status_code == 404
+        assert client.get('/flow/wireguard/' + 'x' * 43).status_code == 404
+    response = client.get('/flow/wireguard/' + 'x' * 43)
+    assert response.status_code == 429
+    assert response.headers['cache-control'] == 'no-store'
+    assert client.get('/api/me').status_code == 401
+
+
+def test_invalid_ciphertext_does_not_publish_a_new_revision(client):
+    register(client)
+    _seed(1, 'owned-primary', int(time.time()) + 86400)
+    path = '/api/flow/wireguard/subscriptions/owned-primary'
+    assert client.get(path).json()['revision'] == 1
+    with db() as conn:
+        conn.execute("UPDATE subscriptions SET secret='invalid-ciphertext' WHERE id='owned-primary'")
+    response = client.get(path)
+    assert response.status_code == 503
+    assert 'invalid-ciphertext' not in response.text
+    with db() as conn:
+        assert conn.execute('SELECT revision FROM flow_wireguard_versions').fetchone()[0] == 1

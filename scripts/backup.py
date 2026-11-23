@@ -32,6 +32,11 @@ ENCRYPTED={
     'devices':('secret','credential_id'), 'subscription_links':('token_secret',),
     'primary_rotations':('old_credential_id','new_credential_id'),
     'device_rotations':('old_credential_id','new_credential_id')}
+# Новые таблицы проверяются, если существуют: старые архивы остаются читаемыми.
+OPTIONAL_ENCRYPTED={
+    'flow_wireguard_links':('token_secret',),
+    'wgdashboard_keys':('private_key',),
+}
 REQUIRED={'users','sessions','tickets','orders','plans','meta',*ENCRYPTED}
 
 class BackupError(ValueError):pass
@@ -69,7 +74,8 @@ def validate(database,env):
         tables={r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         if not REQUIRED<=tables:raise BackupError('Неполная схема базы магазина')
         encrypted=0
-        for table,columns in ENCRYPTED.items():
+        encrypted_tables = {**ENCRYPTED, **{table: columns for table, columns in OPTIONAL_ENCRYPTED.items() if table in tables}}
+        for table,columns in encrypted_tables.items():
             actual={r[1] for r in conn.execute('PRAGMA table_info('+table+')')}
             if not set(columns)<=actual:raise BackupError('Неполная схема шифрования; нужен актуальный формат базы')
             for row in conn.execute('SELECT '+','.join(columns)+' FROM '+table):

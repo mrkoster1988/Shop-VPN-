@@ -209,3 +209,33 @@ def test_password_env_removed_and_runtime_backup_uses_saved_env(source,monkeypat
     assert b.read_password(args)==PASSWORD and 'PUSHOK_BACKUP_PASSWORD' not in os.environ
     create(source)
     assert b.verify(source[2],PASSWORD)['encrypted_values']>=4
+
+
+@pytest.mark.parametrize('table,column',[
+    ('flow_wireguard_links','token_secret'),
+    ('wgdashboard_keys','private_key'),
+])
+def test_new_wireguard_secrets_checked_in_backups(source,table,column):
+    database,env,output,sid=source
+    # Values are synthetic fixtures; no real peer or bearer token is used.
+    if table=='flow_wireguard_links':
+        execute("INSERT INTO flow_wireguard_links(subscription_id,token_hash,token_secret,enabled,version) VALUES (?,?,?,1,1)",
+                (sid,'fixture-hash',c.encrypt('fixture-token')))
+    else:
+        execute("INSERT INTO wgdashboard_keys(server_id,credential_id,private_key) VALUES (?,?,?)",
+                ('test-wg','fixture-credential',c.encrypt('fixture-key')))
+    assert b.validate(database,env)['encrypted_values']>=5
+    execute('UPDATE '+table+' SET '+column+'=?',('invalid-encrypted-fixture',))
+    with pytest.raises(b.BackupError,match='расшифровывает'):
+        create(source)
+    assert not output.exists()
+
+
+def test_older_backups_without_optional_flow_tables_still_validate(source,tmp_path):
+    database,env,_,_=source
+    older=tmp_path/'older.db'
+    b.snapshot(database,older)
+    with sqlite3.connect(older) as conn:
+        conn.execute('DROP TABLE flow_wireguard_links')
+        conn.execute('DROP TABLE wgdashboard_keys')
+    assert b.validate(older,env)['encrypted_values']>=4
