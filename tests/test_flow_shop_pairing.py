@@ -91,6 +91,10 @@ def test_wrong_owner_and_revoke(pairing):
     assert approve(client,data).status_code==200
     result=exchange(client,data).json()
     auth=bearer(result)
+    execute("INSERT INTO users(id,email,created) VALUES (2,'other@example.com',1)")
+    _seed(2,'other-wg',int(time.time())+3600)
+    assert client.get(BASE+'/subscriptions/other-wg',headers=auth).status_code==404
+    assert client.get(BASE+'/connections',headers=auth).json()=={'subscriptions':[]}
     assert client.get(BASE+'/subscriptions/missing',headers=auth).status_code==404
     assert client.post(BASE+'/auth/revoke').json()=={'ok':True}
     assert client.get(BASE+'/connections',headers=auth).status_code==401
@@ -136,3 +140,15 @@ def test_no_peer_or_free_grant_is_created_when_policy_disabled(pairing):
     assert one('SELECT count(*) AS n FROM subscriptions')['n']==0
     assert one('SELECT count(*) AS n FROM orders')['n']==0
     assert one('SELECT count(*) AS n FROM flow_auto_grants')['n']==0
+
+
+def test_new_approval_supersedes_old_unexchanged_request(pairing):
+    client=pairing
+    first=begin(client)
+    assert approve(client,first).status_code==200
+    second=begin(client)
+    assert approve(client,second).status_code==200
+    assert exchange(client,first).status_code==404
+    auth=bearer(exchange(client,second).json())
+    assert client.post(BASE+'/auth/logout',headers=auth).json()=={'ok':True}
+    assert client.get(BASE+'/connections',headers=auth).status_code==401
