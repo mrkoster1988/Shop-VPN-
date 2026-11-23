@@ -13,7 +13,7 @@ let adsPolicy=null,adsPage=1,adsRequest=0,adsMutation=0,adsIntent=new Map();
 let passwordOperation=null, logoutPending=false, supportRequest=0, selectedSupportCase=null;
 let paymentOrder=null,paymentRequest=0,paymentBusy=false;
 let catalog, me, protocol = 'xui', selectedPlan, checkoutTrial=null, register = false, toastTimer;
-let linkSubscription=null, linkRequest=0, linkState=null, flowLaunchUrl=null;
+let linkSubscription=null, linkProtocol=null, linkRequest=0, linkState=null, flowLaunchUrl=null;
 let sessionEpoch = 0, meRequest = 0, connectionRequest = 0, connection = null, connectionTimer;
 let deviceSubscription=null, deviceRequest=0, deviceIntent=null, deviceCache=[], rotationIntents=new Map(), primaryRotationIntents=new Map();
 async function api(path, data, method) {
@@ -505,7 +505,7 @@ function clearFlowLink() {
   $('flow-open-note').textContent='Для Pushok Flow 0.41 и новее нужна включённая HTTPS-ссылка подписки.';
 }
 function flowUrlFor(state, parent) {
-  if (typeof PushokFlowLinks==='undefined' || state?.enabled!==true || !['xui','wg'].includes(parent?.protocol) ||
+  if (typeof PushokFlowLinks==='undefined' || state?.enabled!==true || !['xui','wg'].includes(parent?.protocol) || parent?.protocol!==linkProtocol ||
       parent.state!=='active' || !Number.isFinite(parent.expires) || parent.expires*1000<=Date.now() ||
       (parent.primary_key_state || 'active')!=='active') return null;
   return PushokFlowLinks.landingUrl(state.url, 'Подписка Pushok', location.origin, basePath);
@@ -519,16 +519,15 @@ function renderFlowLink(state, parent) {
       : 'Для VLESS нужна версия Pushok Flow 0.41 или новее и HTTPS-ссылка.';
 }
 function linkApiPath(sid) {
-  const parent=me?.subscriptions.find(s=>s.id===sid);
   const encoded=encodeURIComponent(sid);
-  return parent?.protocol==='wg' ? '/api/flow/wireguard/subscriptions/'+encoded+'/link'
+  return linkProtocol==='wg' ? '/api/flow/wireguard/subscriptions/'+encoded+'/link'
     : '/api/subscriptions/'+encoded+'/link';
 }
 function linkIsWireGuard() {
-  return me?.subscriptions.find(s=>s.id===linkSubscription)?.protocol==='wg';
+  return linkProtocol==='wg';
 }
 function clearLink() {
-  linkRequest++;linkSubscription=null;linkState=null;
+  linkRequest++;linkSubscription=null;linkProtocol=null;linkState=null;
   clearFlowLink();
   $('link-value').value='';$('link-status').textContent='';$('link-follow').checked=false;
   for(const id of ['copy-link','link-enable','link-rotate','link-disable'])$(id).disabled=true;
@@ -541,15 +540,23 @@ function renderLink(state) {
   $('copy-link').disabled=!state.enabled;$('link-rotate').disabled=!state.enabled;$('link-disable').disabled=!state.enabled;
   const parent=me?.subscriptions.find(s=>s.id===linkSubscription);
   renderFlowLink(state,parent);
-  $('link-enable').disabled=!parent || parent.state!=='active' || parent.expires*1000<=Date.now() || (parent.primary_key_state || 'active')!=='active' || (wireguard && state.enabled);
+  $('link-enable').disabled=!parent || parent.protocol!==linkProtocol || parent.state!=='active' || parent.expires*1000<=Date.now() || (parent.primary_key_state || 'active')!=='active' || (wireguard && state.enabled);
   $('link-enable').textContent=state.enabled?(wireguard?'Ссылка включена':'Сохранить настройки'):'Создать ссылку';
   $('link-status').textContent=state.enabled?'Ссылка включена. Импортируйте её как URL подписки.':'Ссылка отключена.';
 }
 async function openLink(sid) {
-  clearLink();linkSubscription=sid;$('link-status').textContent='Загружаем…';show('link-dialog');await refreshLink();
+  clearLink();
+  const parent=me?.subscriptions.find(s=>s.id===sid);
+  if (!parent || !['xui','wg'].includes(parent.protocol)) return;
+  linkSubscription=sid;linkProtocol=parent.protocol;
+  $('link-status').textContent='Загружаем…';show('link-dialog');await refreshLink();
 }
 async function refreshLink() {
-  if(!linkSubscription)return;
+  if(!linkSubscription || !['xui','wg'].includes(linkProtocol))return;
+  const parent=me?.subscriptions.find(s=>s.id===linkSubscription);
+  if(!parent || parent.protocol!==linkProtocol) {
+    clearFlowLink();clearLink();$('link-dialog').close();return;
+  }
   const sid=linkSubscription,request=++linkRequest;
   linkState=null;$('link-value').value='';clearFlowLink();
   for(const id of ['copy-link','link-enable','link-rotate','link-disable'])$(id).disabled=true;
@@ -558,6 +565,11 @@ async function refreshLink() {
 }
 async function changeLink(action) {
   if(!linkSubscription || !linkState)return;
+  const parent=me?.subscriptions.find(s=>s.id===linkSubscription);
+  if (!parent || parent.protocol!==linkProtocol || parent.state!=='active' ||
+      !Number.isFinite(parent.expires) || parent.expires*1000<=Date.now()) {
+    clearFlowLink();return;
+  }
   const sid=linkSubscription,version=linkState.version,request=++linkRequest;
   for(const id of ['copy-link','link-enable','link-rotate','link-disable'])$(id).disabled=true;
   linkState=null;$('link-value').value='';clearFlowLink();

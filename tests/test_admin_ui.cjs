@@ -925,6 +925,19 @@ test('expired or replaced plans clear confirmation; logout ignores late host rep
  assert.equal(page.element('host-update-panel').hidden,true);assert.equal(page.element('host-update-ack').checked,false);
 });
 
+test('owner can inspect disabled starter WireGuard policy; logout clears editor',async()=>{
+  const p=adminPage(),request=p.run("role='owner';refreshFlowAuto()");
+  p.reply(flowAutoState({enabled:false,days:1,max_users:100,used:7,remaining:93,version:4,candidate_ids:[]}));
+  await request;
+  assert.ok(p.element('flow-auto-summary').textContent.includes('7 из 100'));
+  assert.equal(p.element('flow-auto-enabled').checked,false);
+  assert.equal(p.element('flow-auto-days').value,'1');
+  assert.equal(p.element('flow-auto-max').value,'100');
+  assert.equal(p.element('flow-auto-queue').disabled,true);
+  p.run("$('exit').onclick()");
+  assert.equal(p.element('flow-auto-summary').textContent,'');
+  assert.equal(p.element('flow-auto-panel').hidden,true);
+});
 
 function flowAutoState(overrides={}) {
   return {enabled:true, version:3, days:7, max_users:100, eligible:8,
