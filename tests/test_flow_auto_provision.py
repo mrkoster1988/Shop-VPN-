@@ -270,8 +270,8 @@ def test_batch_nonowner_cannot_preview_or_queue(client, monkeypatch):
     from app.security import password_hash
 
     ids = _old_accounts(1)
-    execute("INSERT INTO staff_users(email,password,role,enabled,created) VALUES (?,?,?,?,?)",
-            ('operator@example.com', password_hash('operator-test-password'), 'panel_operator', 1, 1))
+    execute("INSERT INTO staff_users(email,password,role,enabled,created,updated) VALUES (?,?,?,?,?,?)",
+            ('operator@example.com', password_hash('operator-test-password'), 'panel_operator', 1, 1, 1))
     response = client.post('/api/admin/auth/login',
                            json={'email': 'operator@example.com', 'password': 'operator-test-password'})
     assert response.status_code == 200
