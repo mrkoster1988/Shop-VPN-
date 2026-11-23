@@ -152,8 +152,10 @@ class Staging:
                      'order_history_state','order_milestones','bot_menu_settings','wgdashboard_keys',
                      'wgdashboard_expirations','hysteria2_credentials','tuic_credentials','update_checker',
                      'flow_wireguard_versions','flow_wireguard_links',
-                     'flow_auto_policy','flow_auto_grants'}
+                     'flow_auto_policy','flow_auto_grants','flow_shop_pairings'}
         added=sorted(set(new)-set(old))
+        check('flow_shop_pairings' not in added or current['counts'].get('flow_shop_pairings') == 0,
+              'Unexpected Flow pairing sessions during migration')
         check('flow_wireguard_links' not in added or current['counts'].get('flow_wireguard_links') == 0,
               'Unexpected automatic WireGuard links during migration')
         check('flow_wireguard_versions' not in added or current['counts'].get('flow_wireguard_versions') == 0,
