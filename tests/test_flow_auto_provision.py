@@ -157,3 +157,124 @@ def test_policy_off_does_not_revoke_existing_grant(client, monkeypatch):
     assert asyncio.run(auto.process_pending()) == 0
     assert one('SELECT state FROM flow_auto_grants')['state'] == 'pending'
     assert one('SELECT state FROM subscriptions WHERE id=?', (sid,))['state'] == 'pending'
+
+
+BATCH = '/api/admin/flow/wireguard/auto/batch'
+
+
+def _admin():
+    return {'Authorization': 'Bearer ' + c.ADMIN_TOKEN}
+
+
+def _old_accounts(count):
+    return [execute("INSERT INTO users(email,created) VALUES (?,?)",
+                    ('old-%s@example.com' % i, 1)) for i in range(count)]
+
+
+def test_batch_preview_does_not_grant_or_expose_account_details(client, monkeypatch):
+    accounts = _old_accounts(3)
+    assert client.get(BATCH).status_code == 401
+    preview = client.get(BATCH, headers=_admin()).json()
+    assert preview['enabled'] is False and preview['eligible'] == 3
+    assert preview['candidate_ids'] == []
+    _node()
+    assert _policy(client, monkeypatch, max_users=2).status_code == 200
+    monkeypatch.setattr(c, 'SECURE_COOKIE', True)
+    response = client.get(BATCH, headers=_admin())
+    preview = response.json()
+    assert preview['candidate_ids'] == accounts[:2]
+    assert preview['eligible'] == 3 and preview['remaining'] == 2
+    assert preview['pending'] == preview['active'] == 0
+    assert 'example.com' not in response.text
+    assert one('SELECT count(*) AS n FROM subscriptions')['n'] == 0
+    assert one('SELECT count(*) AS n FROM flow_auto_grants')['n'] == 0
+
+
+def test_batch_exact_replay_never_selects_more_users(client, monkeypatch):
+    ids = _old_accounts(4)
+    _node()
+    assert _policy(client, monkeypatch, max_users=4).status_code == 200
+    monkeypatch.setattr(c, 'SECURE_COOKIE', True)
+    body = {'version': auto.policy()['version'], 'user_ids': ids[:2]}
+    calls = []
+
+    async def provision(sub):
+        calls.append(sub['id'])
+        return CONFIG
+
+    monkeypatch.setattr(providers, 'provision', provision)
+    assert client.post(BATCH, headers=_admin(), json=body).json() == {
+        'requested': 2, 'queued': 2, 'skipped': {}}
+    assert client.post(BATCH, headers=_admin(), json=body).json() == {
+        'requested': 2, 'queued': 0, 'skipped': {'claimed': 2}}
+    assert calls == []
+    assert one('SELECT count(*) AS n FROM flow_auto_grants')['n'] == 2
+    assert client.get(BATCH, headers=_admin()).json()['candidate_ids'] == ids[2:]
+    assert asyncio.run(auto.process_pending()) == 2
+    assert len(set(calls)) == 2
+    assert auto.enqueue(ids[0]) == 'active'
+
+
+def test_batch_skips_existing_order_and_honors_quota_and_capacity(client, monkeypatch):
+    ids = _old_accounts(5)
+    _node()
+    assert _policy(client, monkeypatch, max_users=2).status_code == 200
+    monkeypatch.setattr(c, 'SECURE_COOKIE', True)
+    # Existing WireGuard, even expired, belongs to its current lifecycle.
+    execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state,access_source) "
+            "VALUES ('old-paid',?,'wg',1,'expired','purchase')", (ids[0],))
+    execute("INSERT INTO orders(id,user_id,protocol,plan,days,amount,status,created) "
+            "VALUES ('open-order',?,'wg','month',30,199,'paid',1)", (ids[1],))
+    assert auto.enqueue(ids[1]) == 'order_pending'
+    execute("UPDATE servers SET capacity=1 WHERE id='test-wg'")
+    preview = client.get(BATCH, headers=_admin()).json()
+    assert preview['eligible'] == 3
+    body = {'version': preview['version'], 'user_ids': ids}
+    assert client.post(BATCH, headers=_admin(), json=body).json() == {
+        'requested': 5, 'queued': 1,
+        'skipped': {'existing': 1, 'order_pending': 1, 'unavailable': 2}}
+    assert one("SELECT state,expires FROM subscriptions WHERE id='old-paid'") == {
+        'state': 'expired', 'expires': 1}
+    execute("UPDATE servers SET capacity=10 WHERE id='test-wg'")
+    assert client.post(BATCH, headers=_admin(), json=body).json() == {
+        'requested': 5, 'queued': 1,
+        'skipped': {'existing': 1, 'order_pending': 1, 'claimed': 1, 'limit': 1}}
+    assert auto.policy()['remaining'] == 0
+    assert client.get(BATCH, headers=_admin()).json()['candidate_ids'] == []
+
+
+def test_batch_rejects_invalid_stale_and_disabled_requests(client, monkeypatch):
+    ids = _old_accounts(2)
+    _node()
+    assert _policy(client, monkeypatch).status_code == 200
+    monkeypatch.setattr(c, 'SECURE_COOKIE', True)
+    version = auto.policy()['version']
+    for bad in ([], [ids[0], ids[0]], [True], [0], ['1'], list(range(1, 52))):
+        response = client.post(BATCH, headers=_admin(),
+                               json={'version': version, 'user_ids': bad})
+        assert response.status_code == 422
+    assert client.post(BATCH, headers=_admin(),
+                       json={'version': version - 1, 'user_ids': ids}).status_code == 409
+    assert client.post(BATCH, json={'version': version, 'user_ids': ids}).status_code == 401
+    monkeypatch.setattr(c, 'SECURE_COOKIE', False)
+    assert client.post(BATCH, headers=_admin(),
+                       json={'version': version, 'user_ids': ids}).status_code == 409
+    assert _policy(client, monkeypatch, enabled=False).status_code == 200
+    monkeypatch.setattr(c, 'SECURE_COOKIE', True)
+    assert client.post(BATCH, headers=_admin(),
+                       json={'version': auto.policy()['version'], 'user_ids': ids}).status_code == 409
+    assert one('SELECT count(*) AS n FROM flow_auto_grants')['n'] == 0
+
+
+def test_batch_nonowner_cannot_preview_or_queue(client, monkeypatch):
+    from app.security import password_hash
+
+    ids = _old_accounts(1)
+    execute("INSERT INTO staff_users(email,password,role,enabled,created,updated) VALUES (?,?,?,?,?,?)",
+            ('operator@example.com', password_hash('operator-test-password'), 'panel_operator', 1, 1, 1))
+    response = client.post('/api/admin/auth/login',
+                           json={'email': 'operator@example.com', 'password': 'operator-test-password'})
+    assert response.status_code == 200
+    assert client.get(BATCH).status_code == 403
+    assert client.post(BATCH, json={'version': 1, 'user_ids': ids}).status_code == 403
+    assert one('SELECT count(*) AS n FROM flow_auto_grants')['n'] == 0

@@ -925,19 +925,79 @@ test('expired or replaced plans clear confirmation; logout ignores late host rep
  assert.equal(page.element('host-update-panel').hidden,true);assert.equal(page.element('host-update-ack').checked,false);
 });
 
-test('owner can inspect starter WireGuard grant policy; logout clears editor',async()=>{
-  const p=adminPage();
-  p.run("role='owner'");
-  const request=p.run('refreshFlowAutoPolicy()');
-  p.reply({enabled:false,days:1,max_users:100,used:7,remaining:93,version:4});
+test('owner can inspect disabled starter WireGuard policy; logout clears editor',async()=>{
+  const p=adminPage(),request=p.run("role='owner';refreshFlowAuto()");
+  p.reply(flowAutoState({enabled:false,days:1,max_users:100,used:7,remaining:93,version:4,candidate_ids:[]}));
   await request;
-  assert.ok(p.element('flow-auto-count').textContent.includes('7 из 100'));
-  const markup=p.element('flow-auto-editor').innerHTML;
-  assert.ok(markup.includes('data-flow-auto-version="4"'));
-  assert.ok(markup.includes('name="max_users"') && markup.includes('max="100000"'));
-  assert.ok(markup.includes('name="days"') && markup.includes('max="30"'));
-  assert.ok(!markup.includes('name="enabled" type="checkbox" checked'));
+  assert.ok(p.element('flow-auto-summary').textContent.includes('7 из 100'));
+  assert.equal(p.element('flow-auto-enabled').checked,false);
+  assert.equal(p.element('flow-auto-days').value,'1');
+  assert.equal(p.element('flow-auto-max').value,'100');
+  assert.equal(p.element('flow-auto-queue').disabled,true);
   p.run("$('exit').onclick()");
-  assert.equal(p.element('flow-auto-editor').innerHTML,'');
-  assert.equal(p.element('flow-auto-section').hidden,true);
+  assert.equal(p.element('flow-auto-summary').textContent,'');
+  assert.equal(p.element('flow-auto-panel').hidden,true);
+});
+
+function flowAutoState(overrides={}) {
+  return {enabled:true, version:3, days:7, max_users:100, eligible:8,
+    used:10, remaining:90, node_available:true, candidate_ids:[11,12],
+    pending:2, active:7, expired:1, superseded:0, ...overrides};
+}
+
+test('WireGuard batch uses only the displayed IDs and refreshes after success', async () => {
+  const page=adminPage();
+  const loading=page.run("role='owner'; refreshFlowAuto()");
+  assert.equal(page.requests[0],'/shop/api/admin/flow/wireguard/auto/batch');
+  page.reply(flowAutoState()); await loading;
+  assert.equal(page.element('flow-auto-queue').disabled,false);
+  assert.match(page.element('flow-auto-summary').textContent,/В очереди: 2/);
+  const queued=page.run("$('flow-auto-queue').onclick()");
+  assert.deepEqual(page.bodies[1],{version:3,user_ids:[11,12]});
+  assert.equal(page.element('flow-auto-queue').disabled,true);
+  page.reply({requested:2,queued:2,skipped:{}});
+  // Wait for the promise continuation to dispatch its new preview request.
+  await new Promise(resolve=>setImmediate(resolve));
+  page.reply(flowAutoState({candidate_ids:[13,14],pending:4})); await queued;
+  assert.match(page.element('flow-auto-result').textContent,/Поставлено в очередь: 2 из 2/);
+  assert.equal(page.element('flow-auto-queue').disabled,false);
+  assert.equal(page.requests.length,3);
+});
+
+test('WireGuard queue replay after error keeps the same IDs', async () => {
+  const page=adminPage();
+  const loading=page.run("role='owner'; refreshFlowAuto()");
+  page.reply(flowAutoState()); await loading;
+  const first=page.run("$('flow-auto-queue').onclick()");
+  page.replyAt(1,{detail:'Ответ временно недоступен'},503); await first;
+  assert.equal(page.element('flow-auto-queue').disabled,false);
+  const second=page.run("$('flow-auto-queue').onclick()");
+  assert.deepEqual(page.bodies[2],page.bodies[1]);
+  page.replyAt(2,{detail:'Повторите позже'},503); await second;
+});
+
+test('WireGuard queue is disabled for dirty policy, no node and non-owner roles', async () => {
+  const page=adminPage();
+  const first=page.run("role='owner'; refreshFlowAuto()");
+  page.reply(flowAutoState({node_available:false,candidate_ids:[]})); await first;
+  assert.equal(page.element('flow-auto-queue').disabled,true);
+  const second=page.run("refreshFlowAuto()");
+  page.reply(flowAutoState()); await second;
+  page.run("$('flow-auto-days').value='10'; $('flow-auto-policy-form').oninput()");
+  assert.equal(page.element('flow-auto-save').disabled,false);
+  assert.equal(page.element('flow-auto-queue').disabled,true);
+  const count=page.requests.length;
+  await page.run("role='finance'; refreshFlowAuto()");
+  assert.equal(page.requests.length,count);
+  assert.equal(page.element('flow-auto-panel').hidden,true);
+});
+
+test('late WireGuard preview cannot restore owner controls after logout', async () => {
+  const page=adminPage();
+  const loading=page.run("role='owner'; refreshFlowAuto()");
+  page.run("$('exit').onclick()");
+  page.replyAt(0,flowAutoState()); await loading;
+  assert.equal(page.element('flow-auto-panel').hidden,true);
+  assert.equal(page.element('flow-auto-summary').textContent,'');
+  assert.equal(page.element('flow-auto-queue').disabled,true);
 });

@@ -481,8 +481,8 @@ async function refresh({plans = role==='owner'} = {}) {
   $('stats').innerHTML = `<div>Пользователи<strong>${data.users}</strong></div><div>Подписки<strong>${data.active}</strong></div><div>Подтверждено<strong>${data.revenue} ₽ / ${data.stars} ★</strong></div>`;
   if (catalog) $('plan-editors').innerHTML = catalog.plans.map(planForm).join('');
   await refreshProtocols();
-  $('flow-auto-section').hidden=role!=='owner';
-  if(role==='owner') await Promise.all([refreshAdsAdmin(),refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers(),refreshTrialPolicy(),refreshFlowAutoPolicy(),refreshCoupons(),refreshReferralPolicy(),refreshCommerceAnalytics()]);
+  if(role!=='owner') clearFlowAuto();
+  if(role==='owner') await Promise.all([refreshAdsAdmin(),refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers(),refreshTrialPolicy(),refreshFlowAuto(),refreshCoupons(),refreshReferralPolicy(),refreshCommerceAnalytics()]);
   else if(role==='mtproxy_manager') await refreshAdsAdmin();
   else if(role==='finance') await Promise.all([refreshAdsAdmin(),refreshOrders(),refreshCommerceAnalytics()]);
   else if(role==='panel_operator') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers()]);
@@ -546,7 +546,7 @@ $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method
   $('referral-policy-editor').replaceChildren();$('referral-policy-count').textContent='';$('referral-policy-error').textContent='';
   $('coupons-list').replaceChildren();$('coupons-error').textContent='';$('coupon-create').reset();
   $('trial-policy-editor').replaceChildren();$('trial-policy-count').textContent='';$('trial-policy-error').textContent='';
-  $('flow-auto-section').hidden=true;$('flow-auto-editor').replaceChildren();$('flow-auto-count').textContent='';$('flow-auto-error').textContent='';
+  clearFlowAuto();
   $('list').replaceChildren(); $('stats').replaceChildren(); $('plan-editors').replaceChildren();
   $('admin-notice').textContent = ''; $('error').textContent = ''; $('dashboard').hidden = true; $('admin-login').hidden = false;
 };
@@ -923,35 +923,105 @@ $('server-list').onclick = async event => {
   catch (error) { $('error').textContent=error.message; check.disabled=false; }
 };
 
-async function refreshFlowAutoPolicy() {
-  const epoch=authEpoch;
-  const p=await api('flow/wireguard/auto');
-  if(epoch!==authEpoch || role!=='owner')return;
-  $('flow-auto-count').textContent='Зарезервировано: '+p.used+' из '+p.max_users+'. Осталось: '+p.remaining;
-  $('flow-auto-editor').innerHTML=
-    '<form class="plan-editor" data-flow-auto-version="'+p.version+'">'+
-    '<label class="plan-enabled"><input name="enabled" type="checkbox" '+(p.enabled?'checked':'')+
-    '> Выдавать WireGuard при входе в Shop</label>'+
-    '<label>Стартовый срок, дней<input name="days" type="number" min="1" max="30" value="'+p.days+'" required></label>'+
-    '<label>Общий лимит пользователей<input name="max_users" type="number" min="1" max="100000" value="'+p.max_users+'" required></label>'+
-    '<p>Лимит учитывает ожидающие выдачи и не сбрасывается при изменении. Отключение останавливает новые выдачи, но ранее выданные профили действуют до своего серверного срока.</p>'+
-    '<button type="submit" class="small">Сохранить автовыдачу</button></form>';
+// Автовыдача WireGuard: только владелец, явная партия по снимку ID.
+let flowAutoPreview = null, flowAutoRequest = 0, flowAutoBusy = false, flowAutoDirty = false;
+function flowAutoControls() {
+  const ready = role === 'owner' && !flowAutoBusy && !!flowAutoPreview;
+  for (const id of ['flow-auto-enabled','flow-auto-days','flow-auto-max']) $(id).disabled = !ready;
+  $('flow-auto-save').disabled = !ready || !flowAutoDirty;
+  $('flow-auto-refresh').disabled = flowAutoBusy || role !== 'owner';
+  $('flow-auto-queue').disabled = !ready || flowAutoDirty || !flowAutoPreview?.enabled ||
+    !flowAutoPreview?.node_available || !flowAutoPreview?.candidate_ids?.length;
+  $('flow-auto-queue').textContent = flowAutoPreview?.candidate_ids?.length
+    ? 'Поставить в очередь: ' + flowAutoPreview.candidate_ids.length : 'Поставить в очередь';
 }
-$('flow-auto-editor').onsubmit=async event=>{
-  event.preventDefault();
-  const form=event.target.closest('[data-flow-auto-version]');
-  if(!form || role!=='owner')return;
-  const values=new FormData(form),button=form.querySelector('button');
-  button.disabled=true;
+function clearFlowAuto() {
+  flowAutoRequest++; flowAutoPreview = null; flowAutoBusy = false; flowAutoDirty = false;
+  $('flow-auto-panel').hidden = true;
+  $('flow-auto-summary').textContent = ''; $('flow-auto-result').textContent = '';
+  $('flow-auto-enabled').checked = false; $('flow-auto-days').value = '1'; $('flow-auto-max').value = '100';
+  flowAutoControls();
+}
+function renderFlowAuto(p) {
+  if (!p || !Number.isSafeInteger(p.version) || p.version < 1 ||
+      !Array.isArray(p.candidate_ids) || p.candidate_ids.length > 50 ||
+      p.candidate_ids.some(id => !Number.isSafeInteger(id) || id <= 0) ||
+      new Set(p.candidate_ids).size !== p.candidate_ids.length) throw new Error('Некорректный список выдачи');
+  flowAutoPreview = p; flowAutoDirty = false;
+  $('flow-auto-enabled').checked = p.enabled === true;
+  $('flow-auto-days').value = String(p.days); $('flow-auto-max').value = String(p.max_users);
+  $('flow-auto-summary').textContent = 'Подходят: ' + p.eligible + ' · Использовано: ' + p.used +
+    ' из ' + p.max_users + ' · Осталось: ' + p.remaining + ' · В очереди: ' + p.pending +
+    ' · Выдано: ' + p.active + ' · Истекло: ' + p.expired + ' · Заменено покупкой: ' + p.superseded +
+    (!p.enabled ? ' · Автовыдача отключена' : !p.node_available ? ' · Нет доступного защищённого узла' : '');
+  flowAutoControls();
+}
+async function refreshFlowAuto() {
+  if (role !== 'owner') { clearFlowAuto(); return; }
+  if (flowAutoBusy) return;
+  const request = ++flowAutoRequest, epoch = authEpoch;
+  flowAutoBusy = true; flowAutoPreview = null; flowAutoDirty = false;
+  $('flow-auto-panel').hidden = false; $('flow-auto-result').textContent = '';
+  $('flow-auto-summary').textContent = 'Загрузка…'; flowAutoControls();
   try {
-    await api('flow/wireguard/auto',{method:'PUT',data:{
-      enabled:values.has('enabled'),days:Number(values.get('days')),
-      max_users:Number(values.get('max_users')),version:Number(form.dataset.flowAutoVersion)}});
-    await refreshFlowAutoPolicy();
-    $('flow-auto-error').textContent='';
-  }catch(error){
-    $('flow-auto-error').textContent=error.message;button.disabled=false;
+    const p = await api('flow/wireguard/auto/batch');
+    if (request === flowAutoRequest && epoch === authEpoch && role === 'owner') renderFlowAuto(p);
+  } catch (error) {
+    if (request === flowAutoRequest && epoch === authEpoch) $('flow-auto-summary').textContent = error.message;
+  } finally {
+    if (request === flowAutoRequest && epoch === authEpoch) { flowAutoBusy = false; flowAutoControls(); }
   }
+}
+async function mutateFlowAuto(path, data, method) {
+  if (role !== 'owner' || flowAutoBusy || !flowAutoPreview) return;
+  const request = ++flowAutoRequest, epoch = authEpoch;
+  const current = () => request === flowAutoRequest && epoch === authEpoch && role === 'owner';
+  flowAutoBusy = true; flowAutoControls(); $('flow-auto-result').textContent = '';
+  let committed = false;
+  try {
+    const result = await api(path, {method, data});
+    if (!current()) return;
+    committed = true;
+    // После подтверждённого ответа не повторяем предыдущую операцию автоматически.
+    flowAutoPreview = null;
+    const message = method === 'POST'
+      ? 'Поставлено в очередь: ' + result.queued + ' из ' + result.requested +
+        '. Пропущено: ' + (result.requested - result.queued) + '. Это ещё не готовые подключения.'
+      : 'Политика сохранена.';
+    $('flow-auto-result').textContent = message;
+    renderFlowAuto(await api('flow/wireguard/auto/batch').then(p => {
+      if (!current()) throw new Error('Сессия завершена'); return p;
+    }));
+  } catch (error) {
+    if (current()) {
+      if (committed) $('flow-auto-summary').textContent = 'Обновите список: ' + error.message;
+      else $('flow-auto-result').textContent = error.message + ' · Обновите список или повторите ту же операцию.';
+    }
+  } finally {
+    if (current()) { flowAutoBusy = false; flowAutoControls(); }
+  }
+}
+$('flow-auto-policy-form').oninput = () => {
+  if (!flowAutoPreview || flowAutoBusy || role !== 'owner') return;
+  flowAutoDirty = true; flowAutoControls();
+};
+$('flow-auto-policy-form').onsubmit = event => {
+  event.preventDefault();
+  if (!flowAutoPreview || !flowAutoDirty || flowAutoBusy || role !== 'owner') return;
+  return mutateFlowAuto('flow/wireguard/auto', {
+    enabled: $('flow-auto-enabled').checked, days: Number($('flow-auto-days').value),
+    max_users: Number($('flow-auto-max').value), version: flowAutoPreview.version,
+  }, 'PUT');
+};
+$('flow-auto-refresh').onclick = () => refreshFlowAuto();
+$('flow-auto-queue').onclick = () => {
+  const p = flowAutoPreview;
+  if (!p || !p.enabled || !p.node_available || !p.candidate_ids.length ||
+      flowAutoDirty || flowAutoBusy || role !== 'owner') return;
+  // Используем только ID уже показанной партии: retry не выбирает следующую.
+  return mutateFlowAuto('flow/wireguard/auto/batch', {
+    version: p.version, user_ids: [...p.candidate_ids]
+  }, 'POST');
 };
 
 async function refreshTrialPolicy() {

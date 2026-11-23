@@ -6,6 +6,7 @@ no remote API call on an authentication request. One claim per Shop user.
 import logging
 import time
 import uuid
+from typing import Annotated
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
@@ -80,42 +81,129 @@ async def update_policy(data: PolicyUpdate):
     return policy()
 
 
-def enqueue(user_id: int) -> str:
-    """Reserve a bounded grant without network IO or duplicate paid subscriptions.
+MAX_BATCH = 50
 
-    Existing claims persist across policy changes and across multiple logins.
-    Expired existing WireGuard access is NOT silently extended.
-    """
-    now = int(time.time())
+
+class BatchRequest(BaseModel):
+    model_config = {'extra': 'forbid'}
+    version: int = Field(ge=1, strict=True)
+    user_ids: list[Annotated[int, Field(gt=0, le=9223372036854775807, strict=True)]] = Field(
+        min_length=1, max_length=MAX_BATCH)
+
+
+def _open_wg_order(conn, user_id):
+    return conn.execute(
+        """SELECT 1 FROM orders WHERE user_id=? AND protocol='wg'
+           AND status IN ('pending','checkout','paid') LIMIT 1""",
+        (user_id,)).fetchone() is not None
+
+
+def _reserve_locked(conn, user_id, setting, now):
+    """Единый путь постановки в очередь для входа и партии владельца."""
+    if not conn.in_transaction:
+        raise RuntimeError('Flow grant requires transaction')
+    if conn.execute('SELECT id FROM users WHERE id=?', (user_id,)).fetchone() is None:
+        return 'missing'
+    if conn.execute('SELECT 1 FROM flow_auto_grants WHERE user_id=?', (user_id,)).fetchone():
+        return 'claimed'
+    if conn.execute("SELECT 1 FROM subscriptions WHERE user_id=? AND protocol='wg'",
+                    (user_id,)).fetchone():
+        return 'existing'
+    if _open_wg_order(conn, user_id):
+        return 'order_pending'
+    if not setting or not setting['enabled']:
+        return 'disabled'
+    if conn.execute('SELECT count(*) FROM flow_auto_grants').fetchone()[0] >= setting['max_users']:
+        return 'limit'
+    node = _node(conn)
+    if node is None:
+        return 'unavailable'
+    sid = str(uuid.uuid4())
+    target = now + int(setting['days']) * 86400
+    conn.execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state,"
+                 "server_id,device_limit,access_source) VALUES (?,?,'wg',0,'pending',?,0,'trial')",
+                 (sid, user_id, node['id']))
+    conn.execute("INSERT INTO flow_auto_grants(user_id,subscription_id,target_expires,"
+                 "policy_version,state,created,next_attempt,attempts) "
+                 "VALUES (?,?,?,?,'pending',?,?,0)",
+                 (user_id, sid, target, setting['version'], now, now))
+    return 'queued'
+
+
+def enqueue(user_id: int) -> str:
+    """Идемпотентная выдача при входе, без сетевых вызовов и списаний."""
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
-        if conn.execute('SELECT id FROM users WHERE id=?', (user_id,)).fetchone() is None:
-            raise HTTPException(401, 'Аккаунт не найден')
-        grant = conn.execute('SELECT state FROM flow_auto_grants WHERE user_id=?',
-                             (user_id,)).fetchone()
-        if grant:
-            return grant['state']
-        if conn.execute("SELECT 1 FROM subscriptions WHERE user_id=? AND protocol='wg'",
-                        (user_id,)).fetchone():
-            return 'existing'
         setting = conn.execute('SELECT * FROM flow_auto_policy WHERE id=1').fetchone()
-        if not setting or not setting['enabled']:
-            return 'disabled'
-        if conn.execute('SELECT count(*) FROM flow_auto_grants').fetchone()[0] >= setting['max_users']:
-            return 'limit'
-        node = _node(conn)
-        if node is None:
-            return 'unavailable'
-        sid = str(uuid.uuid4())
-        target = now + int(setting['days']) * 86400
-        conn.execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state,"
-                     "server_id,device_limit,access_source) VALUES (?,?,'wg',0,'pending',?,0,'trial')",
-                     (sid, user_id, node['id']))
-        conn.execute("INSERT INTO flow_auto_grants(user_id,subscription_id,target_expires,"
-                     "policy_version,state,created,next_attempt,attempts) "
-                     "VALUES (?,?,?,?,'pending',?,?,0)",
-                     (user_id, sid, target, setting['version'], now, now))
-        return 'pending'
+        result = _reserve_locked(conn, user_id, setting, int(time.time()))
+        if result == 'missing':
+            raise HTTPException(401, 'Аккаунт не найден')
+        if result == 'claimed':
+            return conn.execute('SELECT state FROM flow_auto_grants WHERE user_id=?',
+                                (user_id,)).fetchone()['state']
+        return 'pending' if result == 'queued' else result
+
+
+_ELIGIBLE = """FROM users u
+    WHERE NOT EXISTS (SELECT 1 FROM flow_auto_grants g WHERE g.user_id=u.id)
+      AND NOT EXISTS (SELECT 1 FROM subscriptions s WHERE s.user_id=u.id AND s.protocol='wg')
+      AND NOT EXISTS (SELECT 1 FROM orders o WHERE o.user_id=u.id AND o.protocol='wg'
+                      AND o.status IN ('pending','checkout','paid'))"""
+
+
+def batch_preview() -> dict:
+    """Снимок без изменения БД и без вызовов WGDashboard; только для владельца."""
+    with db() as conn:
+        conn.execute('BEGIN')
+        setting = conn.execute('SELECT * FROM flow_auto_policy WHERE id=1').fetchone()
+        used = conn.execute('SELECT count(*) FROM flow_auto_grants').fetchone()[0]
+        remaining = max(0, setting['max_users'] - used)
+        eligible = conn.execute('SELECT count(*) ' + _ELIGIBLE).fetchone()[0]
+        node_available = _node(conn) is not None if setting['enabled'] else False
+        candidates = []
+        if setting['enabled'] and node_available and remaining:
+            candidates = [r['id'] for r in conn.execute(
+                'SELECT u.id ' + _ELIGIBLE + ' ORDER BY u.id LIMIT ?',
+                (min(MAX_BATCH, remaining),)).fetchall()]
+        states = {r['state']: r['n'] for r in conn.execute(
+            'SELECT state,count(*) AS n FROM flow_auto_grants GROUP BY state')}
+    return {'enabled': bool(setting['enabled']), 'version': setting['version'],
+            'days': setting['days'], 'max_users': setting['max_users'],
+            'eligible': eligible, 'used': used, 'remaining': remaining,
+            'node_available': node_available, 'candidate_ids': candidates,
+            'pending': states.get('pending', 0), 'active': states.get('active', 0),
+            'expired': states.get('expired', 0), 'superseded': states.get('superseded', 0)}
+
+
+async def enqueue_batch(data: BatchRequest) -> dict:
+    """Ставит в очередь только явно выбранные ID (не более 50 за один запрос).
+
+    Повтор того же тела не выбирает новых пользователей. Проверки права,
+    квоты и свободного узла выполняются заново внутри транзакции.
+    """
+    from . import service
+
+    if len(set(data.user_ids)) != len(data.user_ids):
+        raise HTTPException(422, 'В партии не должно быть повторяющихся аккаунтов')
+    async with service.lock:
+        with db() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            setting = conn.execute('SELECT * FROM flow_auto_policy WHERE id=1').fetchone()
+            if setting['version'] != data.version:
+                raise HTTPException(409, 'Политика изменилась. Обновите список.')
+            if not setting['enabled']:
+                raise HTTPException(409, 'Автовыдача отключена владельцем')
+            if not c.SECURE_COOKIE:
+                raise HTTPException(409, 'Для автовыдачи требуется HTTPS.')
+            if not shop_settings.terms_configured():
+                raise HTTPException(409, 'Сначала настройте условия доступа.')
+            now = int(time.time())
+            outcomes = {}
+            for user_id in data.user_ids:
+                result = _reserve_locked(conn, user_id, setting, now)
+                outcomes[result] = outcomes.get(result, 0) + 1
+    return {'requested': len(data.user_ids), 'queued': outcomes.pop('queued', 0),
+            'skipped': outcomes}
 
 
 def after_login(user_id: int):
