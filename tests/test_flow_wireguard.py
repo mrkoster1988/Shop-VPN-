@@ -68,10 +68,15 @@ def test_wrong_owner_expiry_revocation_and_pending(client):
     register(client)
     now = int(time.time())
     _seed(1, 'owned-primary', now + 3600)
-    _seed(1, 'expired-primary', now - 10, 'active')
-    _seed(1, 'pending-primary', now + 3600, 'pending')
-    assert client.get('/api/flow/wireguard/subscriptions/expired-primary').json()['state'] == 'expired'
-    assert client.get('/api/flow/wireguard/subscriptions/pending-primary').status_code == 409
+    # There is one WireGuard subscription per user. Exercise each state
+    # sequentially instead of creating illegal duplicates.
+    with db() as conn:
+        conn.execute("UPDATE subscriptions SET expires=? WHERE id='owned-primary'", (now - 10,))
+    assert client.get('/api/flow/wireguard/subscriptions/owned-primary').json()['state'] == 'expired'
+    with db() as conn:
+        conn.execute("UPDATE subscriptions SET state='pending',expires=? WHERE id='owned-primary'",
+                     (now + 3600,))
+    assert client.get('/api/flow/wireguard/subscriptions/owned-primary').status_code == 409
     with db() as conn:
         conn.execute("UPDATE subscriptions SET state='expired' WHERE id='owned-primary'")
     expired = client.get('/api/flow/wireguard/subscriptions/owned-primary').json()
