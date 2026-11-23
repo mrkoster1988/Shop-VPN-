@@ -239,3 +239,19 @@ def test_older_backups_without_optional_flow_tables_still_validate(source,tmp_pa
         conn.execute('DROP TABLE flow_wireguard_links')
         conn.execute('DROP TABLE wgdashboard_keys')
     assert b.validate(older,env)['encrypted_values']>=4
+
+
+def test_restored_backup_does_not_resurrect_flow_pairing(source,tmp_path):
+    database,env,output,sid=source
+    uid=one('SELECT user_id FROM subscriptions WHERE id=?',(sid,))['user_id']
+    execute("""INSERT INTO flow_shop_pairings(code_hash,challenge,state,user_id,browser_session,
+              created,request_expires,token_hash,token_expires)
+              VALUES (?,?,'exchanged',?,?,1,2000000000,?,2000000000)""",
+              ('fixture-code-hash','fixture-challenge',uid,'old-session-hash','fixture-token-hash'))
+    create(source)
+    target=tmp_path/'restored-flow'
+    b.restore(output,PASSWORD,target)
+    with sqlite3.connect(target/'shop.db') as conn:
+        assert conn.execute('SELECT count(*) FROM flow_shop_pairings').fetchone()[0]==0
+        assert conn.execute('PRAGMA foreign_key_check').fetchall()==[]
+    assert one('SELECT count(*) AS n FROM flow_shop_pairings')['n']==1
