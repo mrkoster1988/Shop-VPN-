@@ -14,15 +14,14 @@ from . import config as c
 from .db import db
 
 
-def discover(user_id: int) -> dict:
+def _discover_locked(conn, user_id: int) -> dict:
     now = int(time.time())
-    with db() as conn:
-        rows = conn.execute("""
-            SELECT id, state, expires, primary_key_state, secret, access_source
-              FROM subscriptions
-             WHERE user_id=? AND protocol='wg'
-             ORDER BY id
-        """, (user_id,)).fetchall()
+    rows = conn.execute("""
+        SELECT id, state, expires, primary_key_state, secret, access_source
+          FROM subscriptions
+         WHERE user_id=? AND protocol='wg'
+         ORDER BY id
+    """, (user_id,)).fetchall()
     items = []
     for row in rows:
         active = (row['state'] == 'active' and row['primary_key_state'] == 'active'
@@ -37,6 +36,11 @@ def discover(user_id: int) -> dict:
             "access_source": row['access_source'],
         })
     return {"subscriptions": items}
+
+
+def discover(user_id: int) -> dict:
+    with db() as conn:
+        return _discover_locked(conn, user_id)
 
 
 def _feed_locked(conn, user_id: int, subscription_id: str) -> dict:
