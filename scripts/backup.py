@@ -35,6 +35,7 @@ ENCRYPTED={
 # Новые таблицы проверяются, если существуют: старые архивы остаются читаемыми.
 OPTIONAL_ENCRYPTED={
     'flow_wireguard_links':('token_secret',),
+    'flow_wireguard_device_links':('token_secret',),
     'wgdashboard_keys':('private_key',),
 }
 REQUIRED={'users','sessions','tickets','orders','plans','meta',*ENCRYPTED}
@@ -182,6 +183,10 @@ def restore(path,password,target):
     with tempfile.TemporaryDirectory(prefix='pushok-restore-') as temp:
         database=Path(temp)/'shop.db';database.write_bytes(files['shop.db']);report=validate(database,files['.env'])
         with closing(sqlite3.connect(database)) as conn:
+            # Restoring a snapshot must not resurrect device bearer URLs.
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='flow_wireguard_device_links'").fetchone():
+                conn.execute("""UPDATE flow_wireguard_device_links SET enabled=0,token_hash=NULL,
+                    token_secret=NULL,version=version+1 WHERE enabled=1""")
             sessions=conn.execute('DELETE FROM sessions').rowcount;tickets=conn.execute('DELETE FROM tickets').rowcount;conn.commit()
         # No extraction, replacement, container startup or mutation of the source installation.
         target=Path(target);target.mkdir(mode=0o700)

@@ -30,7 +30,7 @@ from . import shop_settings, platforms, protocols, bot_menu as menu_editor, paym
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision
+from . import staff, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_wireguard_devices
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -827,6 +827,7 @@ async def rotate_device(did: str,data: RotationCreate,user=Depends(current_user)
             conn.execute('INSERT INTO device_rotations(id,device_id,request_id,old_credential_id,new_credential_id,created) VALUES (?,?,?,?,?,?)',
                 (job,did,str(data.request_id),device['credential_id'] or c.encrypt(did),c.encrypt(identity),int(time.time())))
             conn.execute("UPDATE devices SET state='rotating',secret=NULL,error=NULL WHERE id=?",(did,))
+            flow_wireguard_devices.invalidate_locked(conn,did)
             device.update(state='rotating',secret=None,error=None)
         return JSONResponse({'rotation':{'id':job,'state':'revoking'},'device':public_device(device,sub)},status_code=201)
 
@@ -953,6 +954,31 @@ async def flow_wireguard_public_feed(token: str):
     return JSONResponse(document, headers={'Cache-Control':'no-store',
         'Pragma':'no-cache','X-Robots-Tag':'noindex, nofollow, noarchive',
         'Referrer-Policy':'no-referrer'})
+
+
+# Device feeds reuse the existing per-device provisioning lifecycle.
+@app.get('/api/flow/wireguard/devices/{did}/link')
+async def flow_device_link_status(did: str,user=Depends(current_user)):
+    return flow_wireguard_devices.link_for_user(user['id'],did)
+
+
+@app.put('/api/flow/wireguard/devices/{did}/link')
+async def flow_device_link_change(did: str,data: FlowWireGuardLinkAction,user=Depends(current_user)):
+    async with service.lock:
+        return flow_wireguard_devices.change_link(user['id'],did,data.action,data.version)
+
+
+@app.get('/api/flow/wireguard/devices/{did}')
+async def flow_device_feed(did: str,user=Depends(current_user)):
+    return JSONResponse(flow_wireguard_devices.feed_for_user(user['id'],did),
+        headers={'Cache-Control':'no-store','Pragma':'no-cache','X-Robots-Tag':'noindex, nofollow, noarchive'})
+
+
+@app.get('/flow/wireguard/device/{token}')
+async def flow_device_public_feed(token: str):
+    return JSONResponse(flow_wireguard_devices.feed_for_link(token),
+        headers={'Cache-Control':'no-store','Pragma':'no-cache','X-Robots-Tag':'noindex, nofollow, noarchive',
+                 'Referrer-Policy':'no-referrer'})
 
 
 # Owner-enabled, bounded starter access for registered Shop users.

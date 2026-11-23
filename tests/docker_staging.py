@@ -152,8 +152,12 @@ class Staging:
                      'order_history_state','order_milestones','bot_menu_settings','wgdashboard_keys',
                      'wgdashboard_expirations','hysteria2_credentials','tuic_credentials','update_checker',
                      'flow_wireguard_versions','flow_wireguard_links',
+                     'flow_wireguard_device_versions','flow_wireguard_device_links',
                      'flow_auto_policy','flow_auto_grants'}
         added=sorted(set(new)-set(old))
+        for table in ('flow_wireguard_device_links','flow_wireguard_device_versions'):
+            check(table not in added or current['counts'].get(table)==0,
+                  'Unexpected WireGuard device feed data during migration')
         check('flow_wireguard_links' not in added or current['counts'].get('flow_wireguard_links') == 0,
               'Unexpected automatic WireGuard links during migration')
         check('flow_wireguard_versions' not in added or current['counts'].get('flow_wireguard_versions') == 0,
