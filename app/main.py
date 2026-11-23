@@ -962,6 +962,16 @@ async def flow_auto_policy_update(data: flow_auto_provision.PolicyUpdate):
     return await flow_auto_provision.update_policy(data)
 
 
+@app.get('/api/admin/flow/wireguard/auto/batch', dependencies=[Depends(admin)])
+async def flow_auto_batch_preview():
+    return flow_auto_provision.batch_preview()
+
+
+@app.post('/api/admin/flow/wireguard/auto/batch', dependencies=[Depends(admin)])
+async def flow_auto_batch_queue(data: flow_auto_provision.BatchRequest):
+    return await flow_auto_provision.enqueue_batch(data)
+
+
 # Shop-session endpoints for accounts that already own WireGuard access.
 # They do not create free subscriptions or accept an MTProxy read-only token.
 @app.get('/api/flow/wireguard/connections')
