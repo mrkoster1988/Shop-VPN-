@@ -203,6 +203,9 @@ def init_db():
           protocol TEXT NOT NULL, created INTEGER NOT NULL, policy_version INTEGER NOT NULL, terms_snapshot TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS trial_policy_changes (
           id INTEGER PRIMARY KEY, created INTEGER NOT NULL, before_data TEXT NOT NULL, after_data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS flow_wireguard_versions (
+          subscription_id TEXT PRIMARY KEY REFERENCES subscriptions(id) ON DELETE CASCADE,
+          fingerprint TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0));
         CREATE TABLE IF NOT EXISTS subscription_links (
           subscription_id TEXT PRIMARY KEY REFERENCES subscriptions(id), token_hash TEXT UNIQUE,
           token_secret TEXT, enabled INTEGER NOT NULL DEFAULT 0,

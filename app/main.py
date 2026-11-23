@@ -30,7 +30,7 @@ from . import shop_settings, platforms, protocols, bot_menu as menu_editor, paym
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, mail, partner, commerce_analytics, updates, update_install
+from . import staff, mail, partner, commerce_analytics, updates, update_install, flow_wireguard
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -920,6 +920,18 @@ async def export_subscription(token: str):
     body=base64.b64encode((config+'\n').encode()).decode()
     return Response(body,media_type='text/plain',headers={'Subscription-Userinfo':'expire='+str(row['expires']),'Profile-Update-Interval':'12',
         'Content-Disposition':'attachment; filename="pushok-subscription.txt"','X-Robots-Tag':'noindex, nofollow, noarchive'})
+
+# Shop-session endpoints for accounts that already own WireGuard access.
+# They do not create free subscriptions or accept an MTProxy read-only token.
+@app.get('/api/flow/wireguard/connections')
+async def flow_wireguard_connections(user=Depends(current_user)):
+    return flow_wireguard.discover(user['id'])
+
+@app.get('/api/flow/wireguard/subscriptions/{sid}')
+async def flow_wireguard_feed(sid: str, user=Depends(current_user)):
+    document = flow_wireguard.feed_for_owned_subscription(user['id'], sid)
+    return JSONResponse(document, headers={'Cache-Control': 'no-store',
+        'Pragma': 'no-cache', 'X-Robots-Tag': 'noindex, nofollow, noarchive'})
 
 @app.get('/api/subscriptions/{sid}/config')
 async def config_file(sid: str, user=Depends(current_user)):
