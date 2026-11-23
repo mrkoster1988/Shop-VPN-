@@ -123,6 +123,10 @@ async def decision(data: Decision, request: Request, user=Depends(current_user))
             if row['state']==state and row['user_id']==user['id'] and row['browser_session']==session_hash:
                 return {'state': state}
             raise HTTPException(409, 'Запрос уже обработан')
+        if state=='approved':
+            # A newer explicit approval supersedes an older unexchanged request.
+            conn.execute("DELETE FROM flow_shop_pairings WHERE user_id=? AND state='approved'",
+                         (user['id'],))
         conn.execute("""UPDATE flow_shop_pairings SET state=?,user_id=?,browser_session=?
             WHERE code_hash=?""", (state, user['id'], session_hash, digest(data.code)))
     # Подготовка только по существующей политике владельца, без списаний и удалённых вызовов.
