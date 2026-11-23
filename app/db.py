@@ -208,6 +208,13 @@ def init_db():
           token_secret TEXT, enabled INTEGER NOT NULL DEFAULT 0,
           follow_rotation INTEGER NOT NULL DEFAULT 0, version INTEGER NOT NULL DEFAULT 1,
           created INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS flow_device_links (
+          device_id TEXT PRIMARY KEY REFERENCES devices(id),
+          token_hash TEXT UNIQUE, token_secret TEXT,
+          enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
+          version INTEGER NOT NULL DEFAULT 1 CHECK(version>=1),
+          revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>=1),
+          snapshot_hash TEXT, created INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS primary_rotations (
           id TEXT PRIMARY KEY, subscription_id TEXT NOT NULL REFERENCES subscriptions(id),
           request_id TEXT NOT NULL, old_credential_id TEXT NOT NULL, new_credential_id TEXT NOT NULL,
