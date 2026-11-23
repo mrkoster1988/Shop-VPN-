@@ -88,7 +88,7 @@ async def safety(request, call_next):
     path = request.url.path.removeprefix(c.BASE_PATH)
     if os.getenv('MAINTENANCE_MODE')=='true' and path!='/health':
         headers={'Retry-After':'60','Cache-Control':'no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'}
-        if path.startswith(('/api/','/sub/','/login')):
+        if path.startswith(('/api/','/sub/','/flow/sub/','/login')):
             return JSONResponse({'detail':'Магазин временно на обслуживании. Повторите позже.'},status_code=503,headers=headers)
         return HTMLResponse('<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Магазин на обслуживании</title><body><main><h1>Скоро вернёмся</h1><p>Магазин временно на обслуживании. Пожалуйста, зайдите немного позже.</p></main></body></html>',status_code=503,headers=headers)
     if request.method in ('POST', 'PUT', 'DELETE', 'PATCH'):
@@ -99,13 +99,13 @@ async def safety(request, call_next):
             return JSONResponse({'detail': 'Недопустимый источник запроса'}, status_code=403)
         if int(request.headers.get('content-length', '0') or 0) > 16384:
             return JSONResponse({'detail': 'Слишком большой запрос'}, status_code=413)
-    if path.startswith(('/api/','/sub/')):
+    if path.startswith(('/api/','/sub/','/flow/sub/')):
         ip = request.client.host if request.client else 'unknown'
-        bucket = hits[(ip, 'sub' if path.startswith('/sub/') else 'auth' if path.startswith('/api/auth/') else 'api')]
+        bucket = hits[(ip, 'sub' if path.startswith(('/sub/','/flow/sub/')) else 'auth' if path.startswith('/api/auth/') else 'api')]
         now = time.monotonic()
         while bucket and bucket[0] < now - 60:
             bucket.popleft()
-        limit = 60 if path.startswith('/sub/') else 20 if path.startswith(('/api/auth/','/api/admin/auth/')) else 180
+        limit = 60 if path.startswith(('/sub/','/flow/sub/')) else 20 if path.startswith(('/api/auth/','/api/admin/auth/')) else 180
         if len(bucket) >= limit:
             return JSONResponse({'detail': 'Слишком много запросов. Подождите минуту.'}, status_code=429,headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer'})
         bucket.append(now)
@@ -120,7 +120,7 @@ async def safety(request, call_next):
         except sqlite3.Error: logging.exception('Не удалось записать событие аудита администратора')
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['Referrer-Policy'] = 'no-referrer'
-    if path.startswith(('/api/', '/login','/sub/')):
+    if path.startswith(('/api/', '/login','/sub/','/flow/sub/')):
         response.headers['Cache-Control'] = 'no-store'
     if path == '/static/flow-import.html':
         response.headers['Cache-Control'] = 'no-store'
@@ -1165,6 +1165,9 @@ async def reject(oid: str):
 async def retry(oid: str):
     execute("UPDATE orders SET next_attempt=0 WHERE id=? AND status='paid'", (oid,))
     return {'ok': True}
+
+from .flow_device_links import router as flow_device_links_router
+app.include_router(flow_device_links_router)
 
 app.mount('/static', StaticFiles(directory=STATIC), name='static')
 
