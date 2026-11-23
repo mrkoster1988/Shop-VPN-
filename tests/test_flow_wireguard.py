@@ -84,3 +84,50 @@ def test_wrong_owner_expiry_revocation_and_pending(client):
     register(client, 'other@example.com')
     assert client.get('/api/flow/wireguard/subscriptions/owned-primary').status_code == 404
     assert client.get('/api/flow/wireguard/connections').json() == {'subscriptions': []}
+
+def test_personal_link_replay_rotate_revoke_and_ownership(client):
+    register(client)
+    _seed(1, 'owned-primary', int(time.time())+86400)
+    path='/api/flow/wireguard/subscriptions/owned-primary/link'
+    assert client.get(path).json() == {'enabled': False, 'version': 0, 'url': None}
+    first=client.put(path,json={'action':'enable','version':0})
+    assert first.status_code == 200,first.text
+    initial=first.json()
+    assert initial['enabled'] is True and initial['version']==1
+    assert initial['url'].startswith('http://testserver/flow/wireguard/')
+    token=initial['url'].rsplit('/',1)[-1]
+    assert len(token)==43
+    assert client.put(path,json={'action':'enable','version':0}).json()==initial
+    assert client.get('/flow/wireguard/'+token).json()['state']=='active'
+    with db() as conn:
+        row=conn.execute('SELECT * FROM flow_wireguard_links').fetchone()
+        assert token not in row['token_hash'] and token not in row['token_secret']
+    rotated=client.put(path,json={'action':'rotate','version':1})
+    assert rotated.status_code==200
+    updated=rotated.json()
+    assert updated['version']==2 and updated['url']!=initial['url']
+    assert client.get('/flow/wireguard/'+token).status_code==404
+    assert client.put(path,json={'action':'rotate','version':1}).status_code==409
+    new_token=updated['url'].rsplit('/',1)[-1]
+    assert client.get('/flow/wireguard/'+new_token).status_code==200
+    assert client.put(path,json={'action':'disable','version':2}).json()=={
+        'enabled':False,'version':3,'url':None}
+    assert client.get('/flow/wireguard/'+new_token).status_code==404
+    assert client.put(path,json={'action':'rotate','version':3}).status_code==409
+    assert client.get('/flow/wireguard/short').status_code==404
+    client.post('/api/auth/logout')
+    assert client.put(path,json={'action':'enable','version':3}).status_code==401
+    register(client,'other@example.com')
+    assert client.get(path).status_code==404
+    assert client.put(path,json={'action':'enable','version':3}).status_code==404
+
+
+def test_link_never_issues_for_unpaid_or_pending_user(client):
+    register(client)
+    assert client.put('/api/flow/wireguard/subscriptions/unknown/link',
+        json={'action':'enable','version':0}).status_code==404
+    _seed(1,'expired',int(time.time())-3)
+    path='/api/flow/wireguard/subscriptions/expired/link'
+    assert client.put(path,json={'action':'enable','version':0}).status_code==409
+    with db() as conn:
+        assert conn.execute('SELECT count(*) FROM flow_wireguard_links').fetchone()[0]==0

@@ -921,6 +921,32 @@ async def export_subscription(token: str):
     return Response(body,media_type='text/plain',headers={'Subscription-Userinfo':'expire='+str(row['expires']),'Profile-Update-Interval':'12',
         'Content-Disposition':'attachment; filename="pushok-subscription.txt"','X-Robots-Tag':'noindex, nofollow, noarchive'})
 
+class FlowWireGuardLinkAction(BaseModel):
+    model_config = {'extra':'forbid'}
+    action: Literal['enable','rotate','disable']
+    version: int = Field(ge=0, strict=True)
+
+
+@app.get('/api/flow/wireguard/subscriptions/{sid}/link')
+async def flow_wireguard_link_status(sid: str, user=Depends(current_user)):
+    return flow_wireguard.link_for_user(user['id'], sid)
+
+
+@app.put('/api/flow/wireguard/subscriptions/{sid}/link')
+async def flow_wireguard_link_change(sid: str, data: FlowWireGuardLinkAction,
+                                    user=Depends(current_user)):
+    async with service.lock:
+        return flow_wireguard.change_link(user['id'], sid, data.action, data.version)
+
+
+@app.get('/flow/wireguard/{token}')
+async def flow_wireguard_public_feed(token: str):
+    document = flow_wireguard.feed_for_link(token)
+    return JSONResponse(document, headers={'Cache-Control':'no-store',
+        'Pragma':'no-cache','X-Robots-Tag':'noindex, nofollow, noarchive',
+        'Referrer-Policy':'no-referrer'})
+
+
 # Shop-session endpoints for accounts that already own WireGuard access.
 # They do not create free subscriptions or accept an MTProxy read-only token.
 @app.get('/api/flow/wireguard/connections')

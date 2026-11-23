@@ -104,3 +104,99 @@ def feed_for_owned_subscription(user_id: int, subscription_id: str) -> dict:
         'expires_at': expiry,
         'profiles': profiles,
     }
+
+def _require_owned_wg(conn, user_id: int, subscription_id: str, *, active: bool):
+    row = conn.execute(
+        "SELECT id,protocol,state,expires,primary_key_state,secret "
+        "FROM subscriptions WHERE id=? AND user_id=?",
+        (subscription_id, user_id),
+    ).fetchone()
+    if row is None or row['protocol'] != 'wg':
+        raise HTTPException(404, 'Подписка не найдена')
+    if active and (row['state'] != 'active' or row['expires'] <= time.time()
+                   or row['primary_key_state'] != 'active' or not row['secret']):
+        raise HTTPException(409, 'Нужна активная подписка WireGuard')
+    return row
+
+
+def _link_url(token: str) -> str:
+    # The consumer must never see a WGDashboard admin credential.
+    return c.PUBLIC_URL.rstrip('/') + '/flow/wireguard/' + token
+
+
+def link_for_user(user_id: int, subscription_id: str) -> dict:
+    with db() as conn:
+        _require_owned_wg(conn, user_id, subscription_id, active=False)
+        row = conn.execute(
+            'SELECT * FROM flow_wireguard_links WHERE subscription_id=?',
+            (subscription_id,),
+        ).fetchone()
+    if row is None:
+        return {'enabled': False, 'version': 0, 'url': None}
+    if not row['enabled']:
+        return {'enabled': False, 'version': row['version'], 'url': None}
+    try:
+        raw = c.decrypt(row['token_secret'])
+    except Exception:
+        raise HTTPException(503, 'Ссылка временно недоступна') from None
+    return {'enabled': True, 'version': row['version'], 'url': _link_url(raw)}
+
+
+def change_link(user_id: int, subscription_id: str, action: str,
+                expected_version: int) -> dict:
+    # A single database transaction serializes issuance, CAS rotation and revoke.
+    # Repeating 'enable' does not issue another token, even if a response was lost.
+    import secrets
+    from .security import digest
+    with db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        _require_owned_wg(conn, user_id, subscription_id, active=action != 'disable')
+        row = conn.execute('SELECT * FROM flow_wireguard_links WHERE subscription_id=?',
+                           (subscription_id,)).fetchone()
+        version = row['version'] if row else 0
+        if action == 'enable' and row and row['enabled']:
+            # Replays of enable are idempotent; a stale version is not authorization
+            # for any different operation.
+            pass
+        else:
+            if version != expected_version:
+                raise HTTPException(409, 'Ссылка изменилась. Обновите кабинет.')
+            if action == 'disable':
+                if row and row['enabled']:
+                    conn.execute('UPDATE flow_wireguard_links SET enabled=0,version=version+1 '
+                                 'WHERE subscription_id=?', (subscription_id,))
+            elif action in ('enable', 'rotate'):
+                if action == 'rotate' and (row is None or not row['enabled']):
+                    raise HTTPException(409, 'Сначала создайте ссылку')
+                token = secrets.token_urlsafe(32)
+                secret = c.encrypt(token)
+                hashed = digest(token)
+                if row is None:
+                    conn.execute(
+                        'INSERT INTO flow_wireguard_links'
+                        '(subscription_id,token_hash,token_secret,enabled,version) '
+                        'VALUES (?,?,?,1,1)', (subscription_id, hashed, secret))
+                else:
+                    conn.execute('UPDATE flow_wireguard_links SET '
+                                 'token_hash=?,token_secret=?,enabled=1,version=version+1 '
+                                 'WHERE subscription_id=?',
+                                 (hashed, secret, subscription_id))
+            else:
+                raise HTTPException(422, 'Неизвестное действие')
+    return link_for_user(user_id, subscription_id)
+
+
+def feed_for_link(token: str) -> dict:
+    from .security import digest
+    import re
+    if not isinstance(token, str) or re.fullmatch(r'[A-Za-z0-9_-]{43}', token) is None:
+        raise HTTPException(404, 'Ссылка не найдена')
+    with db() as conn:
+        row = conn.execute(
+            'SELECT l.subscription_id,s.user_id FROM flow_wireguard_links l '
+            'JOIN subscriptions s ON s.id=l.subscription_id '
+            'WHERE l.token_hash=? AND l.enabled=1', (digest(token),),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(404, 'Ссылка не найдена')
+    return feed_for_owned_subscription(row['user_id'], row['subscription_id'])
