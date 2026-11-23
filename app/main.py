@@ -76,7 +76,9 @@ async def safe_validation(request, exc):
         return JSONResponse({'detail':'Проверьте поля сервера и профиль подключения.'},status_code=422)
     if request.url.path.removeprefix(c.BASE_PATH).startswith(('/api/ads/','/api/admin/ads/')):
         return JSONResponse({'detail':'Проверьте поля рекламной заявки или настроек.'},status_code=422)
-    if request.url.path.removeprefix(c.BASE_PATH).startswith('/api/auth/'):
+    if request.url.path.removeprefix(c.BASE_PATH).startswith('/api/flow/shop/auth/'):
+        return JSONResponse({'detail':'Проверьте данные запроса входа Pushok Flow.'},status_code=422)
+    if request.url.path.removeprefix(c.BASE_PATH).startswith('/api/auth/'): 
         return JSONResponse({'detail':'Проверьте данные для входа или смены пароля.'},status_code=422)
     return await request_validation_exception_handler(request,exc)
 
@@ -102,11 +104,11 @@ async def safety(request, call_next):
             return JSONResponse({'detail': 'Слишком большой запрос'}, status_code=413)
     if private_feed or path.startswith('/api/'):
         ip = request.client.host if request.client else 'unknown'
-        bucket = hits[(ip, 'sub' if private_feed else 'auth' if path.startswith('/api/auth/') else 'api')]
+        bucket = hits[(ip, 'sub' if private_feed else 'flow_auth' if path.startswith('/api/flow/shop/auth/') else 'auth' if path.startswith('/api/auth/') else 'api')]
         now = time.monotonic()
         while bucket and bucket[0] < now - 60:
             bucket.popleft()
-        limit = 60 if private_feed else 20 if path.startswith(('/api/auth/','/api/admin/auth/')) else 180
+        limit = 60 if private_feed else 20 if path.startswith(('/api/auth/','/api/admin/auth/','/api/flow/shop/auth/')) else 180
         if len(bucket) >= limit:
             return JSONResponse({'detail': 'Слишком много запросов. Подождите минуту.'}, status_code=429,headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer'})
         bucket.append(now)
@@ -1223,6 +1225,9 @@ async def reject(oid: str):
 async def retry(oid: str):
     execute("UPDATE orders SET next_attempt=0 WHERE id=? AND status='paid'", (oid,))
     return {'ok': True}
+
+from .flow_shop_pairing import router as flow_shop_pairing_router
+app.include_router(flow_shop_pairing_router)
 
 app.mount('/static', StaticFiles(directory=STATIC), name='static')
 
