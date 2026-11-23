@@ -190,7 +190,7 @@ function renderAccount() {
   $('subscriptions').innerHTML = me.subscriptions.length ? me.subscriptions.map(s => {
     const active = s.state === 'active' && s.expires*1000 > Date.now();
     const primaryReady=active && (s.primary_key_state || 'active')==='active';
-    return `<article class="subscription"><h3>${esc(protocolName(s.protocol))}</h3>${s.access_source==='trial'?'<span class="status">Пробный доступ</span>':''}<p>${active?'Доступ до '+date(s.expires):s.state==='pending'?'Подключение готовится':'Подписка закончилась'}</p><p>${esc(profileAllowance(s.device_limit ?? 4))}</p>${primaryReady?`<button class="small" data-config="${esc(s.id)}">Основной профиль ↗</button>${s.access_source!=='trial'?`<button class="text-link" data-primary-rotate="${esc(s.id)}">Сменить основной ключ</button>`:''}`:s.primary_key_state==='rotating'?`<p>Меняем основной ключ${s.primary_retrying?' · повторим после ошибки':''}. Дополнительные профили не меняются.</p>`:''}${s.protocol==='xui'&&s.state!=='pending'&&s.access_source!=='trial'?`<button class="text-link" data-link="${esc(s.id)}">Ссылка подписки</button>`:''}${active&&s.access_source!=='trial'&&me.referrals?.balance_days>0?`<button class="text-link" data-referral="${esc(s.id)}">Потратить бонус</button>`:''}${s.state!=='pending'?` ${s.access_source!=='trial'?`<button class="small secondary" data-devices="${esc(s.id)}">Устройства</button>`:''}<button class="text-link" data-renew="${esc(s.protocol)}">${active?'Продлить подписку':'Возобновить подписку'}</button>`:''}</article>`;
+    return `<article class="subscription"><h3>${esc(protocolName(s.protocol))}</h3>${s.access_source==='trial'?'<span class="status">Пробный доступ</span>':''}<p>${active?'Доступ до '+date(s.expires):s.state==='pending'?'Подключение готовится':'Подписка закончилась'}</p><p>${esc(profileAllowance(s.device_limit ?? 4))}</p>${primaryReady?`<button class="small" data-config="${esc(s.id)}">Основной профиль ↗</button>${s.access_source!=='trial'?`<button class="text-link" data-primary-rotate="${esc(s.id)}">Сменить основной ключ</button>`:''}`:s.primary_key_state==='rotating'?`<p>Меняем основной ключ${s.primary_retrying?' · повторим после ошибки':''}. Дополнительные профили не меняются.</p>`:''}${s.protocol==='xui'&&s.state!=='pending'&&s.access_source!=='trial'?`<button class="text-link" data-link="${esc(s.id)}">Ссылка подписки</button>`:''}${s.protocol==='wg'&&primaryReady?`<button class="text-link" data-link="${esc(s.id)}">Открыть в Pushok Flow</button>`:''}${active&&s.access_source!=='trial'&&me.referrals?.balance_days>0?`<button class="text-link" data-referral="${esc(s.id)}">Потратить бонус</button>`:''}${s.state!=='pending'?` ${s.access_source!=='trial'?`<button class="small secondary" data-devices="${esc(s.id)}">Устройства</button>`:''}<button class="text-link" data-renew="${esc(s.protocol)}">${active?'Продлить подписку':'Возобновить подписку'}</button>`:''}</article>`;
   }).join('') : '<p>Подписок пока нет. Выберите тариф на главной странице.</p>';
   $('orders').innerHTML = me.orders.length ? me.orders.map(o => `<div class="order"><div><b>${esc(protocolName(o.protocol))} · ${o.kind==='referral'?'Бонус · '+o.days+' дней':o.kind==='trial'?'Без оплаты':money(o.amount,o.currency)}</b><br><code>${esc(o.id)}</code><br>${date(o.created)}</div><div><span class="status ${esc(o.status)} ${esc(o.progress?.stage || '')}">${esc(displayOrderStatus(o))}</span><p>${esc(o.progress?.message || '')}</p><br><button class="text-link" data-order="${esc(o.id)}">${o.status==='pending'?'Оплатить / реквизиты':'Статус и помощь'}</button></div></div>`).join('') : '<p>Заказов пока нет.</p>';
   refreshSupportCases().catch(e=>{ $('support-status').textContent=e.message; });
@@ -505,7 +505,7 @@ function clearFlowLink() {
   $('flow-open-note').textContent='Для Pushok Flow 0.41 и новее нужна включённая HTTPS-ссылка подписки.';
 }
 function flowUrlFor(state, parent) {
-  if (typeof PushokFlowLinks==='undefined' || state?.enabled!==true || parent?.protocol!=='xui' ||
+  if (typeof PushokFlowLinks==='undefined' || state?.enabled!==true || !['xui','wg'].includes(parent?.protocol) ||
       parent.state!=='active' || !Number.isFinite(parent.expires) || parent.expires*1000<=Date.now() ||
       (parent.primary_key_state || 'active')!=='active') return null;
   return PushokFlowLinks.landingUrl(state.url, 'Подписка Pushok', location.origin, basePath);
@@ -515,7 +515,17 @@ function renderFlowLink(state, parent) {
   $('flow-open').disabled=!flowLaunchUrl;
   $('flow-open-note').textContent=flowLaunchUrl
     ? 'Откроется страница передачи подписки. Подтвердите добавление в Pushok Flow.'
-    : 'Для Pushok Flow 0.41 и новее нужна включённая HTTPS-ссылка подписки.';
+    : linkIsWireGuard() ? 'Для WireGuard нужна версия Pushok Flow 0.57 или новее и HTTPS-ссылка.'
+      : 'Для VLESS нужна версия Pushok Flow 0.41 или новее и HTTPS-ссылка.';
+}
+function linkApiPath(sid) {
+  const parent=me?.subscriptions.find(s=>s.id===sid);
+  const encoded=encodeURIComponent(sid);
+  return parent?.protocol==='wg' ? '/api/flow/wireguard/subscriptions/'+encoded+'/link'
+    : '/api/subscriptions/'+encoded+'/link';
+}
+function linkIsWireGuard() {
+  return me?.subscriptions.find(s=>s.id===linkSubscription)?.protocol==='wg';
 }
 function clearLink() {
   linkRequest++;linkSubscription=null;linkState=null;
@@ -524,12 +534,15 @@ function clearLink() {
   for(const id of ['copy-link','link-enable','link-rotate','link-disable'])$(id).disabled=true;
 }
 function renderLink(state) {
-  linkState=state;$('link-value').value=state.url || '';$('link-follow').checked=state.follow_rotation;
+  linkState=state;$('link-value').value=state.url || '';$('link-follow').checked=!!state.follow_rotation;
+  const wireguard=linkIsWireGuard();
+  $('link-title').textContent=wireguard?'Ссылка WireGuard для Pushok Flow':'Ссылка подписки VLESS';
+  $('link-follow-settings').hidden=wireguard;
   $('copy-link').disabled=!state.enabled;$('link-rotate').disabled=!state.enabled;$('link-disable').disabled=!state.enabled;
   const parent=me?.subscriptions.find(s=>s.id===linkSubscription);
   renderFlowLink(state,parent);
-  $('link-enable').disabled=!parent || parent.state!=='active' || parent.expires*1000<=Date.now() || (parent.primary_key_state || 'active')!=='active';
-  $('link-enable').textContent=state.enabled?'Сохранить настройки':'Создать ссылку';
+  $('link-enable').disabled=!parent || parent.state!=='active' || parent.expires*1000<=Date.now() || (parent.primary_key_state || 'active')!=='active' || (wireguard && state.enabled);
+  $('link-enable').textContent=state.enabled?(wireguard?'Ссылка включена':'Сохранить настройки'):'Создать ссылку';
   $('link-status').textContent=state.enabled?'Ссылка включена. Импортируйте её как URL подписки.':'Ссылка отключена.';
 }
 async function openLink(sid) {
@@ -540,7 +553,7 @@ async function refreshLink() {
   const sid=linkSubscription,request=++linkRequest;
   linkState=null;$('link-value').value='';clearFlowLink();
   for(const id of ['copy-link','link-enable','link-rotate','link-disable'])$(id).disabled=true;
-  const state=await api('/api/subscriptions/'+encodeURIComponent(sid)+'/link');
+  const state=await api(linkApiPath(sid));
   if(request===linkRequest && $('link-dialog').open)renderLink(state);
 }
 async function changeLink(action) {
@@ -549,7 +562,7 @@ async function changeLink(action) {
   for(const id of ['copy-link','link-enable','link-rotate','link-disable'])$(id).disabled=true;
   linkState=null;$('link-value').value='';clearFlowLink();
   try {
-    const state=await api('/api/subscriptions/'+encodeURIComponent(sid)+'/link',{action,version,follow_rotation:$('link-follow').checked},'PUT');
+    const state=await api(linkApiPath(sid),linkIsWireGuard()?{action,version}:{action,version,follow_rotation:$('link-follow').checked},'PUT');
     if(request!==linkRequest || !$('link-dialog').open)return;
     renderLink(state);await refreshMe();
   } catch(e) {

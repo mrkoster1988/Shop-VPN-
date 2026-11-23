@@ -78,7 +78,8 @@ def test_wrong_owner_expiry_revocation_and_pending(client):
                      (now + 3600,))
     assert client.get('/api/flow/wireguard/subscriptions/owned-primary').status_code == 409
     with db() as conn:
-        conn.execute("UPDATE subscriptions SET state='expired' WHERE id='owned-primary'")
+        conn.execute("UPDATE subscriptions SET state='expired',expires=? WHERE id='owned-primary'",
+                     (now - 10,))
     expired = client.get('/api/flow/wireguard/subscriptions/owned-primary').json()
     assert expired['profiles'] == [] and expired['state'] == 'expired'
     assert expired['revision'] == 1

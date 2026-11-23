@@ -766,3 +766,32 @@ test('ссылка уведомления открывает кабинет то
  const unknown=await customerPage({search:'?view=untrusted'});
  assert.equal(unknown.element('account-dialog').open,false);
 });
+
+test('WireGuard trial access offers a link for Flow with no VLESS rotation option', async () => {
+  const p=await customerPage();
+  p.state.customer.subscriptions=[{id:'sub-a',protocol:'wg',state:'active',
+    access_source:'trial',expires:Math.floor(Date.now()/1000)+3600,
+    primary_key_state:'active',device_limit:0}];
+  await p.run('refreshMe()');
+  assert.ok(p.element('subscriptions').innerHTML.includes('data-link="sub-a"'));
+  assert.ok(p.element('subscriptions').innerHTML.includes('Открыть в Pushok Flow'));
+  p.respond('/shop/api/flow/wireguard/subscriptions/sub-a/link',
+    {enabled:false,version:0,url:null});
+  await p.run("openLink('sub-a')");
+  assert.equal(p.element('flow-open').disabled,true);
+  assert.equal(p.element('link-follow-settings').hidden,true);
+  assert.equal(p.element('link-title').textContent,'Ссылка WireGuard для Pushok Flow');
+  p.respond('/shop/api/flow/wireguard/subscriptions/sub-a/link',
+    {enabled:true,version:1,url:'https://wg.example/flow/wireguard/private-token'});
+  await p.run("changeLink('enable')");
+  const put=p.calls.filter(c=>c.opts.method==='PUT').pop();
+  assert.equal(put.url,'/shop/api/flow/wireguard/subscriptions/sub-a/link');
+  assert.deepEqual(JSON.parse(put.opts.body),{action:'enable',version:0});
+  assert.equal(p.element('flow-open').disabled,false);
+  assert.equal(p.element('link-enable').disabled,true);
+  p.element('flow-open').onclick();
+  const target=p.state.opened[0][0];
+  assert.equal(new URL(target).search,'');
+  assert.equal(new URLSearchParams(new URL(target).hash.slice(1)).get('url'),
+    'https://wg.example/flow/wireguard/private-token');
+});
