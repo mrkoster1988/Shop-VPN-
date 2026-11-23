@@ -481,7 +481,8 @@ async function refresh({plans = role==='owner'} = {}) {
   $('stats').innerHTML = `<div>Пользователи<strong>${data.users}</strong></div><div>Подписки<strong>${data.active}</strong></div><div>Подтверждено<strong>${data.revenue} ₽ / ${data.stars} ★</strong></div>`;
   if (catalog) $('plan-editors').innerHTML = catalog.plans.map(planForm).join('');
   await refreshProtocols();
-  if(role==='owner') await Promise.all([refreshAdsAdmin(),refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers(),refreshTrialPolicy(),refreshCoupons(),refreshReferralPolicy(),refreshCommerceAnalytics()]);
+  $('flow-auto-section').hidden=role!=='owner';
+  if(role==='owner') await Promise.all([refreshAdsAdmin(),refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers(),refreshTrialPolicy(),refreshFlowAutoPolicy(),refreshCoupons(),refreshReferralPolicy(),refreshCommerceAnalytics()]);
   else if(role==='mtproxy_manager') await refreshAdsAdmin();
   else if(role==='finance') await Promise.all([refreshAdsAdmin(),refreshOrders(),refreshCommerceAnalytics()]);
   else if(role==='panel_operator') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers()]);
@@ -545,6 +546,7 @@ $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method
   $('referral-policy-editor').replaceChildren();$('referral-policy-count').textContent='';$('referral-policy-error').textContent='';
   $('coupons-list').replaceChildren();$('coupons-error').textContent='';$('coupon-create').reset();
   $('trial-policy-editor').replaceChildren();$('trial-policy-count').textContent='';$('trial-policy-error').textContent='';
+  $('flow-auto-section').hidden=true;$('flow-auto-editor').replaceChildren();$('flow-auto-count').textContent='';$('flow-auto-error').textContent='';
   $('list').replaceChildren(); $('stats').replaceChildren(); $('plan-editors').replaceChildren();
   $('admin-notice').textContent = ''; $('error').textContent = ''; $('dashboard').hidden = true; $('admin-login').hidden = false;
 };
@@ -919,6 +921,37 @@ $('server-list').onclick = async event => {
   check.disabled=true;
   try { await api('servers/'+encodeURIComponent(check.dataset.serverCheck)+'/check',{method:'POST'}); await refreshServers(); }
   catch (error) { $('error').textContent=error.message; check.disabled=false; }
+};
+
+async function refreshFlowAutoPolicy() {
+  const epoch=authEpoch;
+  const p=await api('flow/wireguard/auto');
+  if(epoch!==authEpoch || role!=='owner')return;
+  $('flow-auto-count').textContent='Зарезервировано: '+p.used+' из '+p.max_users+'. Осталось: '+p.remaining;
+  $('flow-auto-editor').innerHTML=
+    '<form class="plan-editor" data-flow-auto-version="'+p.version+'">'+
+    '<label class="plan-enabled"><input name="enabled" type="checkbox" '+(p.enabled?'checked':'')+
+    '> Выдавать WireGuard при входе в Shop</label>'+
+    '<label>Стартовый срок, дней<input name="days" type="number" min="1" max="30" value="'+p.days+'" required></label>'+
+    '<label>Общий лимит пользователей<input name="max_users" type="number" min="1" max="100000" value="'+p.max_users+'" required></label>'+
+    '<p>Лимит учитывает ожидающие выдачи и не сбрасывается при изменении. Отключение останавливает новые выдачи, но ранее выданные профили действуют до своего серверного срока.</p>'+
+    '<button type="submit" class="small">Сохранить автовыдачу</button></form>';
+}
+$('flow-auto-editor').onsubmit=async event=>{
+  event.preventDefault();
+  const form=event.target.closest('[data-flow-auto-version]');
+  if(!form || role!=='owner')return;
+  const values=new FormData(form),button=form.querySelector('button');
+  button.disabled=true;
+  try {
+    await api('flow/wireguard/auto',{method:'PUT',data:{
+      enabled:values.has('enabled'),days:Number(values.get('days')),
+      max_users:Number(values.get('max_users')),version:Number(form.dataset.flowAutoVersion)}});
+    await refreshFlowAutoPolicy();
+    $('flow-auto-error').textContent='';
+  }catch(error){
+    $('flow-auto-error').textContent=error.message;button.disabled=false;
+  }
 };
 
 async function refreshTrialPolicy() {

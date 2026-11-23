@@ -924,3 +924,20 @@ test('expired or replaced plans clear confirmation; logout ignores late host rep
  const status=page.run('refreshHostUpdate()');page.run("$('exit').onclick()");page.replyAt(1,hostReady());await status;
  assert.equal(page.element('host-update-panel').hidden,true);assert.equal(page.element('host-update-ack').checked,false);
 });
+
+test('owner can inspect starter WireGuard grant policy; logout clears editor',async()=>{
+  const p=adminPage();
+  p.run("role='owner'");
+  const request=p.run('refreshFlowAutoPolicy()');
+  p.reply({enabled:false,days:1,max_users:100,used:7,remaining:93,version:4});
+  await request;
+  assert.ok(p.element('flow-auto-count').textContent.includes('7 из 100'));
+  const markup=p.element('flow-auto-editor').innerHTML;
+  assert.ok(markup.includes('data-flow-auto-version="4"'));
+  assert.ok(markup.includes('name="max_users"') && markup.includes('max="100000"'));
+  assert.ok(markup.includes('name="days"') && markup.includes('max="30"'));
+  assert.ok(!markup.includes('name="enabled" type="checkbox" checked'));
+  p.run("$('exit').onclick()");
+  assert.equal(p.element('flow-auto-editor').innerHTML,'');
+  assert.equal(p.element('flow-auto-section').hidden,true);
+});
