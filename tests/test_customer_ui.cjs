@@ -795,3 +795,40 @@ test('WireGuard trial access offers a link for Flow with no VLESS rotation optio
   assert.equal(new URLSearchParams(new URL(target).hash.slice(1)).get('url'),
     'https://wg.example/flow/wireguard/private-token');
 });
+
+test('Flow device link uses only the selected WireGuard device and clears when revoked',async()=>{
+  const p=await customerPage(),parent=p.state.customer.subscriptions[0];
+  parent.protocol='wg';parent.primary_key_state='rotating';
+  p.state.devices=[{id:'phone-a',name:'Phone',protocol:'wg',state:'active',ready:true,expires:parent.expires},
+    {id:'tablet-b',name:'Tablet',protocol:'wg',state:'active',ready:true,expires:parent.expires}];
+  await p.run('refreshMe()');await p.run("openDevices('sub-a')");
+  assert.ok(p.element('devices-list').innerHTML.includes('data-device-link="phone-a"'));
+  const path='/shop/api/flow/wireguard/devices/phone-a/link';
+  p.respond(path,{enabled:false,version:0,url:null});
+  await p.run("openLink('sub-a','phone-a')");
+  assert.equal(p.element('link-title').textContent,'Ссылка WireGuard для устройства');
+  assert.equal(p.element('link-enable').disabled,false);
+  const secret='https://shop.example/shop/flow/wireguard/device/private-token';
+  p.respond(path,{enabled:true,version:1,url:secret});
+  await p.run("changeLink('enable')");
+  const put=p.calls.filter(c=>c.opts.method==='PUT').pop();
+  assert.equal(put.url,path);assert.deepEqual(JSON.parse(put.opts.body),{action:'enable',version:0});
+  p.element('flow-open').onclick();
+  assert.equal(new URLSearchParams(new URL(p.state.opened[0][0]).hash.slice(1)).get('url'),secret);
+  p.state.devices[0].state='revoking';p.state.devices[0].ready=false;
+  await p.run('refreshDevices()');
+  assert.equal(p.element('link-dialog').open,false);
+  assert.equal(p.element('link-value').value,'');assert.equal(p.run('flowLaunchUrl'),null);
+  assert.equal(p.element('flow-open').disabled,true);
+});
+
+test('closing device manager drops its Flow URL and prevents stale launches',async()=>{
+  const p=await customerPage(),parent=p.state.customer.subscriptions[0];parent.protocol='wg';
+  p.state.devices=[{id:'phone-a',name:'Phone',protocol:'wg',state:'active',ready:true,expires:parent.expires}];
+  await p.run('refreshMe()');await p.run("openDevices('sub-a')");
+  p.respond('/shop/api/flow/wireguard/devices/phone-a/link',{enabled:true,version:1,url:'https://shop.example/flow/wireguard/device/private-token'});
+  await p.run("openLink('sub-a','phone-a')");
+  p.element('devices-dialog').close();
+  assert.equal(p.element('link-dialog').open,false);assert.equal(p.element('link-value').value,'');
+  p.element('flow-open').onclick();assert.equal(p.state.opened.length,0);
+});

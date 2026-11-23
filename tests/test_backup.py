@@ -239,3 +239,28 @@ def test_older_backups_without_optional_flow_tables_still_validate(source,tmp_pa
         conn.execute('DROP TABLE flow_wireguard_links')
         conn.execute('DROP TABLE wgdashboard_keys')
     assert b.validate(older,env)['encrypted_values']>=4
+
+
+def test_device_links_backup_validation_and_restore_policy(source,tmp_path):
+    database,env,output,sid=source
+    did=str(uuid.uuid4())
+    execute("INSERT INTO devices(id,subscription_id,request_id,name,created) VALUES (?,?,?,?,0)",
+            (did,sid,str(uuid.uuid4()),'Fixture device'))
+    execute("INSERT INTO flow_wireguard_device_links(device_id,token_hash,token_secret,enabled,version) VALUES (?,?,?,1,1)",
+            (did,'synthetic-hash',c.encrypt('synthetic-token')))
+    execute("INSERT INTO flow_wireguard_device_versions VALUES (?,?,?)",(did,'synthetic-fingerprint',7))
+    execute("UPDATE flow_wireguard_device_links SET token_secret='invalid'")
+    with pytest.raises(b.BackupError,match='расшифровывает'):
+        create(source)
+    execute("UPDATE flow_wireguard_device_links SET token_secret=?",(c.encrypt('synthetic-token'),))
+    create(source)
+    recovered=tmp_path/'device-recovered'
+    b.restore(output,PASSWORD,recovered)
+    with sqlite3.connect(recovered/'shop.db') as conn:
+        assert conn.execute('SELECT enabled,token_hash,token_secret,version FROM flow_wireguard_device_links').fetchone()==(0,None,None,2)
+        assert conn.execute('SELECT revision FROM flow_wireguard_device_versions').fetchone()==(7,)
+    managed=tmp_path/'device-managed'
+    b.restore(output,PASSWORD,managed,preserve_device_links=True)
+    with sqlite3.connect(managed/'shop.db') as conn:
+        assert conn.execute('SELECT enabled,version FROM flow_wireguard_device_links').fetchone()==(1,1)
+    assert one('SELECT enabled,version FROM flow_wireguard_device_links')=={'enabled':1,'version':1}
