@@ -35,7 +35,10 @@ async def worker_iteration():
 def telegram_account(tg_id):
     with db() as conn:
         conn.execute('INSERT OR IGNORE INTO users(telegram_id,created) VALUES (?,?)', (tg_id, int(time.time())))
-        return dict(conn.execute('SELECT * FROM users WHERE telegram_id=?', (tg_id,)).fetchone())
+        user = dict(conn.execute('SELECT * FROM users WHERE telegram_id=?', (tg_id,)).fetchone())
+    from . import flow_auto_provision
+    flow_auto_provision.after_login(user['id'])
+    return user
 
 
 def ticket(user_id):
@@ -271,6 +274,8 @@ async def tick():
             except Exception as exc:
                 log.warning('Expiry retry subscription=%s error=%s', sub['id'], type(exc).__name__)
     await process_devices()
+    from . import flow_auto_provision
+    await flow_auto_provision.process_pending()
     for order in all_rows("SELECT o.*,u.telegram_id FROM orders o JOIN users u ON u.id=o.user_id WHERE o.status='active' AND o.notified=0 AND u.telegram_id IS NOT NULL"):
         if not c.BOT_TOKEN:
             continue

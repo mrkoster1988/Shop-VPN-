@@ -203,6 +203,20 @@ def init_db():
           protocol TEXT NOT NULL, created INTEGER NOT NULL, policy_version INTEGER NOT NULL, terms_snapshot TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS trial_policy_changes (
           id INTEGER PRIMARY KEY, created INTEGER NOT NULL, before_data TEXT NOT NULL, after_data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS flow_auto_policy (
+          id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL DEFAULT 0
+          CHECK(enabled IN (0,1)), days INTEGER NOT NULL DEFAULT 1 CHECK(days BETWEEN 1 AND 30),
+          max_users INTEGER NOT NULL DEFAULT 100 CHECK(max_users BETWEEN 1 AND 100000),
+          version INTEGER NOT NULL DEFAULT 1, updated INTEGER NOT NULL DEFAULT 0);
+        INSERT OR IGNORE INTO flow_auto_policy(id) VALUES (1);
+        CREATE TABLE IF NOT EXISTS flow_auto_grants (
+          user_id INTEGER PRIMARY KEY REFERENCES users(id), 
+          subscription_id TEXT NOT NULL UNIQUE REFERENCES subscriptions(id),
+          target_expires INTEGER NOT NULL, policy_version INTEGER NOT NULL,
+          state TEXT NOT NULL CHECK(state IN ('pending','active','expired','superseded')),
+          created INTEGER NOT NULL, next_attempt INTEGER NOT NULL,
+          attempts INTEGER NOT NULL DEFAULT 0);
+        CREATE INDEX IF NOT EXISTS flow_auto_queue ON flow_auto_grants(state,next_attempt,created);
         CREATE TABLE IF NOT EXISTS flow_wireguard_links (
           subscription_id TEXT PRIMARY KEY REFERENCES subscriptions(id) ON DELETE CASCADE,
           token_hash TEXT NOT NULL UNIQUE, token_secret TEXT NOT NULL,

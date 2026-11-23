@@ -30,7 +30,7 @@ from . import shop_settings, platforms, protocols, bot_menu as menu_editor, paym
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, mail, partner, commerce_analytics, updates, update_install, flow_wireguard
+from . import staff, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -492,6 +492,7 @@ async def register(data: Credentials):
         raise HTTPException(409, 'Этот email уже зарегистрирован')
     response = JSONResponse({'ok': True})
     session(response, uid)
+    flow_auto_provision.after_login(uid)
     return response
 
 @app.post('/api/auth/login')
@@ -508,6 +509,7 @@ async def login(data: Credentials):
         if not fresh or fresh['password'] != encoded:
             raise HTTPException(401, 'Неверный email или пароль')
         session(response, user['id'], conn)
+    flow_auto_provision.after_login(user['id'])
     return response
 
 @app.post('/api/auth/password')
@@ -581,6 +583,7 @@ async def tg_login(data: TgAuth):
     user = service.telegram_account(tg['id'])
     response = JSONResponse({'ok': True})
     session(response, user['id'])
+    flow_auto_provision.after_login(user['id'])
     return response
 
 @app.get('/login')
@@ -592,6 +595,7 @@ async def ticket_login(ticket: str = ''):
         if not result:
             raise HTTPException(401, 'Ссылка истекла. Запросите новую командой /account в боте.')
         session(response, result['user_id'], conn)
+    flow_auto_provision.after_login(result['user_id'])
     return response
 
 @app.post('/api/auth/logout')
@@ -947,10 +951,22 @@ async def flow_wireguard_public_feed(token: str):
         'Referrer-Policy':'no-referrer'})
 
 
+# Owner-enabled, bounded starter access for registered Shop users.
+@app.get('/api/admin/flow/wireguard/auto', dependencies=[Depends(admin)])
+async def flow_auto_policy():
+    return flow_auto_provision.policy()
+
+
+@app.put('/api/admin/flow/wireguard/auto', dependencies=[Depends(admin)])
+async def flow_auto_policy_update(data: flow_auto_provision.PolicyUpdate):
+    return await flow_auto_provision.update_policy(data)
+
+
 # Shop-session endpoints for accounts that already own WireGuard access.
 # They do not create free subscriptions or accept an MTProxy read-only token.
 @app.get('/api/flow/wireguard/connections')
 async def flow_wireguard_connections(user=Depends(current_user)):
+    flow_auto_provision.after_login(user['id'])
     return flow_wireguard.discover(user['id'])
 
 @app.get('/api/flow/wireguard/subscriptions/{sid}')
