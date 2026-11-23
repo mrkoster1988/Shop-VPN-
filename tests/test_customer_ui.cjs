@@ -35,7 +35,7 @@ async function customerPage(options={}) {
   const context=vm.createContext({document:{getElementById:element,querySelector:()=>({content:'/shop'}),querySelectorAll:()=>[],createElement:tag=>element('created-'+tag+'-'+(++elementId))},
     fetch,URL,URLSearchParams,FormData:class {constructor(form){this.fields=form.fields;}get(name){return this.fields[name];}},crypto:require('node:crypto').webcrypto,Date:class extends Date { static now(){return clock.now;} },
     navigator:{platform:'Linux x86_64',userAgent:'Android',clipboard:{writeText:async value=>state.copied.push(value)}},
-    window:{confirm:()=>true,open:(...args)=>state.opened.push(args),...(options.telegram?{Telegram:{WebApp:telegram}}:{})},location:{search:options.search || '',origin:options.origin || 'https://shop.example'},history:{replaceState(){}},
+    window:{confirm:()=>true,open:(...args)=>state.opened.push(args),...(options.telegram?{Telegram:{WebApp:telegram}}:{})},location:{search:options.search || '',hash:options.hash || '',origin:options.origin || 'https://shop.example'},history:{replaceState(){}},
     setTimeout:(fn,delay)=>{const id=++timerId;timers.set(id,{fn,delay});return id;},clearTimeout:id=>timers.delete(id),setInterval:fn=>{intervals.push(fn);return intervals.length;}});
   vm.runInContext(fs.readFileSync('app/static/flow-links.js','utf8'),context);
   vm.runInContext(fs.readFileSync('app/static/app.js','utf8'),context);
@@ -794,4 +794,34 @@ test('WireGuard trial access offers a link for Flow with no VLESS rotation optio
   assert.equal(new URL(target).search,'');
   assert.equal(new URLSearchParams(new URL(target).hash.slice(1)).get('url'),
     'https://wg.example/flow/wireguard/private-token');
+});
+
+
+test('Flow pairing link only prefills code and requires explicit consent',async()=>{
+  const p=await customerPage({search:'?view=account',hash:'#flow-pair=0123456789abcdef'});
+  assert.equal(p.element('account-dialog').open,true);
+  assert.equal(p.element('flow-pair-code').value,'0123456789abcdef');
+  assert.equal(p.element('flow-pair-consent').checked,false);
+  const count=p.calls.length;
+  await p.run("flowPairAction('approve')");
+  assert.equal(p.calls.length,count);
+  p.respond('/shop/api/flow/shop/auth/decision',{state:'approved'});
+  p.element('flow-pair-consent').checked=true;
+  await p.run("flowPairAction('approve')");
+  const call=p.calls.find(x=>x.url.endsWith('/auth/decision'));
+  assert.deepEqual(JSON.parse(call.opts.body),{code:'0123456789abcdef',decision:'approve'});
+  assert.equal(p.element('flow-pair-code').value,'');
+  assert.match(p.element('flow-pair-status').textContent,/Вход разрешён/);
+});
+
+test('late Flow pairing approval cannot show a result after account logout',async()=>{
+  const p=await customerPage({search:'?view=account',hash:'#flow-pair=0123456789abcdef'});
+  const respond=p.defer('/shop/api/flow/shop/auth/decision');
+  p.element('flow-pair-consent').checked=true;
+  const pending=p.run("flowPairAction('approve')");
+  await p.element('logout').onclick();
+  respond({state:'approved'}); await pending;
+  assert.equal(p.element('flow-pair-code').value,'');
+  assert.equal(p.element('flow-pair-consent').checked,false);
+  assert.equal(p.element('flow-pair-status').textContent,'');
 });
