@@ -297,6 +297,9 @@ async def tick():
     with db() as conn:
         conn.execute('DELETE FROM sessions WHERE expires<?', (now,))
         conn.execute('DELETE FROM tickets WHERE expires<?', (now,))
+        conn.execute("""DELETE FROM flow_shop_pairings WHERE
+            (state!='exchanged' AND request_expires<=?) OR
+            (state='exchanged' AND token_expires<=?)""", (now, now))
 
 
 async def worker():
