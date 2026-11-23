@@ -256,6 +256,15 @@ def init_db():
           role TEXT NOT NULL CHECK(role IN ('owner','panel_operator','mtproxy_manager','finance','support')),
           enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)), created INTEGER NOT NULL,
           updated INTEGER NOT NULL, created_by INTEGER REFERENCES staff_users(id), last_login INTEGER);
+        -- New roles use additive effective-role assignments; legacy rows are disabled
+        -- for these accounts so a previous binary cannot grant broader fallback rights.
+        CREATE TABLE IF NOT EXISTS staff_role_assignments (
+          staff_id INTEGER PRIMARY KEY REFERENCES staff_users(id) ON DELETE CASCADE,
+          role TEXT NOT NULL CHECK(role IN ('administrator','moderator')),
+          enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));
+        CREATE TABLE IF NOT EXISTS staff_role_policies (
+          role TEXT PRIMARY KEY CHECK(role IN ('administrator','moderator')),
+          permissions TEXT NOT NULL, version INTEGER NOT NULL CHECK(version>0), updated INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS staff_sessions (
           token_hash TEXT PRIMARY KEY, staff_id INTEGER NOT NULL REFERENCES staff_users(id) ON DELETE CASCADE,
           created INTEGER NOT NULL, expires INTEGER NOT NULL);

@@ -30,7 +30,7 @@ from . import shop_settings, platforms, protocols, bot_menu as menu_editor, paym
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision
+from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -76,7 +76,7 @@ async def safe_validation(request, exc):
         return JSONResponse({'detail':'Проверьте поля сервера и профиль подключения.'},status_code=422)
     if request.url.path.removeprefix(c.BASE_PATH).startswith(('/api/ads/','/api/admin/ads/')):
         return JSONResponse({'detail':'Проверьте поля рекламной заявки или настроек.'},status_code=422)
-    if request.url.path.removeprefix(c.BASE_PATH).startswith('/api/auth/'):
+    if request.url.path.removeprefix(c.BASE_PATH).startswith(('/api/auth/','/api/admin/auth/','/api/admin/staff')):
         return JSONResponse({'detail':'Проверьте данные для входа или смены пароля.'},status_code=422)
     return await request_validation_exception_handler(request,exc)
 
@@ -263,10 +263,10 @@ class StaffLogin(BaseModel):
 class StaffCreate(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=12, max_length=128)
-    role: Literal['panel_operator','mtproxy_manager','finance','support']
+    role: Literal['administrator','moderator','panel_operator','mtproxy_manager','finance','support']
 class StaffUpdate(BaseModel):
     enabled: bool | None = None
-    role: Literal['owner','panel_operator','mtproxy_manager','finance','support'] | None = None
+    role: Literal['owner','administrator','moderator','panel_operator','mtproxy_manager','finance','support'] | None = None
 @app.post('/api/admin/auth/login')
 async def staff_login(data: StaffLogin, response: Response):
     return staff.login(data.email, data.password, response)
@@ -277,7 +277,7 @@ async def staff_bootstrap(data: StaffLogin, request: Request, response: Response
 @app.get('/api/admin/auth/me')
 async def staff_me(request: Request):
     actor=staff.authorize(request)
-    return {'id':actor.get('id'),'email':actor['email'],'role':actor['role'],'role_label':staff.ROLE_LABELS[actor['role']]}
+    return {'id':actor.get('id'),'email':actor['email'],'role':actor['role'],'role_label':staff.ROLE_LABELS[actor['role']], 'permissions':actor.get('permissions',[])}
 @app.post('/api/admin/auth/logout')
 async def staff_logout(request: Request, response: Response):
     raw=request.cookies.get('staff_session','')
@@ -317,26 +317,18 @@ async def updates_check():
 
 @app.get('/api/admin/shop-settings',dependencies=[Depends(admin)])
 async def shop_settings_get(request: Request):
-    if request.state.admin_actor['role']!='owner':
-        raise HTTPException(403,'Настройки магазина доступны только владельцу')
     return shop_settings.get()
 
 @app.put('/api/admin/shop-settings',dependencies=[Depends(admin)])
 async def shop_settings_update(data: shop_settings.SettingsUpdate, request: Request):
-    if request.state.admin_actor['role']!='owner':
-        raise HTTPException(403,'Изменять настройки магазина может только владелец')
     return shop_settings.update(data)
 
 @app.get('/api/admin/bot-menu',dependencies=[Depends(admin)])
 async def bot_menu_get(request: Request):
-    if request.state.admin_actor['role'] != 'owner':
-        raise HTTPException(403, 'Редактор Telegram-меню доступен только владельцу')
     return menu_editor.get()
 
 @app.put('/api/admin/bot-menu',dependencies=[Depends(admin)])
 async def bot_menu_put(data: menu_editor.MenuUpdate, request: Request):
-    if request.state.admin_actor['role'] != 'owner':
-        raise HTTPException(403, 'Изменять Telegram-меню может только владелец')
     return menu_editor.update(data)
 
 @app.get('/api/admin/staff',dependencies=[Depends(admin)])
@@ -352,6 +344,38 @@ async def staff_update(staff_id: int, data: StaffUpdate, request: Request):
     actor=request.state.admin_actor
     if actor['role']!='owner': raise HTTPException(403,'Управлять сотрудниками может только владелец')
     return staff.update_staff(staff_id,data.enabled,data.role,actor.get('id'))
+@app.get('/api/admin/role-policies',dependencies=[Depends(admin)])
+async def role_policies():
+    return staff_permissions.get_all()
+
+@app.put('/api/admin/role-policies/{role}',dependencies=[Depends(admin)])
+async def role_policy_update(role: Literal['administrator','moderator'],data: staff_permissions.PolicyUpdate):
+    return staff_permissions.update(role,data)
+
+@app.get('/api/admin/dashboard-summary',dependencies=[Depends(admin)])
+async def dashboard_summary():
+    return {'users':one('SELECT count(*) AS n FROM users')['n'],
+            'active':one("SELECT count(*) AS n FROM subscriptions WHERE state='active' AND expires>?",(int(time.time()),))['n'],
+            'pending_orders':one("SELECT count(*) AS n FROM orders WHERE status IN ('pending','checkout','paid')")['n']}
+
+# Модерация не раскрывает финансовую историю, данные пользователей или ключи.
+MODERATION_FIELDS=('id','channel','comment','state','reason','version','created','updated')
+
+@app.get('/api/admin/moderation/requests',dependencies=[Depends(admin)])
+async def moderation_requests(page:int=Query(default=1,ge=1,le=100000),
+                              state:Literal['pending','approved','rejected','canceled']='pending'):
+    with db() as conn:
+        conn.execute('BEGIN')
+        total=conn.execute('SELECT count(*) FROM ads_requests WHERE state=?',(state,)).fetchone()[0]
+        rows=conn.execute('SELECT '+','.join(MODERATION_FIELDS)+' FROM ads_requests WHERE state=? ORDER BY created DESC,id DESC LIMIT 20 OFFSET ?',
+                          (state,(page-1)*20)).fetchall()
+    return {'requests':[dict(r) for r in rows],'total':total,'page':page,'page_size':20}
+
+@app.put('/api/admin/moderation/requests/{rid}',dependencies=[Depends(admin)])
+async def moderation_decision(rid:UUID,data:ads.Decision):
+    result=ads.transition(str(rid),data)
+    return {k:result[k] for k in MODERATION_FIELDS}
+
 @app.get('/api/admin/audit',dependencies=[Depends(admin)])
 async def admin_audit(limit: int = Query(default=200,ge=1,le=500)):
     return staff.audit_rows(limit)
