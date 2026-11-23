@@ -16,6 +16,7 @@ let catalog, me, protocol = 'xui', selectedPlan, checkoutTrial=null, register = 
 let linkSubscription=null, linkProtocol=null, linkRequest=0, linkState=null, flowLaunchUrl=null;
 let sessionEpoch = 0, meRequest = 0, connectionRequest = 0, connection = null, connectionTimer;
 let deviceSubscription=null, deviceRequest=0, deviceIntent=null, deviceCache=[], rotationIntents=new Map(), primaryRotationIntents=new Map();
+let flowPairIntent='', flowPairEpoch=0, flowPairBusy=false;
 async function api(path, data, method) {
   const epoch = sessionEpoch;
   const response = await fetch(basePath + path, {method:method || (data ? 'POST':'GET'), credentials:'same-origin',
@@ -137,6 +138,7 @@ function clearAds() {
   $('ads-list').replaceChildren();$('ads-form').hidden=true;$('ads-submit').disabled=false;
 }
 function clearPrivate(clearPromoIntent=true) {
+  clearFlowPairing(!clearPromoIntent);
   $('ads-dialog').close();clearAds();
   if(clearPromoIntent)promoIntent='';
   clearPayment();
@@ -184,6 +186,7 @@ async function refreshMe() {
 }
 function renderAccount() {
   if (!me) return;
+  if(flowPairIntent){$('flow-pair-code').value=flowPairIntent;flowPairIntent='';$('flow-pair-consent').checked=false;}
   $('password-settings').hidden=!me.can_change_password;
   renderReferrals();
   $('identity').textContent = me.email || 'Telegram · ' + me.telegram_id;
@@ -305,6 +308,55 @@ async function refreshPaymentOrder(silent=false) {
 $('protocols').onclick = event => { const b=event.target.closest('[data-protocol]'); if(b) { protocol=b.dataset.protocol; renderPlans(); } };
 $('plan-list').onclick = event => { const b=event.target.closest('[data-plan]'); if(b) beginCheckout(b.dataset.plan).catch(e=>toast(e.message)); };
 document.querySelectorAll('[data-close]').forEach(button => button.onclick=()=>$(button.dataset.close).close());
+function clearFlowPairing(preserveIncoming=false) {
+  flowPairEpoch++; flowPairBusy=false;
+  if(!preserveIncoming) flowPairIntent='';
+  $('flow-pair-code').value=''; $('flow-pair-consent').checked=false;
+  $('flow-pair-status').textContent='';
+  for(const id of ['flow-pair-approve','flow-pair-deny','flow-pair-revoke']) $(id).disabled=false;
+}
+function acceptFlowPairFragment() {
+  const match=/^#flow-pair=([a-f0-9]{16})$/.exec(location.hash || '');
+  if(!match)return;
+  flowPairIntent=match[1];
+  // В истории и запросах не оставляем код, даже если он публичный.
+  history.replaceState(null,'',basePath+'/'+(location.search || ''));
+}
+async function flowPairAction(decision) {
+  if(!me || logoutPending || flowPairBusy || !$('account-dialog').open)return;
+  const code=$('flow-pair-code').value.trim().toLowerCase();
+  if(decision!=='revoke' && !/^[a-f0-9]{16}$/.test(code)){
+    $('flow-pair-status').textContent='Укажите 16 символов из приложения.';return;
+  }
+  if(decision==='approve' && !$('flow-pair-consent').checked){
+    $('flow-pair-status').textContent='Сначала подтвердите согласие.';return;
+  }
+  if(decision==='revoke' && !window.confirm('Отозвать доступ приложения к подписке? Уже скачанный WireGuard-ключ сам по себе не отключится.'))return;
+  const owner=me.id, epoch=sessionEpoch, request=++flowPairEpoch;
+  const current=()=>epoch===sessionEpoch && request===flowPairEpoch && me?.id===owner && $('account-dialog').open;
+  flowPairBusy=true;
+  for(const id of ['flow-pair-approve','flow-pair-deny','flow-pair-revoke'])$(id).disabled=true;
+  $('flow-pair-status').textContent='Проверяем запрос…';
+  try {
+    const result=await api(decision==='revoke'?'/api/flow/shop/auth/revoke':'/api/flow/shop/auth/decision',
+      decision==='revoke'?{}:{code,decision});
+    if(!current())return;
+    if(decision==='approve' && result.state!=='approved')throw new Error('Подтверждение не получено');
+    if(decision==='deny' && result.state!=='denied')throw new Error('Отказ не подтверждён');
+    if(decision==='revoke' && result.ok!==true)throw new Error('Отзыв не подтверждён');
+    $('flow-pair-code').value='';$('flow-pair-consent').checked=false;
+    $('flow-pair-status').textContent=decision==='approve'?'Вход разрешён. Вернитесь в Pushok Flow.':
+      decision==='deny'?'Запрос отклонён.':'Сеанс отозван. Уже сохранённый профиль отключается отдельно.';
+  }catch(e){if(current())$('flow-pair-status').textContent=e.message;}
+  finally{if(request===flowPairEpoch && epoch===sessionEpoch){
+    flowPairBusy=false;
+    for(const id of ['flow-pair-approve','flow-pair-deny','flow-pair-revoke'])$(id).disabled=false;
+  }}
+}
+$('flow-pair-form').onsubmit=event=>{event.preventDefault();return flowPairAction('approve');};
+$('flow-pair-deny').onclick=()=>flowPairAction('deny');
+$('flow-pair-revoke').onclick=()=>flowPairAction('revoke');
+
 $('account-btn').onclick = async () => { if(logoutPending)return; try { await refreshMe(); show(me?'account-dialog':'auth-dialog'); } catch(e) { toast(e.message); } };
 function showForgotForm(show){
  $('auth-form').hidden=show;$('auth-switch').hidden=show;$('forgot-open').hidden=show;$('forgot-form').hidden=!show;
@@ -715,6 +767,7 @@ $('logout').onclick = async () => {
     if(catalog.bot_username) { for(const id of ['bot-link','auth-bot']) { $(id).href='https://t.me/'+encodeURIComponent(catalog.bot_username); $(id).hidden=false; } }
     const tg=window.Telegram?.WebApp;
     if(tg?.initData) { tg.ready(); tg.expand(); syncTelegramTheme(); tg.onEvent?.('themeChanged',syncTelegramTheme); await api('/api/auth/telegram',{init_data:tg.initData}); setupMiniappNavigation(); }
+    acceptFlowPairFragment();
     await refreshMe();
     // Переход из уведомления не даёт прав: вход уже проверен выше.
     if(new URLSearchParams(location.search).get('view')==='account')show(me?'account-dialog':'auth-dialog');
