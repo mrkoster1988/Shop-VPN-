@@ -27,7 +27,7 @@ def safe_staff(row):
     return result
 
 def role_response(conn,row):
-    result={'ok':True,'role':row['role'],'role_label':ROLE_LABELS[row['role']]}
+    result={'ok':True,'id':row['id'],'role':row['role'],'role_label':ROLE_LABELS[row['role']]}
     if row['role'] in permissions.ALLOWED:
         result['permissions']=permissions.permissions(conn,row['role'])
     return result

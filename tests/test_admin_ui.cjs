@@ -941,3 +941,55 @@ test('owner can inspect starter WireGuard grant policy; logout clears editor',as
   assert.equal(p.element('flow-auto-editor').innerHTML,'');
   assert.equal(p.element('flow-auto-section').hidden,true);
 });
+
+
+test('moderator navigation only exposes assigned moderation and optional support',async()=>{
+  const p=adminPage();
+  p.run("acceptStaffRole({role:'moderator',permissions:['moderation']});renderManagementNav()");
+  assert.equal(p.element('management-role').textContent,'Модератор');
+  assert.equal(p.element('moderation-section').hidden,false);
+  assert.equal(p.element('plans-section').hidden,true);
+  assert.equal(p.element('staff-management').hidden,true);
+  assert.equal(p.element('ads-finance-section').hidden,true);
+  assert.equal(p.element('support-admin').hidden,true);
+  assert.match(p.element('management-nav').innerHTML,/Модерация/);
+  assert.doesNotMatch(p.element('management-nav').innerHTML,/Тарифы|Финансы|Сотрудники/);
+  p.run("delegatedPermissions.add('support');renderManagementNav()");
+  assert.equal(p.element('support-admin').hidden,false);
+});
+
+test('moderation queue escapes applicant content and ignores late replies after logout',async()=>{
+  const p=adminPage();
+  const pending=p.run("acceptStaffRole({role:'moderator',permissions:['moderation']});refreshModeration()");
+  assert.equal(p.requests[0],'/shop/api/admin/moderation/requests?page=1&state=pending');
+  const data={requests:[{id:'r1',channel:'<img src=x>',comment:'<script>bad</script>',state:'pending',reason:'',version:1}],page:1,page_size:20,total:1};
+  p.reply(data);await pending;
+  assert.match(p.element('moderation-list').innerHTML,/&lt;img/);
+  assert.doesNotMatch(p.element('moderation-list').innerHTML,/<img|<script|payment/);
+  const late=p.run('refreshModeration()');p.run("$('exit').onclick()");p.replyAt(1,data);await late;
+  assert.equal(p.element('moderation-list').innerHTML,'');
+  assert.equal(p.element('moderation-section').hidden,true);
+});
+
+test('developer permission editor renders separate roles and only permitted choices',async()=>{
+  const p=adminPage(),req=p.run("role='owner';refreshRolePolicies()");
+  p.reply({labels:{moderation:'Модерация',catalog:'Тарифы'},roles:[
+    {role:'moderator',version:3,permissions:['moderation'],allowed:['moderation']},
+    {role:'administrator',version:4,permissions:[],allowed:['catalog']}]});await req;
+  assert.match(p.element('role-policy-list').innerHTML,/Модератор/);
+  assert.match(p.element('role-policy-list').innerHTML,/Администратор/);
+  assert.match(p.element('role-policy-list').innerHTML,/data-role-policy="moderator" data-version="3"/);
+  p.run("role='moderator'");
+  await p.run('refreshRolePolicies()');
+  assert.equal(p.element('role-policy-section').hidden,true);
+  assert.equal(p.element('role-policy-list').innerHTML,'');
+  assert.equal(p.requests.length,1);
+});
+
+test('delegated administrator sees server status without credentials or server mutation forms',async()=>{
+  const p=adminPage(),req=p.run("acceptStaffRole({role:'administrator',permissions:['servers_read']});renderManagementNav();refreshServers()");
+  p.reply({servers:[{id:'node-a',name:'WG node',protocol:'wg',state:'active',health:'ok',capacity:10,occupied:1}],unassigned_subscriptions:0});await req;
+  assert.equal(p.element('new-server').hidden,true);
+  assert.match(p.element('server-list').innerHTML,/WG node/);
+  assert.doesNotMatch(p.element('server-list').innerHTML,/<form|data-server-credentials|data-server-edit/);
+});

@@ -86,6 +86,8 @@ def update(role,data):
     values=set(data.permissions)
     if len(values)!=len(data.permissions) or not values<=ALLOWED[role]:
         raise HTTPException(422,'Недопустимое полномочие для этой роли')
+    if 'payments' in values and 'orders' not in values:
+        raise HTTPException(422,'Для подтверждения оплаты включите доступ к заказам')
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
         old=policy(conn,role)
