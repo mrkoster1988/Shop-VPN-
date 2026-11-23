@@ -334,7 +334,10 @@ def prepare(root,source,secret):
         run(['docker','exec','-i',helper,'python','-c',"import os,sys;f=os.open('/tmp/saved.pvb',os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600);s=os.fdopen(f,'wb');s.write(sys.stdin.buffer.read());s.close()"],input=private_file(work/'backup.pvb'))
         save(root,s,'verifying_backup')
         run(backup+['verify','/tmp/saved.pvb'],env=secure_env)
-        run(backup+['restore','/tmp/saved.pvb','--target','/upgrade-data/restored'],env=secure_env)
+        # The live source has been stopped and this exact snapshot verified.
+        # Old backup versions ignore the new env flag; future managed upgrades retain device URLs.
+        restore_backup=backup[:5]+['-e','PUSHOK_BACKUP_PRESERVE_DEVICE_LINKS=1']+backup[5:]
+        run(restore_backup+['restore','/tmp/saved.pvb','--target','/upgrade-data/restored'],env=secure_env)
         save(root,s,'backed_up')
         save(root,s,'migrating')
         migrate="import io,os,sys;from dotenv import load_dotenv;raw=sys.stdin.buffer.read();load_dotenv(stream=io.StringIO(raw.decode()),override=True);os.environ['DATA_DIR']='/app/data/restored';os.environ['BACKGROUND_TASKS']='false';from app.db import init_db;init_db();from scripts.backup import validate;validate('/app/data/restored/shop.db',raw);print('validated')"
