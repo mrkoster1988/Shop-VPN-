@@ -169,6 +169,15 @@ def test_bootstrap_release_matches_installer_and_changelog():
     bootstrap=re.search(r'^VERSION=(v[0-9]+\.[0-9]{3})$',(root/'install.sh').read_text(),re.M).group(1)
     newest=re.search(r'^## \[([0-9]+\.[0-9]{3})\]',(root/'CHANGELOG.md').read_text(),re.M).group(1)
     assert bootstrap==i.VERSION=='v'+newest
+    # The other entrypoints must identify the same exact source candidate.
+    import ast
+    def version(path):
+        for node in ast.parse(path.read_text()).body:
+            if isinstance(node,ast.Assign) and any(isinstance(t,ast.Name) and t.id=='VERSION' for t in node.targets):
+                return ast.literal_eval(node.value)
+        raise AssertionError('Missing VERSION in '+str(path))
+    assert version(root/'scripts/upgrade.py')==bootstrap
+    assert version(root/'app/diagnostics.py')==bootstrap
 
 
 def test_install_path_cannot_hide_a_system_directory(tmp_path):
