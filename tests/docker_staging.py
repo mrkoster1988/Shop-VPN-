@@ -150,8 +150,11 @@ class Staging:
         allowed_new={'admin_audit','password_reset_tokens','staff_sessions','staff_users',
                      'store_settings','support_cases','support_messages','partner_events',
                      'order_history_state','order_milestones','bot_menu_settings','wgdashboard_keys',
-                     'wgdashboard_expirations','hysteria2_credentials','tuic_credentials','update_checker'}
+                     'wgdashboard_expirations','hysteria2_credentials','tuic_credentials','update_checker',
+                     'flow_wireguard_versions'}
         added=sorted(set(new)-set(old))
+        check('flow_wireguard_versions' not in added or current['counts'].get('flow_wireguard_versions') == 0,
+              'Unexpected automatic WireGuard feed revisions during migration')
         if 'update_checker' in added:
             check(current['counts'].get('update_checker') == 1 and self.data('updates') == {
                 'id':1,'enabled':1,'check_time':'21:00','timezone':'Europe/Moscow','version':1,
