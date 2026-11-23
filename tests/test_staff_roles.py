@@ -35,7 +35,7 @@ def add_role(client,role):
 
 def use(client,token):
     client.cookies.clear()
-    client.cookies.set('staff_session',token)
+    client.cookies.set('staff_session',token,domain='testserver.local',path='/')
 
 
 def test_developer_assigns_roles_without_legacy_fallback(client):
