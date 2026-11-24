@@ -6,6 +6,7 @@ is serialized with subscription and token changes.
 """
 import hashlib
 import json
+import re
 import time
 
 from fastapi import HTTPException
@@ -144,6 +145,9 @@ def link_for_user(user_id: int, subscription_id: str) -> dict:
         return {'enabled': False, 'version': row['version'], 'url': None}
     try:
         raw = c.decrypt(row['token_secret'])
+        from .security import digest
+        if not isinstance(raw, str) or re.fullmatch(r'[A-Za-z0-9_-]{43}', raw) is None or digest(raw) != row['token_hash']:
+            raise ValueError('Invalid link')
     except Exception:
         raise HTTPException(503, 'Ссылка временно недоступна') from None
     return {'enabled': True, 'version': row['version'], 'url': _link_url(raw)}
@@ -155,6 +159,8 @@ def change_link(user_id: int, subscription_id: str, action: str,
     # Repeating 'enable' does not issue another token, even if a response was lost.
     import secrets
     from .security import digest
+    if action not in ('enable', 'rotate', 'disable'):
+        raise HTTPException(422, 'Неизвестное действие')
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
         _require_owned_wg(conn, user_id, subscription_id, active=action != 'disable')
@@ -162,9 +168,9 @@ def change_link(user_id: int, subscription_id: str, action: str,
                            (subscription_id,)).fetchone()
         version = row['version'] if row else 0
         if action == 'enable' and row and row['enabled']:
-            # Replays of enable are idempotent; a stale version is not authorization
-            # for any different operation.
-            pass
+            # Same CAS replay policy as additional-device links.
+            if expected_version not in (version, version - 1):
+                raise HTTPException(409, 'Ссылка изменилась. Обновите кабинет.')
         else:
             if version != expected_version:
                 raise HTTPException(409, 'Ссылка изменилась. Обновите кабинет.')
