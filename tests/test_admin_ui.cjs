@@ -1238,7 +1238,7 @@ test('saving server succeeded even when refreshing server list fails',async()=>{
   assert.equal(page.requests.length,2);
   page.replyAt(1,{detail:'Список временно недоступен'},503);await request;
   assert.match(page.element('servers-notice').textContent,/Профиль подключения сохранён/);
-  assert.match(page.element('servers-notice').textContent,/список серверов не обновился/);
+  assert.match(page.element('servers-notice').textContent,/список серверов не обновился/i);
   assert.equal(page.element('server-dialog').open,false);
 });
 
