@@ -18,7 +18,9 @@ LABELS={
     'servers_read':'Состояние серверов и протоколы (просмотр)',
     'moderation':'Модерация заявок рекламы',
     'support':'Обращения и поддержка',
-    'store_settings':'Настройки магазина и условия',
+    'store_settings':'Настройки магазина, условия и оформление',
+    'sales_controls':'Правила продаж и продления',
+    'notifications':'Шаблоны и расписание уведомлений',
     'bot_menu':'Редактор меню Telegram',
     'analytics':'Финансовая аналитика',
     'diagnostics':'Диагностика',
@@ -28,7 +30,7 @@ ALLOWED={
     'moderator':frozenset(('moderation','support')),
 }
 DEFAULTS={
-    'administrator':frozenset(LABELS)-{'payments','bot_menu'},
+    'administrator':frozenset(LABELS)-{'payments','bot_menu','sales_controls','notifications'},
     'moderator':frozenset(('moderation',)),
 }
 # Права разработчика на сотрудников, секреты, установку и обновление
@@ -47,7 +49,10 @@ RULES={
     'moderation': [('GET',r'/moderation/requests'),('PUT',r'/moderation/requests/[^/]+')],
     'support': [('GET',r'/support/tickets(?:/[^/]+)?'),('POST',r'/support/tickets/[^/]+/messages'),
                 ('PATCH',r'/support/tickets/[^/]+')],
-    'store_settings': [('GET',r'/shop-settings'),('PUT',r'/shop-settings')],
+    'store_settings': [('GET',r'/shop-settings'),('PUT',r'/shop-settings'),
+                       ('GET',r'/runtime/appearance'),('PUT',r'/runtime/appearance')],
+    'sales_controls': [('GET',r'/runtime/sales'),('PUT',r'/runtime/sales')],
+    'notifications': [('GET',r'/runtime/notifications'),('PUT',r'/runtime/notifications')],
     'bot_menu': [('GET',r'/bot-menu'),('PUT',r'/bot-menu')],
     'analytics': [('GET',r'/commerce-analytics')],
     'diagnostics': [('GET',r'/diagnostics')],

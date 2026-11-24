@@ -26,7 +26,7 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 from . import ads_bookings as bookings, ads_finance as finance
 from . import support as support_cases
-from . import shop_settings, platforms, protocols, bot_menu as menu_editor, payment_events
+from . import shop_settings, runtime_settings, platforms, protocols, bot_menu as menu_editor, payment_events
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
@@ -323,6 +323,31 @@ async def shop_settings_get(request: Request):
 async def shop_settings_update(data: shop_settings.SettingsUpdate, request: Request):
     return shop_settings.update(data)
 
+# Эксплуатационные настройки: каждая секция имеет свою версию и отдельное право.
+@app.get('/api/admin/runtime/appearance',dependencies=[Depends(admin)])
+async def runtime_appearance_get():
+    return runtime_settings.get('appearance')
+
+@app.put('/api/admin/runtime/appearance',dependencies=[Depends(admin)])
+async def runtime_appearance_update(data:runtime_settings.AppearanceUpdate):
+    return runtime_settings.update('appearance',data)
+
+@app.get('/api/admin/runtime/sales',dependencies=[Depends(admin)])
+async def runtime_sales_get():
+    return runtime_settings.get('sales')
+
+@app.put('/api/admin/runtime/sales',dependencies=[Depends(admin)])
+async def runtime_sales_update(data:runtime_settings.SalesUpdate):
+    return runtime_settings.update('sales',data)
+
+@app.get('/api/admin/runtime/notifications',dependencies=[Depends(admin)])
+async def runtime_notifications_get():
+    return runtime_settings.get('notifications')
+
+@app.put('/api/admin/runtime/notifications',dependencies=[Depends(admin)])
+async def runtime_notifications_update(data:runtime_settings.NotificationsUpdate):
+    return runtime_settings.update('notifications',data)
+
 @app.get('/api/admin/bot-menu',dependencies=[Depends(admin)])
 async def bot_menu_get(request: Request):
     return menu_editor.get()
@@ -390,9 +415,11 @@ async def catalog(request: Request):
         tg = False
     plans = [{**p, 'price': p['stars'] if tg else p['price']} for p in all_rows('SELECT id,name,days,price,stars,version,device_limit FROM plans WHERE enabled=1 ORDER BY position,id')]
     public_settings=shop_settings.public()
-    return {'plans': plans, 'currency': 'XTR' if tg else 'RUB', 'protocols': [
-                {**item, 'available': providers.available(item['id'], customer['id'] if customer else None)}
-                for item in protocols.sales_options()],
+    options,sale_notice=runtime_settings.catalog_options(customer,providers.available)
+    appearance=runtime_settings.get('appearance')
+    return {'plans': plans, 'currency': 'XTR' if tg else 'RUB', 'protocols': options,
+            'appearance':{k:v for k,v in appearance.items() if k not in ('version','updated')},
+            'sale_notice':sale_notice,
             'trial':trials.offer(customer), 'payment_mode': 'stars' if tg else c.PAYMENT_MODE, 'bot_username': c.BOT_USERNAME,
             'support': public_settings['support'],
             'receipts': not tg and os.getenv('YOOKASSA_RECEIPTS') == 'true',

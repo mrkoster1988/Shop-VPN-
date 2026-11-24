@@ -275,6 +275,9 @@ def init_db():
         CREATE INDEX IF NOT EXISTS admin_audit_created ON admin_audit(created,id);
         CREATE TABLE IF NOT EXISTS audit (
           id INTEGER PRIMARY KEY, created INTEGER NOT NULL, action TEXT NOT NULL, order_id TEXT);
+        CREATE TABLE IF NOT EXISTS shop_runtime_settings (
+          section TEXT PRIMARY KEY CHECK(section IN ('appearance','sales','notifications')),
+          content TEXT NOT NULL, version INTEGER NOT NULL CHECK(version>0), updated INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS store_settings (
           id INTEGER PRIMARY KEY CHECK(id=1), support_text TEXT NOT NULL, terms_text TEXT NOT NULL,
           version INTEGER NOT NULL DEFAULT 1, updated INTEGER NOT NULL DEFAULT 0);
