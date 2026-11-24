@@ -1182,3 +1182,62 @@ test('admin HTML contains optional one-time bootstrap and all original navigatio
   }
   assert.ok(source.includes('canViewManagementSection'),'navigation must verify permissions');
 });
+
+
+test('saved server has explicit encrypted-profile status without revealing credentials',()=>{
+  const page=adminPage();
+  const form=page.element('server-form');form.elements={};
+  for(const name of ['name','location','capacity','protocol','api','wg_api','url'])form.elements[name]={value:''};
+  page.run("openServer({id:'wg-1',name:'WG',protocol:'wg',profile:'wgdashboard',state:'disabled',version:1})");
+  assert.match(page.element('server-profile-state').textContent,/сохранён/);
+  assert.equal(form.elements.url.value,'');
+  assert.match(page.element('server-profile-state').textContent,/пустые намеренно/);
+  const card=page.run("serverCard({id:'wg-1',name:'WG',location:'',protocol:'wg',profile:'wgdashboard',state:'disabled',capacity:0,version:1,health:'unknown',checked_at:null,occupied:0,bound_subscriptions:0})");
+  assert.match(card,/Профиль подключения сохранён/);
+  assert.match(card,/Ещё не проверен/);
+  assert.doesNotMatch(card,/private-panel|secret-token/);
+});
+
+function mockWireGuardServerForm(page){
+  const form=page.element('server-form');
+  form.elements={name:{value:'WG node'},location:{value:''},capacity:{value:0},
+    protocol:{value:'wg'},url:{value:'http://193.238.155.39:10086'}};
+  form.fields={
+    name:'WG node',location:'',capacity:'0',protocol:'wg',
+    api:'legacy',wg_api:'wgdashboard',
+    url:'http://193.238.155.39:10086',
+    token:'secret-token',configuration:'wg0',
+  };
+  form.querySelector=()=>({disabled:false});
+  page.element('server-dialog').open=true;
+  return form;
+}
+
+test('rejected WGDashboard endpoint keeps entered fields and says not saved',async()=>{
+  class Fields{constructor(form){this.fields=form.fields;}get(key){return this.fields[key];}}
+  const page=adminPage({FormData:Fields}),form=mockWireGuardServerForm(page);
+  const request=page.run("serverWizardStep=3; $('server-form').onsubmit({preventDefault(){},target:$('server-form')})");
+  assert.equal(page.requests.length,1);
+  page.replyAt(0,{detail:'Для WGDashboard с публичным IP нужен HTTPS'},422);await request;
+  assert.match(page.element('server-form-error').textContent,/Не сохранено:.*HTTPS/);
+  assert.equal(form.elements.url.value,'http://193.238.155.39:10086');
+  assert.equal(page.element('server-dialog').open,true);
+  assert.equal(page.element('admin-notice').textContent,'');
+});
+
+test('saving server succeeded even when refreshing server list fails',async()=>{
+  class Fields{constructor(form){this.fields=form.fields;}get(key){return this.fields[key];}}
+  const page=adminPage({FormData:Fields});
+  const form=mockWireGuardServerForm(page);
+  form.fields.url='https://wg.example';
+  form.elements.url.value='https://wg.example';
+  const request=page.run("serverWizardStep=3; $('server-form').onsubmit({preventDefault(){},target:$('server-form')})");
+  assert.equal(page.requests.length,1);
+  page.replyAt(0,{id:'wg-1',profile:'wgdashboard'});
+  await new Promise(setImmediate);
+  assert.equal(page.requests.length,2);
+  page.replyAt(1,{detail:'Список временно недоступен'},503);await request;
+  assert.match(page.element('admin-notice').textContent,/Профиль подключения сохранён/);
+  assert.match(page.element('servers-notice').textContent,/список серверов не обновился/);
+  assert.equal(page.element('server-dialog').open,false);
+});
