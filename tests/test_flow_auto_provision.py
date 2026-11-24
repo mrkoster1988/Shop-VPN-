@@ -44,6 +44,8 @@ def _policy(client, monkeypatch, *, enabled=True, days=1, max_users=3):
 
 
 def test_default_off_no_grant_after_registration_or_login(client):
+    assert auto.policy()['enabled'] is False
+    assert auto.policy()['days'] == 30
     assert client.get('/api/admin/flow/wireguard/auto').status_code == 401
     assert client.get('/api/admin/flow/wireguard/auto',
                       headers={'Authorization': 'Bearer ' + c.ADMIN_TOKEN}).json()['enabled'] is False
