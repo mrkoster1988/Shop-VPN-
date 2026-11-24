@@ -31,7 +31,7 @@ from . import shop_settings, runtime_settings, payment_policy, shop_finance, pla
 from . import config as c, providers, service, servers, server_routing, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, pushok_identity, flow_wireguard_devices, admin_cleanup, wg_peer_diagnostics
+from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, flow_bridge_recovery, pushok_identity, flow_wireguard_devices, admin_cleanup, wg_peer_diagnostics
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -1388,6 +1388,26 @@ async def admin_server_delete(sid: str = APIPath(min_length=1,max_length=100),
     _developer_only(actor)
     async with service.lock:
         return admin_cleanup.delete_unused_server(sid)
+
+
+# Developer-only Flow phone-binding diagnostics. No private identifiers are read
+# by the admin panel, and release is restricted to never-issued WireGuard.
+@app.get('/api/admin/users/{user_id}/flow/device')
+async def admin_flow_device_binding_check(
+        user_id: int = APIPath(ge=1, le=9223372036854775807),
+        actor=Depends(admin)):
+    _developer_only(actor)
+    return flow_bridge_recovery.inspect(user_id)
+
+
+@app.post('/api/admin/users/{user_id}/flow/device/release')
+async def admin_flow_unused_device_release(
+        data: flow_bridge_recovery.ReleaseRequest,
+        user_id: int = APIPath(ge=1, le=9223372036854775807),
+        actor=Depends(admin)):
+    _developer_only(actor)
+    async with service.lock:
+        return flow_bridge_recovery.release_unused(user_id, data)
 
 
 @app.get('/api/admin/users/{user_id}/wireguard/peer')
