@@ -30,7 +30,7 @@ from . import shop_settings, runtime_settings, payment_policy, shop_finance, pla
 from . import config as c, providers, service, servers, server_routing, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, pushok_identity, flow_wireguard_devices, admin_cleanup
+from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, pushok_identity, flow_wireguard_devices, admin_cleanup, wg_peer_diagnostics
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -1381,6 +1381,22 @@ async def admin_server_delete(sid: str = APIPath(min_length=1,max_length=100),
     _developer_only(actor)
     async with service.lock:
         return admin_cleanup.delete_unused_server(sid)
+
+
+@app.get('/api/admin/users/{user_id}/wireguard/peer')
+async def admin_wireguard_peer_check(
+        user_id: int = APIPath(ge=1, le=9223372036854775807),
+        actor=Depends(admin)):
+    _developer_only(actor)
+    return await wg_peer_diagnostics.inspect(user_id)
+
+
+@app.post('/api/admin/users/{user_id}/wireguard/retry')
+async def admin_wireguard_peer_retry(
+        user_id: int = APIPath(ge=1, le=9223372036854775807),
+        actor=Depends(admin)):
+    _developer_only(actor)
+    return await wg_peer_diagnostics.retry_pending(user_id)
 
 
 @app.get('/api/admin/users/{user_id}', dependencies=[Depends(admin)])
