@@ -63,7 +63,7 @@ def _pilot_guard(source: str):
     # Preserve an explicit owner override (true/false).
     matches = []
     for line in source.splitlines():
-        compact = line.strip().replace(' ', '').replace('\\t', '')
+        compact = line.strip().replace(' ', '').replace(chr(9), '')
         if compact.startswith(PILOT + '=') or compact.startswith('export' + PILOT + '='):
             matches.append(line.strip())
     if len(matches) > 1:
