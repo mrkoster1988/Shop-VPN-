@@ -105,8 +105,19 @@ async def inspect(user_id):
         return {**base, 'status': 'key_unreadable', 'can_retry': False}
     try:
         status = await _remote_peer(profile, public_key)
+    except httpx.TimeoutException:
+        return {**base, 'status': 'panel_timeout', 'can_retry': False}
+    except httpx.ConnectError:
+        return {**base, 'status': 'panel_connection_failed', 'can_retry': False}
+    except httpx.HTTPStatusError as exc:
+        code = exc.response.status_code
+        status = ('panel_auth_failed' if code in (401, 403)
+                  else 'panel_api_missing' if code in (404, 405)
+                  else 'panel_unavailable')
+        return {**base, 'status': status, 'can_retry': False}
     except Exception:
-        return {**base, 'status': 'panel_unavailable'}
+        # No raw server error, HTTP body, URL, API token or keys in admin JSON.
+        return {**base, 'status': 'panel_unavailable', 'can_retry': False}
     return {**base, 'status': status}
 
 
