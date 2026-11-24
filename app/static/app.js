@@ -127,9 +127,9 @@ function renderPlans() {
   renderAppearance();
   $('protocols').innerHTML = catalog.protocols.map(p => `<button class="${p.id===protocol?'chosen':''}" data-protocol="${p.id}" aria-pressed="${p.id===protocol}">${esc(protocolName(p.id))}${p.available?'':' · скоро'}</button>`).join('');
   const selected=catalog.protocols.find(p=>p.id===protocol);
-  const available=!!selected?.available && catalog.payment_available!==false;
-  $('provider-note').textContent = available ? '' : catalog.payment_available===false ? (catalog.payment_notice||'Оплата временно недоступна.') : selected?.sales_allowed===false ? (catalog.sale_notice||'Продажи временно приостановлены.') : 'Подключение этого протокола ещё не настроено. Покупки временно недоступны.';
-  $('plan-list').innerHTML = catalog.plans.length ? catalog.plans.map((p,i) => `<article class="plan ${i===1?'featured':''}">${i===1?'<span class="badge">УДОБНЫЙ ВЫБОР</span>':''}<h3>${esc(p.name)}</h3><div class="price">${p.price.toLocaleString('ru-RU')} <small>${catalog.currency==='XTR'?'★':'₽'}</small></div><p>${p.days} дней доступа · ${esc(protocolName(protocol))}</p><ul><li>${esc(profileAllowance(p.device_limit ?? 4))}</li><li>Настройки и QR-код в кабинете</li><li>Продление с сохранением дней</li></ul><button data-plan="${p.id}" ${available?'':'disabled'}>${available?'Выбрать тариф ↗':'Скоро'}</button></article>`).join('') : '<p class="plans-empty">Тарифы временно недоступны. Пожалуйста, обратитесь в поддержку.</p>';
+  const available=!!selected?.available && selected?.sales_allowed!==false;
+  $('provider-note').textContent = available ? '' : selected?.sales_allowed===false ? (catalog.sale_notice||'Продажи временно приостановлены.') : 'Подключение этого протокола ещё не настроено. Покупки временно недоступны.';
+  $('plan-list').innerHTML = catalog.plans.length ? catalog.plans.map((p,i) => `<article class="plan ${i===1?'featured':''}">${i===1?'<span class="badge">УДОБНЫЙ ВЫБОР</span>':''}<h3>${esc(p.name)}</h3><div class="price">${p.price===0?'Бесплатно':p.price.toLocaleString('ru-RU')}${p.price===0?'':' <small>'+(catalog.currency==='XTR'?'★':'₽')+'</small>'}</div><p>${p.days} дней доступа · ${esc(protocolName(protocol))}</p><ul><li>${esc(profileAllowance(p.device_limit ?? 4))}</li><li>Настройки и QR-код в кабинете</li><li>Продление с сохранением дней</li></ul><button data-plan="${p.id}" ${available?'':'disabled'}>${available?(p.price===0?'Получить бесплатно ↗':'Выбрать тариф ↗'):'Скоро'}</button></article>`).join('') : '<p class="plans-empty">Тарифы временно недоступны. Пожалуйста, обратитесь в поддержку.</p>';
   renderTrial();
 }
 function clearConnection() {
@@ -261,14 +261,14 @@ async function beginCheckout(id) {
   if (!selectedPlan) throw new Error('Тариф больше недоступен. Выберите другой тариф.');
   if (!me) { show('auth-dialog'); return; }
   if(catalog.protocols.find(p=>p.id===protocol)?.sales_allowed===false)throw new Error(catalog.sale_notice||'Продажи временно приостановлены.');
-  if(catalog.payment_available===false)throw new Error(catalog.payment_notice||'Оплата временно недоступна.');
-  $('promo-controls').hidden=false;renderCheckoutAmount();
+  if(selectedPlan.price!==0 && catalog.payment_available===false)throw new Error(catalog.payment_notice||'Оплата временно недоступна.');
+  $('promo-controls').hidden=selectedPlan.price===0;renderCheckoutAmount();
   if(promoIntent){$('promo-code').value=promoIntent;$('promo-status').textContent='Промокод из ссылки. Нажмите «Применить», чтобы проверить скидку и итоговую цену.';}
   clearPayment(); $('checkout-form').hidden = false;
   checkoutPolicyVersion=Number.isSafeInteger(catalog.payment_policy_version)?catalog.payment_policy_version:null;
-  $('checkout-submit').textContent=catalog.payment_mode==='sbp'?'Создать счёт СБП →':'Оформить заказ →';
-  $('terms-text').textContent=catalog.terms; $('accept-terms').checked=false; $('accept-terms').required=catalog.payment_mode==='stars';
-  $('receipt-label').hidden = !catalog.receipts; $('receipt-label').querySelector('input').required = catalog.receipts;
+  $('checkout-submit').textContent=selectedPlan.price===0?'Получить бесплатно →':catalog.payment_mode==='sbp'?'Создать счёт СБП →':'Оформить заказ →';
+  $('terms-text').textContent=catalog.terms; $('accept-terms').checked=false; $('accept-terms').required=selectedPlan.price!==0 && catalog.payment_mode==='stars';
+  $('receipt-label').hidden = selectedPlan.price===0 || !catalog.receipts; $('receipt-label').querySelector('input').required = selectedPlan.price!==0 && catalog.receipts;
   $('receipt-label').querySelector('input').value = me.email || '';
   show('checkout-dialog');
 }
@@ -277,7 +277,7 @@ function paymentResult(order) {
   $('checkout-form').hidden = true;
   $('payment-result').replaceChildren();
   const paragraph = document.createElement('p');
-  paragraph.textContent = `Заказ: ${order.id}\nТариф: ${order.plan_name || protocolName(order.protocol)} · ${order.days} дней\n${profileAllowance(order.device_limit ?? 4)}\nСумма: ${order.kind==='referral'?'Бонусные дни':order.kind==='trial'?'Без оплаты':money(order.amount,order.currency)}\n${displayOrderStatus(order)}${order.promo_code?'\nПромокод: '+order.promo_code+' · скидка '+money(order.discount,order.currency)+' от '+money(order.base_amount,order.currency):''}\n\n${order.progress?.message || ''}\n${order.instructions || ''}`;
+  paragraph.textContent = `Заказ: ${order.id}\nТариф: ${order.plan_name || protocolName(order.protocol)} · ${order.days} дней\n${profileAllowance(order.device_limit ?? 4)}\nСумма: ${order.kind==='referral'?'Бонусные дни':order.kind==='trial'?'Без оплаты':order.amount===0?'Бесплатно':money(order.amount,order.currency)}\n${displayOrderStatus(order)}${order.promo_code?'\nПромокод: '+order.promo_code+' · скидка '+money(order.discount,order.currency)+' от '+money(order.base_amount,order.currency):''}\n\n${order.progress?.message || ''}\n${order.instructions || ''}`;
   $('payment-result').append(paragraph);
   if (order.payment_url && order.status === 'pending') {
     const link = document.createElement('a');
@@ -590,7 +590,7 @@ $('subscriptions').onclick = async event => {
 function renderCheckoutAmount() {
   if(!selectedPlan || checkoutTrial)return;
   const summary=selectedPlan.name+' / '+selectedPlan.days+' дней / '+protocolName(protocol)+' / '+profileAllowance(selectedPlan.device_limit ?? 4);
-  $('checkout-info').textContent=summary+' / '+(checkoutQuote?'Было '+money(checkoutQuote.base_amount,checkoutQuote.currency)+' · скидка '+money(checkoutQuote.discount,checkoutQuote.currency)+' · к оплате '+money(checkoutQuote.amount,checkoutQuote.currency):money(selectedPlan.price,catalog.currency));
+  $('checkout-info').textContent=summary+' / '+(checkoutQuote?'Было '+money(checkoutQuote.base_amount,checkoutQuote.currency)+' · скидка '+money(checkoutQuote.discount,checkoutQuote.currency)+' · к оплате '+money(checkoutQuote.amount,checkoutQuote.currency):selectedPlan.price===0?'Бесплатно':money(selectedPlan.price,catalog.currency));
 }
 function resetQuote(clearInput=true) {
   quoteRequest++;checkoutQuote=null;
