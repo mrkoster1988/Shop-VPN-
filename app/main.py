@@ -1391,6 +1391,14 @@ async def admin_wireguard_peer_check(
     return await wg_peer_diagnostics.inspect(user_id)
 
 
+@app.post('/api/admin/users/{user_id}/wireguard/restore')
+async def admin_wireguard_peer_restore(
+        user_id: int = APIPath(ge=1, le=9223372036854775807),
+        actor=Depends(admin)):
+    _developer_only(actor)
+    return await wg_peer_diagnostics.restore_primary(user_id)
+
+
 @app.post('/api/admin/users/{user_id}/wireguard/retry')
 async def admin_wireguard_peer_retry(
         user_id: int = APIPath(ge=1, le=9223372036854775807),
