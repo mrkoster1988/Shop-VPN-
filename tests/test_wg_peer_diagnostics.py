@@ -193,7 +193,11 @@ def test_missing_wg_peer_is_restored_on_pinned_server_without_new_key(client, mo
         writes.append(dict(sub))
         state['peer']='peer_found'
         return '[Interface]\nPrivateKey = '+private+'\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = '+wgdashboard.WGDashboard.identity(private)+'\nEndpoint = 193.238.155.39:51820\nAllowedIPs = 0.0.0.0/0\n'
+    async def download(profile, private_key):
+        assert private_key == private
+        return c.decrypt(one('SELECT secret FROM subscriptions WHERE id=?',(SID,))['secret'])
     monkeypatch.setattr(peer,'_remote_peer',check)
+    monkeypatch.setattr(peer,'_download_existing_config',download)
     monkeypatch.setattr(providers,'provision',provision)
     result=client.post('/api/admin/users/1/wireguard/restore',headers=owner())
     assert result.status_code==200,result.text
@@ -252,3 +256,29 @@ def test_restore_rejects_pending_checkout_and_restricted_remote_peer(client,monk
     execute("INSERT INTO orders(id,user_id,protocol,plan,days,amount,created,status) "
             "VALUES ('pending-restoration',1,'wg','month',30,199,1,'pending')")
     assert client.post('/api/admin/users/1/wireguard/restore',headers=owner()).status_code==409
+
+
+
+def test_remote_peer_found_can_refresh_stale_config_without_recreating_peer(client, monkeypatch):
+    from app import providers
+    setup_user(client)
+    key=wgdashboard.stored_private_key('test-wg', SID)
+    initial=one('SELECT expires,secret,server_id FROM subscriptions WHERE id=?',(SID,))
+    async def present(profile, public):return 'peer_found'
+    fresh='[Interface]\\nPrivateKey = '+key+'\\nAddress = 10.0.0.2/32\\n[Peer]\\nPublicKey = '+wgdashboard.WGDashboard.identity(key)+'\\nEndpoint = 193.238.155.39:51820\\nAllowedIPs = 0.0.0.0/0\\n'
+    async def downloaded(profile, private):
+        assert private==key
+        return fresh
+    async def forbid(sub):
+        raise AssertionError('Existing peer must never be re-created')
+    monkeypatch.setattr(peer,'_remote_peer',present)
+    monkeypatch.setattr(peer,'_download_existing_config',downloaded)
+    monkeypatch.setattr(providers,'provision',forbid)
+    result=client.post('/api/admin/users/1/wireguard/restore',headers=owner())
+    assert result.status_code==200,result.text
+    assert result.json()['status']=='refreshed'
+    updated=one('SELECT expires,secret,server_id FROM subscriptions WHERE id=?',(SID,))
+    assert updated['expires']==initial['expires'] and updated['server_id']==initial['server_id']
+    assert c.decrypt(updated['secret'])==fresh
+    again=client.post('/api/admin/users/1/wireguard/restore',headers=owner())
+    assert again.status_code==200 and again.json()['status']=='already_present'
