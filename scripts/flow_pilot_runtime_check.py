@@ -100,7 +100,8 @@ def configured_shop(shop: Path) -> bool:
         mounts = service.get("volumes", [])
         persistent = any(mount.get("target") == "/app/data" and
                          mount.get("type") == "volume" and
-                         mount.get("source") == "pushok_shop_data"
+                         config.get("volumes", {}).get(mount.get("source"), {}).get("name")
+                         == "pushok_shop_data"
                          for mount in mounts if isinstance(mount, dict))
         return correct and persistent
     except (ValueError, TypeError, KeyError):
