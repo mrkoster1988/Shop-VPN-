@@ -258,10 +258,13 @@ def init_db():
         CREATE INDEX IF NOT EXISTS flow_bridge_nonces_expiry ON flow_bridge_nonces(expires);
         CREATE TABLE IF NOT EXISTS flow_auto_policy (
           id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL DEFAULT 0
-          CHECK(enabled IN (0,1)), days INTEGER NOT NULL DEFAULT 1 CHECK(days BETWEEN 1 AND 30),
+          CHECK(enabled IN (0,1)), days INTEGER NOT NULL DEFAULT 30 CHECK(days BETWEEN 1 AND 30),
           max_users INTEGER NOT NULL DEFAULT 100 CHECK(max_users BETWEEN 1 AND 100000),
           version INTEGER NOT NULL DEFAULT 1, updated INTEGER NOT NULL DEFAULT 0);
         INSERT OR IGNORE INTO flow_auto_policy(id) VALUES (1);
+        -- Upgrade untouched 1-day defaults only; preserve every owner-edited policy.
+        UPDATE flow_auto_policy SET days=30
+          WHERE id=1 AND enabled=0 AND days=1 AND version=1 AND updated=0;
         CREATE TABLE IF NOT EXISTS flow_auto_grants (
           user_id INTEGER PRIMARY KEY REFERENCES users(id), 
           subscription_id TEXT NOT NULL UNIQUE REFERENCES subscriptions(id),
