@@ -1393,7 +1393,12 @@ async def admin_user(user_id: int = APIPath(ge=1, le=9223372036854775807),
         if row is None:
             raise HTTPException(404, 'Пользователь не найден')
         subscriptions = [dict(sub) for sub in conn.execute(
-            'SELECT id,protocol,expires,state,device_limit FROM subscriptions WHERE user_id=? ORDER BY protocol,id', (user_id,))]
+            'SELECT id,user_id,protocol,expires,state,device_limit FROM subscriptions WHERE user_id=? ORDER BY protocol,id', (user_id,))]
+        for sub in subscriptions:
+            reason = admin_cleanup.purge_blocker(conn, sub)
+            sub['can_delete'] = reason is None
+            sub['delete_blocker'] = reason
+            sub.pop('user_id', None)
         total = conn.execute('SELECT count(*) FROM orders WHERE user_id=?', (user_id,)).fetchone()[0]
         orders = [dict(order) for order in conn.execute("""SELECT id,protocol,plan,plan_name,days,amount,
             currency,method,status,created,attempts,error,promo_code,promo_percent,base_amount,discount FROM orders WHERE user_id=?
