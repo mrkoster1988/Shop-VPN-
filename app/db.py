@@ -296,6 +296,16 @@ def init_db():
           expires INTEGER NOT NULL DEFAULT 0, secret TEXT, created INTEGER NOT NULL,
           attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL DEFAULT 0, error TEXT,
           UNIQUE(subscription_id,request_id));
+        CREATE TABLE IF NOT EXISTS flow_wireguard_device_links (
+          device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+          token_hash TEXT UNIQUE, token_secret TEXT,
+          enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+          version INTEGER NOT NULL CHECK(version>0),
+          CHECK((enabled=1 AND token_hash IS NOT NULL AND token_secret IS NOT NULL)
+                OR (enabled=0 AND token_hash IS NULL AND token_secret IS NULL)));
+        CREATE TABLE IF NOT EXISTS flow_wireguard_device_versions (
+          device_id TEXT PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+          fingerprint TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0));
         CREATE TABLE IF NOT EXISTS device_rotations (
           id TEXT PRIMARY KEY, device_id TEXT NOT NULL REFERENCES devices(id),
           request_id TEXT NOT NULL, old_credential_id TEXT NOT NULL, new_credential_id TEXT NOT NULL,

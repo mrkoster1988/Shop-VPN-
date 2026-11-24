@@ -35,6 +35,7 @@ ENCRYPTED={
 # Новые таблицы проверяются, если существуют: старые архивы остаются читаемыми.
 OPTIONAL_ENCRYPTED={
     'flow_wireguard_links':('token_secret',),
+    'flow_wireguard_device_links':('token_secret',),
     'wgdashboard_keys':('private_key',),
 }
 REQUIRED={'users','sessions','tickets','orders','plans','meta',*ENCRYPTED}
@@ -177,11 +178,15 @@ def verify(path,password):
     return {**report,'release':manifest['release'],'created':manifest['created']}
 
 
-def restore(path,password,target):
+def restore(path,password,target,*,preserve_device_links=False):
     files,manifest=read_archive(path,password)
     with tempfile.TemporaryDirectory(prefix='pushok-restore-') as temp:
         database=Path(temp)/'shop.db';database.write_bytes(files['shop.db']);report=validate(database,files['.env'])
         with closing(sqlite3.connect(database)) as conn:
+            # Snapshot recovery must never resurrect a previously disabled bearer URL.
+            if not preserve_device_links and conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='flow_wireguard_device_links'").fetchone():
+                conn.execute("""UPDATE flow_wireguard_device_links SET enabled=0,token_hash=NULL,
+                    token_secret=NULL,version=version+1 WHERE enabled=1""")
             # Pending SSO approvals and their locally issued sessions must never resurrect.
             for table in ('shop_id_requests','shop_id_sessions'):
                 if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():
@@ -240,7 +245,7 @@ def main(argv=None):
             with open(args.env,'rb') as stream:raw=stream.read(MAX_ENV+1)
         result=create(args.database,raw,args.output,password)
     elif args.command=='verify':result=verify(args.archive,password)
-    else:result=restore(args.archive,password,args.target)
+    else:result=restore(args.archive,password,args.target,preserve_device_links=os.getenv('PUSHOK_BACKUP_PRESERVE_DEVICE_LINKS')=='1')
     print(json.dumps({'ok':True,'operation':args.command,**result},ensure_ascii=False))
     return 0
 

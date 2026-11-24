@@ -13,7 +13,7 @@ let adsPolicy=null,adsPage=1,adsRequest=0,adsMutation=0,adsIntent=new Map();
 let passwordOperation=null, logoutPending=false, supportRequest=0, selectedSupportCase=null;
 let paymentOrder=null,paymentRequest=0,paymentBusy=false;
 let catalog, me, protocol = 'xui', selectedPlan, checkoutTrial=null, register = false, toastTimer;
-let linkSubscription=null, linkProtocol=null, linkRequest=0, linkState=null, flowLaunchUrl=null;
+let linkSubscription=null, linkDeviceId=null, linkProtocol=null, linkRequest=0, linkState=null, flowLaunchUrl=null;
 let sessionEpoch = 0, meRequest = 0, connectionRequest = 0, connection = null, connectionTimer;
 let deviceSubscription=null, deviceRequest=0, deviceIntent=null, deviceCache=[], rotationIntents=new Map(), primaryRotationIntents=new Map();
 async function api(path, data, method) {
@@ -195,8 +195,8 @@ async function refreshMe() {
   }
   if (linkSubscription) {
     const current = me?.subscriptions.find(s=>s.id===linkSubscription);
-    if (!current || current.state!=='active' || current.expires*1000<=Date.now() ||
-        (current.primary_key_state || 'active')!=='active') {
+    if (!current || current.protocol!==linkProtocol || current.state!=='active' || current.expires*1000<=Date.now() ||
+        (!linkDeviceId && (current.primary_key_state || 'active')!=='active')) {
       $('link-dialog').close(); clearLink();
     } else if (linkState) renderFlowLink(linkState, current);
   }
@@ -640,10 +640,18 @@ function clearFlowLink() {
   $('flow-open').disabled=true;
   $('flow-open-note').textContent='Для Pushok Flow 0.41 и новее нужна включённая HTTPS-ссылка подписки.';
 }
+function linkTargetReady(parent) {
+  if (!parent || parent.protocol!==linkProtocol || parent.state!=='active' ||
+      !Number.isFinite(parent.expires) || parent.expires*1000<=Date.now()) return false;
+  if (!linkDeviceId) return (parent.primary_key_state || 'active')==='active';
+  const device=deviceCache.find(d=>d.id===linkDeviceId);
+  return parent.protocol==='wg' && deviceSubscription===parent.id && $('devices-dialog').open &&
+    device?.protocol==='wg' && device.ready===true && device.state==='active' &&
+    Number.isFinite(device.expires) && device.expires*1000>Date.now();
+}
 function flowUrlFor(state, parent) {
-  if (typeof PushokFlowLinks==='undefined' || state?.enabled!==true || !['xui','wg'].includes(parent?.protocol) || parent?.protocol!==linkProtocol ||
-      parent.state!=='active' || !Number.isFinite(parent.expires) || parent.expires*1000<=Date.now() ||
-      (parent.primary_key_state || 'active')!=='active') return null;
+  if (typeof PushokFlowLinks==='undefined' || state?.enabled!==true ||
+      !['xui','wg'].includes(parent?.protocol) || !linkTargetReady(parent)) return null;
   return PushokFlowLinks.landingUrl(state.url, 'Подписка Pushok', location.origin, basePath);
 }
 function renderFlowLink(state, parent) {
@@ -655,6 +663,7 @@ function renderFlowLink(state, parent) {
       : 'Для VLESS нужна версия Pushok Flow 0.41 или новее и HTTPS-ссылка.';
 }
 function linkApiPath(sid) {
+  if(linkDeviceId)return '/api/flow/wireguard/devices/'+encodeURIComponent(linkDeviceId)+'/link';
   const encoded=encodeURIComponent(sid);
   return linkProtocol==='wg' ? '/api/flow/wireguard/subscriptions/'+encoded+'/link'
     : '/api/subscriptions/'+encoded+'/link';
@@ -663,34 +672,38 @@ function linkIsWireGuard() {
   return linkProtocol==='wg';
 }
 function clearLink() {
-  linkRequest++;linkSubscription=null;linkProtocol=null;linkState=null;
+  linkRequest++;linkSubscription=null;linkDeviceId=null;linkProtocol=null;linkState=null;
   clearFlowLink();
   $('link-value').value='';$('link-status').textContent='';$('link-follow').checked=false;
   for(const id of ['copy-link','link-enable','link-rotate','link-disable'])$(id).disabled=true;
 }
 function renderLink(state) {
+  const parent=me?.subscriptions.find(s=>s.id===linkSubscription);
+  if(linkDeviceId && !linkTargetReady(parent)){ $('link-dialog').close();clearLink();return; }
   linkState=state;$('link-value').value=state.url || '';$('link-follow').checked=!!state.follow_rotation;
   const wireguard=linkIsWireGuard();
-  $('link-title').textContent=wireguard?'Ссылка WireGuard для Pushok Flow':'Ссылка подписки VLESS';
+  $('link-title').textContent=linkDeviceId?'Ссылка WireGuard для устройства':wireguard?'Ссылка WireGuard для Pushok Flow':'Ссылка подписки VLESS';
+  $('link-description').textContent='Личная ссылка отдаёт настройки только '+(linkDeviceId?'выбранного устройства':'основного профиля')+'. Любой, кто получил ссылку, сможет получить VPN-ключ — храните её приватно.';
+  $('link-revoke-note').textContent=linkDeviceId?'Отключение ссылки не отзывает скачанный VPN-ключ. Для отзыва используйте управление устройством. Перевыпуск ключа отключит прежнюю ссылку.':'Отключение или замена ссылки не отзывает уже скачанный VPN-ключ. Для его отзыва используйте смену основного ключа. Частота обновления зависит от VPN-клиента.';
   $('link-follow-settings').hidden=wireguard;
   $('copy-link').disabled=!state.enabled;$('link-rotate').disabled=!state.enabled;$('link-disable').disabled=!state.enabled;
-  const parent=me?.subscriptions.find(s=>s.id===linkSubscription);
   renderFlowLink(state,parent);
-  $('link-enable').disabled=!parent || parent.protocol!==linkProtocol || parent.state!=='active' || parent.expires*1000<=Date.now() || (parent.primary_key_state || 'active')!=='active' || (wireguard && state.enabled);
+  $('link-enable').disabled=!linkTargetReady(parent) || (wireguard && state.enabled);
   $('link-enable').textContent=state.enabled?(wireguard?'Ссылка включена':'Сохранить настройки'):'Создать ссылку';
   $('link-status').textContent=state.enabled?'Ссылка включена. Импортируйте её как URL подписки.':'Ссылка отключена.';
 }
-async function openLink(sid) {
+async function openLink(sid,did=null) {
   clearLink();
   const parent=me?.subscriptions.find(s=>s.id===sid);
   if (!parent || !['xui','wg'].includes(parent.protocol)) return;
-  linkSubscription=sid;linkProtocol=parent.protocol;
+  linkSubscription=sid;linkProtocol=parent.protocol;linkDeviceId=did;
+  if(did && !linkTargetReady(parent)){clearLink();return;}
   $('link-status').textContent='Загружаем…';show('link-dialog');await refreshLink();
 }
 async function refreshLink() {
   if(!linkSubscription || !['xui','wg'].includes(linkProtocol))return;
   const parent=me?.subscriptions.find(s=>s.id===linkSubscription);
-  if(!parent || parent.protocol!==linkProtocol) {
+  if(!parent || parent.protocol!==linkProtocol || (linkDeviceId && !linkTargetReady(parent))) {
     clearFlowLink();clearLink();$('link-dialog').close();return;
   }
   const sid=linkSubscription,request=++linkRequest;
@@ -703,7 +716,8 @@ async function changeLink(action) {
   if(!linkSubscription || !linkState)return;
   const parent=me?.subscriptions.find(s=>s.id===linkSubscription);
   if (!parent || parent.protocol!==linkProtocol || parent.state!=='active' ||
-      !Number.isFinite(parent.expires) || parent.expires*1000<=Date.now()) {
+      !Number.isFinite(parent.expires) || parent.expires*1000<=Date.now() ||
+      (linkDeviceId && !linkTargetReady(parent))) {
     clearFlowLink();return;
   }
   const sid=linkSubscription,version=linkState.version,request=++linkRequest;
@@ -740,12 +754,14 @@ $('link-refresh').onclick=()=>refreshLink().catch(e=>toast(e.message));
 $('link-rotate').onclick=()=>{if(window.confirm('Заменить ссылку? Прежний URL перестанет работать. Его нужно заменить в VPN-клиенте.'))changeLink('rotate');};
 $('link-disable').onclick=()=>{if(window.confirm('Отключить обновление по этой ссылке? Уже скачанный VPN-ключ останется действующим.'))changeLink('disable');};
 $('copy-link').onclick=async()=>{
-  if(!linkState?.enabled || !$('link-value').value)return;
+  if(!linkState?.enabled || !$('link-value').value ||
+      (linkDeviceId && !linkTargetReady(me?.subscriptions.find(s=>s.id===linkSubscription))))return;
   const request=linkRequest;
   try {await navigator.clipboard.writeText($('link-value').value);if(request===linkRequest)toast('Ссылка скопирована. Добавьте её как подписку в VPN-клиент.');}
   catch {if(request===linkRequest){$('link-value').select();toast('Ссылка выделена для ручного копирования.');}}
 };
 function clearDevices() {
+  if(linkDeviceId){$('link-dialog').close();clearLink();}
   deviceRequest++; deviceSubscription=null; deviceIntent=null; deviceCache=[]; rotationIntents.clear();
   $('device-form').reset(); $('devices-list').replaceChildren(); $('devices-status').textContent='';
 }
@@ -756,14 +772,20 @@ async function openDevices(sid) {
 async function refreshDevices() {
   if (!deviceSubscription) return;
   const request=++deviceRequest,sid=deviceSubscription;
-  const result=await api('/api/subscriptions/'+encodeURIComponent(sid)+'/devices');
+  let result;
+  try {result=await api('/api/subscriptions/'+encodeURIComponent(sid)+'/devices');}
+  catch(e){if(request===deviceRequest && linkDeviceId && linkSubscription===sid){$('link-dialog').close();clearLink();}throw e;}
   if (request!==deviceRequest || sid!==deviceSubscription) return;
   deviceCache=result.devices;
   const parent=me?.subscriptions.find(s=>s.id===sid);
   $('device-form').hidden=!parent || parent.state!=='active' || parent.expires*1000<=Date.now() || result.devices.length>=result.max_extra;
   const labels={pending:'Готовим профиль',active:'Профиль выдан',revoking:'Отключаем доступ',revoked:'Доступ отозван',rotating:'Меняем ключ'};
-  $('devices-list').innerHTML=result.devices.map(d=>`<article class="subscription"><h3>${esc(d.name)}</h3><p>${esc(labels[d.state] || d.state)}${d.retrying?' · повторим после ошибки':''}${d.state==='active'&&!d.ready?' · срок доступа истёк':''}</p><div class="actions">${d.ready?`<button class="small" data-device-config="${esc(d.id)}">Подключить ↗</button><button class="small secondary" data-device-rotate="${esc(d.id)}">Перевыпустить ключ</button>`:''}${['pending','active','rotating'].includes(d.state)?`<button class="small secondary" data-device-revoke="${esc(d.id)}">Отозвать доступ</button>`:''}</div></article>`).join('') || '<p>Дополнительных профилей пока нет.</p>';
+  $('devices-list').innerHTML=result.devices.map(d=>`<article class="subscription"><h3>${esc(d.name)}</h3><p>${esc(labels[d.state] || d.state)}${d.retrying?' · повторим после ошибки':''}${d.state==='active'&&!d.ready?' · срок доступа истёк':''}</p><div class="actions">${d.ready?`<button class="small" data-device-config="${esc(d.id)}">Подключить ↗</button><button class="small secondary" data-device-rotate="${esc(d.id)}">Перевыпустить ключ</button>${d.protocol==='wg'?`<button class="small secondary" data-device-link="${esc(d.id)}">Открыть в Pushok Flow</button>`:''}`:''}${['pending','active','rotating'].includes(d.state)?`<button class="small secondary" data-device-revoke="${esc(d.id)}">Отозвать доступ</button>`:''}</div></article>`).join('') || '<p>Дополнительных профилей пока нет.</p>';
   $('devices-status').textContent='Дополнительные профили: '+result.devices.length+' из '+result.max_extra+'. Основной профиль — отдельно.'+(result.devices.length>result.max_extra?' Уже выданные профили работают; новые недоступны до освобождения лимита.':'');
+  if (linkDeviceId && linkSubscription===sid) {
+    if(!linkTargetReady(parent)){ $('link-dialog').close();clearLink(); }
+    else if(linkState)renderFlowLink(linkState,parent);
+  }
   if (connection?.deviceId) {
     const current=result.devices.find(d=>d.id===connection.deviceId);
     if (!current?.ready || !parent) { $('config-dialog').close();clearConnection(); }
@@ -784,6 +806,8 @@ $('device-form').onsubmit=async event=>{
   finally { button.disabled=false; }
 };
 $('devices-list').onclick=async event=>{
+  const link=event.target.closest('[data-device-link]');
+  if(link){await openLink(deviceSubscription,link.dataset.deviceLink).catch(e=>toast(e.message));return;}
   const connect=event.target.closest('[data-device-config]');
   if(connect){const device=deviceCache.find(d=>d.id===connect.dataset.deviceConfig);if(device?.ready)await openConnection(deviceSubscription,device).catch(e=>toast(e.message));return;}
   const rotate=event.target.closest('[data-device-rotate]');
