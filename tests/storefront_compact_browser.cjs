@@ -51,6 +51,7 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
     }
     if(p==='/shop/api/auth/telegram')return route.fulfill({json:{ok:true}});
     if(p==='/shop/api/catalog')return route.fulfill({json:catalog});
+    if(p==='/shop/api/auth/telegram')return route.fulfill({json:{ok:true}});
     if(p==='/shop/api/me')return route.fulfill(authenticated?{json:customer}:{status:401,json:{detail:'Войдите'}});
     if(p==='/shop/api/support/tickets')return route.fulfill({json:{cases:[]}});
     unexpected.push(p);return route.fulfill({status:404,json:{detail:'Unexpected fixture'}});
