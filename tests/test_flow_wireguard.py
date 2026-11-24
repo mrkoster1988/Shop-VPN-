@@ -114,6 +114,8 @@ def test_personal_link_replay_rotate_revoke_and_ownership(client):
     assert updated['version']==2 and updated['url']!=initial['url']
     assert client.get('/flow/wireguard/'+token).status_code==404
     assert client.put(path,json={'action':'rotate','version':1}).status_code==409
+    assert client.put(path,json={'action':'enable','version':0}).status_code==409
+    assert client.put(path,json={'action':'enable','version':2}).json()==updated
     new_token=updated['url'].rsplit('/',1)[-1]
     assert client.get('/flow/wireguard/'+new_token).status_code==200
     assert client.put(path,json={'action':'disable','version':2}).json()=={
@@ -221,3 +223,15 @@ def test_invalid_ciphertext_does_not_publish_a_new_revision(client):
     assert 'invalid-ciphertext' not in response.text
     with db() as conn:
         assert conn.execute('SELECT revision FROM flow_wireguard_versions').fetchone()[0] == 1
+
+
+def test_primary_link_metadata_rejects_corrupted_token_hash(client):
+    register(client)
+    _seed(1, 'owned-primary', int(time.time())+86400)
+    path='/api/flow/wireguard/subscriptions/owned-primary/link'
+    assert client.put(path,json={'action':'enable','version':0}).status_code==200
+    with db() as conn:
+        conn.execute("UPDATE flow_wireguard_links SET token_hash='corrupted' WHERE subscription_id='owned-primary'")
+    result=client.get(path)
+    assert result.status_code==503
+    assert 'corrupted' not in result.text
