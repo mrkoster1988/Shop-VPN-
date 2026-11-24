@@ -1285,8 +1285,10 @@ async function loadUser(page) {
       const tools = role==='owner'
         ? `<div class="record-actions">
           ${sub.state!=='revoked' ? '<button type="button" class="danger-action" data-subscription-revoke="'+esc(sub.id)+'">Отозвать доступ</button>' : ''}
-          ${sub.state==='revoked' ? '<button type="button" class="danger-action" data-subscription-delete="'+esc(sub.id)+'">Удалить запись</button>' : ''}
-          </div><p class="record-note">Сначала отзываются пиры на сервере. Оплаченные заказы и финансовая история сохраняются.</p>`
+          ${sub.state==='revoked' && sub.can_delete ? '<button type="button" class="danger-action" data-subscription-delete="'+esc(sub.id)+'">Удалить запись</button>' : ''}
+          </div>
+          ${sub.state==='revoked' && !sub.can_delete ? '<p class="record-note">'+esc(sub.delete_blocker||'Запись хранится для истории')+'</p>' : ''}
+          <p class="record-note">Сначала отзываются пиры на сервере. Оплаченные заказы и финансовая история сохраняются.</p>`
         : '';
       return `<article class="subscription"><b>${esc(protocolLabel(sub.protocol))}</b>
         <p>${esc(status)} · Срок: ${esc(dateTime(sub.expires))}</p>
