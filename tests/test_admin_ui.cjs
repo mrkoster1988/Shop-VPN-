@@ -1116,3 +1116,56 @@ test('Pushok ID trust configuration is developer-only and uses version checks',a
  p.replyAt(1,{detail:'Настройки изменились'},409);await save;
  assert.equal(p.element('id-policy-save').disabled,true);
 });
+
+
+function advisorFixture(overrides={}){
+ return {engine:'local_rules_v1',external_model_connected:false,executes_business_actions:false,
+ policy:{version:2,enabled:true,automatic:false,interval_minutes:60,diagnostics_enabled:true,servers_enabled:true,commerce_enabled:false,finance_enabled:false,queue_age_minutes:10,capacity_percent:85,sales_days:30,min_orders:20,payment_rate_percent:30},
+ run:{last_scan:1,policy_version:2,source:'manual',scan_count:1},categories:['servers'],
+ findings:[{code:'routing_capacity_wg',category:'servers',severity:'warning',title:'<img> Узел',recommendation:'<script>Проверить</script>',evidence:{protocol:'wg',near_limit:1},state:'open',active:true,version:3,last_seen:1,occurrences:1}],...overrides};
+}
+test('Pushok AI read-only role sees escaped recommendations without operational controls',async()=>{
+ const p=adminPage(),load=p.run("acceptStaffRole({role:'administrator',permissions:['ai_read','servers_read']});refreshAi()");
+ p.reply(advisorFixture());await load;
+ assert.equal(p.element('ai-policy-form').hidden,true);
+ assert.equal(p.element('ai-scan').disabled,true);
+ assert.match(p.element('ai-findings').innerHTML,/&lt;img&gt;/);
+ assert.doesNotMatch(p.element('ai-findings').innerHTML,/<img|<script|data-ai-action/);
+ assert.match(p.element('ai-summary').textContent,/Видимых актуальных рекомендаций: 1/);
+});
+test('Pushok AI developer policy version is preserved and stale writes require refresh',async()=>{
+ const p=adminPage(),load=p.run("role='owner';refreshAi()");
+ p.reply(advisorFixture());await load;
+ p.element('ai-automatic').checked=true;
+ const save=p.element('ai-policy-form').onsubmit({preventDefault(){}});
+ assert.deepEqual(p.bodies[1],{...advisorFixture().policy,automatic:true});
+ p.replyAt(1,{detail:'Настройки изменились'},409);await save;
+ assert.equal(p.element('ai-policy-save').disabled,true);
+ assert.match(p.element('ai-status').textContent,/Обновите/);
+});
+test('Pushok AI review action only submits a decision and never a server or payment operation',async()=>{
+ const p=adminPage(),load=p.run("acceptStaffRole({role:'administrator',permissions:['ai_read','ai_review','servers_read']});refreshAi()");
+ p.reply(advisorFixture());await load;
+ assert.match(p.element('ai-findings').innerHTML,/Принять к работе/);
+ const event={target:{closest:()=>({dataset:{aiAction:'acknowledge',aiCode:'routing_capacity_wg'}})}};
+ const action=p.element('ai-findings').onclick(event);
+ assert.equal(p.requests[1],'/shop/api/admin/pushok-ai/findings/routing_capacity_wg/review');
+ assert.equal(p.bodies[1].action,'acknowledge');assert.equal(p.bodies[1].version,3);
+ assert.equal(p.bodies[1].reason,'investigate');
+ p.replyAt(1,{detail:'Изменилось'},409);await action;
+ assert.equal(p.requests.length,2);
+ assert.equal(p.element('ai-findings').innerHTML,'');
+});
+test('Pushok AI late history and scan responses cannot restore data after logout',async()=>{
+ const p=adminPage(),load=p.run("role='owner';refreshAi()");
+ p.reply(advisorFixture());await load;
+ const history=p.run('refreshAiHistory()');
+ const scan=p.element('ai-scan').onclick();
+ p.run("$('exit').onclick()");
+ p.replyAt(1,{page:1,page_size:25,total:1,events:[{title:'Private fixture',created:1,action:'detected',actor_role:'analysis'}]});
+ p.replyAt(2,advisorFixture());await Promise.all([history,scan]);
+ assert.equal(p.element('ai-findings').innerHTML,'');
+ assert.equal(p.element('ai-history-list').innerHTML,'');
+ assert.equal(p.element('ai-history-panel').hidden,true);
+ assert.equal(p.element('ai-scan').disabled,true);
+});

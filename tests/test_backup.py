@@ -308,3 +308,19 @@ def test_id_restore_preserves_identity_but_clears_all_transient_approvals_and_se
         for table in ('sessions','shop_id_requests','shop_id_sessions'):
             assert conn.execute('SELECT count(*) FROM '+table).fetchone()==(0,)
         assert conn.execute('PRAGMA foreign_key_check').fetchall()==[]
+
+
+def test_pushok_ai_findings_and_decisions_survive_encrypted_backup(source,tmp_path,monkeypatch):
+    from app import pushok_ai as ai
+    ai.update_policy(ai.PolicyUpdate(**(ai.DEFAULT|{'enabled':True,'version':0})))
+    monkeypatch.setattr(ai,'collect',lambda *args:[ai.finding('fixture','servers','warning','Fixture','Check',{'count':1})])
+    ai.scan({},now=100)
+    ai.review('fixture',ai.Review(operation_id=uuid.uuid4(),version=1,action='acknowledge',reason='investigate'),{'role':'owner','id':None})
+    create(source);target=tmp_path/'ai-restored'
+    b.restore(source[2],PASSWORD,target)
+    with sqlite3.connect(target/'shop.db') as conn:
+        assert conn.execute('SELECT version FROM shop_ai_policy').fetchone()==(1,)
+        assert conn.execute('SELECT state,version FROM shop_ai_findings').fetchone()==('acknowledged',2)
+        assert conn.execute('SELECT count(*) FROM shop_ai_events').fetchone()==(2,)
+        assert conn.execute('SELECT scan_count FROM shop_ai_state').fetchone()==(1,)
+        assert conn.execute('PRAGMA foreign_key_check').fetchall()==[]

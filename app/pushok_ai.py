@@ -207,7 +207,11 @@ def scan(worker,*,automatic=False,now=None):
             if automatic:return False
             raise HTTPException(429,'Анализ недавно завершён. Повторите позже.')
     # Никаких внешних запросов и изменений бизнес-таблиц.
-    found=collect(p,worker,now)
+    try:
+        found=collect(p,worker,now)
+    except Exception as exc:
+        log.warning('Pushok advisor collection failed: %s',type(exc).__name__)
+        raise HTTPException(503,'Не удалось получить данные для анализа. Предыдущие рекомендации сохранены.') from None
     by_code={f['code']:f for f in found}
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
