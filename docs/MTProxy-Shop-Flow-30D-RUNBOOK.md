@@ -38,10 +38,30 @@ python3 scripts/prepare_flow_bridge.py --apply
 скрипт останавливается без изменений. Резервные копии обеих `.env`
 с правами 0600 создаются в закрытом каталоге `/root/pushok-flow-bridge-backups/`.
 При ошибке записи делается попытка отката. Существующие токены, настройки
-платежей, Caddy, Docker и Pushok ID не меняются.
+платежей, Caddy, Docker и Pushok ID не меняются. На Shop по умолчанию
+добавляется `FLOW_TRIAL_MTPROXY_ONLY=true`: публичная регистрация Shop не
+резервирует пробный WireGuard, пока сервер MTProxy не подтвердил личность.
+Существующее явное значение этого переключателя сохраняется.
 
 На этом этапе **сервисы ещё не перезапущены**, а `Flow`-автовыдача по-прежнему
 `enabled=false`.
+
+## 2а. Применение исправления PostgreSQL MTProxy
+
+Перед перезапуском MTProxy API требуется миграция категории лимитера `shop`
+(поправка MTProxy PR #204). После появления этой миграции в `main`:
+
+```bash
+cd /opt/mtproxy-pushok
+git pull --ff-only
+python3 scripts/installer_runtime.py backup
+mapfile -t migrations < <(find database -maxdepth 1 -type f -name '[0-9][0-9][0-9]_*.sql' ! -name '001_*' | sort)
+python3 scripts/installer_runtime.py migrate "${migrations[@]}"
+```
+
+Штатный мигратор сверяет контрольные суммы, использует транзакцию PostgreSQL
+и не меняет бизнес-данные. Если резервная копия либо миграция завершилась
+ошибкой, **не перезапускайте API**. Миграция не относится к Pushok ID.
 
 ## 3. Применение на действующих API (короткое обслуживание)
 
