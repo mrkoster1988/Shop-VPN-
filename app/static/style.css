@@ -689,14 +689,15 @@ body.shop-admin-ui{
   .shop-public-ui .hero .actions{gap:8px}
   .shop-public-ui .hero .lead{font-size:14px}
   .shop-public-ui .plan h3{padding-right:0}
-  .shop-public-ui .plan .badge{position:static;grid-column:1/-1;grid-row:auto;justify-self:start;margin:0 0 4px}
-  .shop-public-ui .plan{padding:14px;grid-template-columns:minmax(0,1fr) minmax(102px,126px)}
-  .shop-public-ui .plan h3,.shop-public-ui .plan .price,.shop-public-ui .plan>p,.shop-public-ui .plan ul,.shop-public-ui .plan button{grid-row:auto;min-width:0;overflow-wrap:anywhere}
-  .shop-public-ui .plan h3{grid-column:1/-1;margin-bottom:4px}
-  .shop-public-ui .plan .price{grid-column:1;font-size:clamp(25px,8vw,32px);line-height:1.2}
-  .shop-public-ui .plan>p{grid-column:1;font-size:12px}
-  .shop-public-ui .plan button{grid-column:2;grid-row:span 2;align-self:center;font-size:12px;min-height:46px;gap:4px}
-  .shop-public-ui .plan ul{grid-column:1/-1;font-size:11px}
+  .shop-public-ui .plan{padding:14px;grid-template-columns:minmax(0,1fr) minmax(102px,126px);grid-template-areas:"title title" "price buy" "info buy" "features features"}
+  .shop-public-ui .plan.featured{grid-template-areas:"badge badge" "title title" "price buy" "info buy" "features features"}
+  .shop-public-ui .plan .badge{position:static;grid-area:badge;justify-self:start;margin:0 0 4px}
+  .shop-public-ui .plan h3,.shop-public-ui .plan .price,.shop-public-ui .plan>p,.shop-public-ui .plan ul,.shop-public-ui .plan button{min-width:0;overflow-wrap:anywhere}
+  .shop-public-ui .plan h3{grid-area:title;margin-bottom:4px}
+  .shop-public-ui .plan .price{grid-area:price;font-size:clamp(25px,8vw,32px);line-height:1.2}
+  .shop-public-ui .plan>p{grid-area:info;font-size:12px}
+  .shop-public-ui .plan button{grid-area:buy;align-self:center;font-size:12px;min-height:46px;gap:4px}
+  .shop-public-ui .plan ul{grid-area:features;font-size:11px}
   .shop-public-ui .segmented button{min-height:44px;font-size:12px}
   .shop-public-ui .shop-mobile-nav,.shop-public-ui .miniapp-nav:not([hidden]){padding-bottom:calc(8px + var(--shop-safe-bottom));}
   .shop-public-ui .shop-mobile-nav .pushok-icon,.shop-public-ui .miniapp-nav .pushok-icon{width:22px;height:22px}
@@ -775,14 +776,14 @@ body.shop-admin-ui{
     padding:7px 7px calc(7px + env(safe-area-inset-bottom,0px));background:#fffffff7;
     border-top:1px solid #d5e4e8;box-shadow:0 -4px 22px #12394d0e;backdrop-filter:blur(12px);
   }
-  .shop-admin-ui .management-mobile-nav button{
+  .shop-admin-ui .management-mobile-nav button:not(.text-link):not(.close){
     display:flex;flex-direction:column;gap:3px;min-width:0;min-height:51px;
     border:1px solid transparent;background:#fff;color:#49616d;padding:5px 2px;
     border-radius:9px;font-size:10px;line-height:1.15;text-align:center;overflow-wrap:anywhere;touch-action:manipulation
   }
   .shop-admin-ui .management-mobile-nav button span{font-size:21px;line-height:1.05}
-  .shop-admin-ui .management-mobile-nav button[aria-current=page]{background:#e3f5f1;border-color:#b1ded5;color:#086c64}
-  .shop-admin-ui .management-mobile-nav button:not(:disabled):hover{background:#e3f5f1;color:#086c64;border-color:#b1ded5}
+  .shop-admin-ui .management-mobile-nav button[aria-current=page]:not(.text-link):not(.close){background:#e3f5f1;border-color:#b1ded5;color:#086c64}
+  .shop-admin-ui .management-mobile-nav button:not(:disabled):not(.text-link):not(.close):hover{background:#e3f5f1;color:#086c64;border-color:#b1ded5}
   .shop-admin-ui .management-quick{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
   .shop-admin-ui .management-quick-card{grid-template-columns:1fr;gap:4px;min-height:108px;padding:11px;overflow-wrap:anywhere}
   .shop-admin-ui .management-quick-card>span{grid-row:auto;font-size:23px}

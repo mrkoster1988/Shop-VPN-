@@ -245,7 +245,8 @@ function renderAccount() {
 }
 async function refreshSupportCases(){
  const request=++supportRequest,epoch=sessionEpoch;
- const select=$('support-order');select.innerHTML='<option value="">Без привязки</option>'+me.orders.map(o=>'<option value="'+esc(o.id)+'">'+esc(o.plan_name||protocolName(o.protocol))+' · '+esc(o.id.slice(0,8))+'</option>').join('');
+ const select=$('support-order'),chosenOrder=select.value;select.innerHTML='<option value="">Без привязки</option>'+me.orders.map(o=>'<option value="'+esc(o.id)+'">'+esc(o.plan_name||protocolName(o.protocol))+' · '+esc(o.id.slice(0,8))+'</option>').join('');
+  if(chosenOrder&&me.orders.some(o=>o.id===chosenOrder))select.value=chosenOrder;
  const data=await api('/api/support/tickets?page=1&page_size=30');
  if(request!==supportRequest||epoch!==sessionEpoch||!me)return;
  const labels={open:'Открыто',waiting_staff:'Ждёт поддержки',waiting_customer:'Ждёт вашего ответа',closed:'Закрыто'};
@@ -303,6 +304,7 @@ function paymentResult(order) {
   $('checkout-form').hidden = true;
   $('payment-result').replaceChildren();
   const paragraph = document.createElement('p');
+  paragraph.className='payment-summary';
   paragraph.textContent = `Заказ: ${order.id}\nТариф: ${order.plan_name || protocolName(order.protocol)} · ${order.days} дней\n${profileAllowance(order.device_limit ?? 4)}\nСумма: ${order.kind==='referral'?'Бонусные дни':order.kind==='trial'?'Без оплаты':order.amount===0?'Бесплатно':money(order.amount,order.currency)}\n${displayOrderStatus(order)}${order.promo_code?'\nПромокод: '+order.promo_code+' · скидка '+money(order.discount,order.currency)+' от '+money(order.base_amount,order.currency):''}\n\n${order.progress?.message || ''}\n${order.instructions || ''}`;
   $('payment-result').append(paragraph);
   if (order.payment_url && order.status === 'pending') {
@@ -1060,7 +1062,7 @@ $('shop-mobile-account').onclick = () => $('account-btn').click();
 document.querySelectorAll('a[data-shop-route]').forEach(link => {
   link.addEventListener('click', () => setShopMobileActive(link.dataset.shopRoute));
 });
-$('account-dialog').addEventListener('close',()=>setShopMobileActive(shopCurrentRoute));
+$('account-dialog').addEventListener('close',()=>{if(!$('account-dialog').open)setShopMobileActive(shopCurrentRoute);});
 function syncShopRoute(){
   const hash=(location.hash||'').slice(1);
   const route=hash==='how'?'plans':hash;
