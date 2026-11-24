@@ -255,18 +255,110 @@ const MANAGEMENT_SECTIONS=[
   ['ads-stop-section','placements','Остановки'],['ads-sites-section','placements','Площадки'],
   ['diagnostics-section','diagnostics','Диагностика']
 ];
+// Keep navigation metadata separate from permissions: the API remains the
+// sole authority. All menu items resolve to existing approved sections.
+const MANAGEMENT_NAV_GROUPS = [
+  ['Подключения', ['servers-section','server-routing-section','protocols-panel','flow-auto-section','trial-section']],
+  ['Пользователи', ['users-section','orders-section','moderation-section','staff-management','support-admin']],
+  ['Финансы', ['plans-section','payment-policy-section','shop-finance-section','commerce-analytics','coupons-section','referrals-section']],
+  ['Реклама', ['ads-requests-section','ads-finance-section','ads-bookings-section','ads-stop-section','ads-sites-section']],
+  ['Система', ['shop-settings','appearance-section','sales-controls-section','notifications-section','updates-panel','bot-menu-panel','role-policy-section','diagnostics-section','pushok-id-settings']]
+];
+const MANAGEMENT_QUICK = [
+  ['servers-section','Подключить WGDashboard','Добавить WireGuard-сервер и проверить API','⚙'],
+  ['flow-auto-section','Flow · 30 дней','Настроить лимит бесплатных подключений','◈'],
+  ['users-section','Пользователи','Аккаунты и персональные подключения','♙'],
+  ['orders-section','Заказы','Ожидающие действия и выдача','▤'],
+  ['diagnostics-section','Диагностика','Проверка работы компонентов','ⓘ'],
+  ['updates-panel','Обновления','Версия и безопасное обновление Shop','↻']
+];
+let currentManagementSection='management-overview';
+function managementMeta(id){
+  return MANAGEMENT_SECTIONS.find(section=>section[0]===id);
+}
+function canViewManagementSection(id){
+  return id==='management-overview' || !!(managementMeta(id)&&canGroup(managementMeta(id)[1]));
+}
+function managementAnchor(id,title,extraClass=''){
+  const active=currentManagementSection===id?' aria-current="page"':'';
+  return '<a href="#'+id+'" data-admin-target="'+id+'"'+active+' class="'+extraClass+'">'+esc(title)+'</a>';
+}
+function renderManagementNavItems(){
+  const query=($('management-search').value||'').trim().toLocaleLowerCase('ru-RU');
+  let markup=query?'':managementAnchor('management-overview','⌂ Рабочий стол','management-overview-link');
+  const visited=new Set();
+  for(const [label,ids] of MANAGEMENT_NAV_GROUPS){
+    const matches=[];
+    for(const id of ids){
+      const item=managementMeta(id);
+      if(!item||!canGroup(item[1]))continue;
+      visited.add(id);
+      if(!query || (label+' '+item[2]).toLocaleLowerCase('ru-RU').includes(query)){
+        matches.push(managementAnchor(id,item[2]));
+      }
+    }
+    if(!matches.length)continue;
+    const expanded=!!query || ids.includes(currentManagementSection);
+    markup+='<details class="management-nav-group"'+(expanded?' open':'')+'><summary>'+esc(label)+' <span>'+matches.length+'</span></summary>'+
+      '<div class="management-nav-items">'+matches.join('')+'</div></details>';
+  }
+  // Future sections remain reachable even before they are categorized.
+  const extra=MANAGEMENT_SECTIONS.filter(item=>canGroup(item[1])&&!visited.has(item[0])&&
+    (!query||item[2].toLocaleLowerCase('ru-RU').includes(query)));
+  if(extra.length){
+    markup+='<details class="management-nav-group" open><summary>Другое <span>'+extra.length+'</span></summary>'+
+      '<div class="management-nav-items">'+extra.map(item=>managementAnchor(item[0],item[2])).join('')+'</div></details>';
+  }
+  $('management-nav').innerHTML=markup||'<p class="management-empty">Разделы не найдены.</p>';
+}
+function showManagementSection(id,{scroll=false}={}){
+  currentManagementSection=canViewManagementSection(id)?id:'management-overview';
+  $('dashboard').dataset ||= {};
+  $('dashboard').dataset.adminFocused='true';
+  const overview=$('management-overview');
+  overview.dataset ||= {};
+  overview.dataset.adminActive=currentManagementSection==='management-overview'?'true':'false';
+  for(const [section,group] of MANAGEMENT_SECTIONS){
+    const node=$(section);
+    node.dataset ||= {};
+    node.dataset.adminActive=section===currentManagementSection&&canGroup(group)?'true':'false';
+  }
+  const info=managementMeta(currentManagementSection);
+  $('management-current').textContent=currentManagementSection==='management-overview'
+    ?'Раздел: рабочий стол':'Раздел: '+info[2];
+  renderManagementNavItems();
+  if(scroll){
+    $(currentManagementSection).scrollIntoView?.({behavior:'smooth',block:'start'});
+  }
+}
 function renderManagementNav(){
   $('management-role').textContent=STAFF_LABELS[role]||'Кабинет сотрудника';
-  $('management-scope').textContent=role==='owner'?'Полный доступ к настройкам магазина и сотрудникам.':'Доступ только к назначенным разделам.';
-  const visible=[];
-  for(const [id,group,title] of MANAGEMENT_SECTIONS){
-    const allowed=canGroup(group);
-    $(id).hidden=!allowed;
-    if(allowed)visible.push('<a href="#'+id+'">'+esc(title)+'</a>');
-  }
-  $('management-nav').innerHTML=visible.join('')||'<span>Нет назначенных разделов</span>';
+  $('management-scope').textContent=role==='owner'?'Все настройки и полномочия разработчика.':'Доступ только к назначенным разделам.';
+  for(const [id,group] of MANAGEMENT_SECTIONS) $(id).hidden=!canGroup(group);
+  $('management-overview').hidden=false;
+  $('stats').hidden=!canGroup('dashboard');
   $('new-server').hidden=delegatedRole();
+  const quick=MANAGEMENT_QUICK.filter(([id])=>canViewManagementSection(id));
+  $('management-quick').innerHTML=quick.map(([id,title,description,icon])=>
+    '<a href="#'+id+'" class="management-quick-card" data-admin-target="'+id+'"><span aria-hidden="true">'+icon+'</span><strong>'+esc(title)+'</strong><small>'+esc(description)+'</small></a>'
+  ).join('')||'<p>Быстрые действия пока недоступны вашей роли.</p>';
+  showManagementSection(currentManagementSection);
 }
+// Only authorized areas are navigable. A crafted hash/link never grants access.
+$('dashboard').addEventListener('click',event=>{
+  const link=event.target?.closest?.('[data-admin-target]');
+  if(!link)return;
+  const destination=link.dataset?.adminTarget;
+  if(!canViewManagementSection(destination)){
+    event.preventDefault();
+    return;
+  }
+  event.preventDefault();
+  showManagementSection(destination,{scroll:true});
+});
+$('management-home').onclick=()=>showManagementSection('management-overview',{scroll:true});
+$('management-search').oninput=()=>renderManagementNavItems();
+
 async function refreshModeration(){
   const seq=++moderationRequest,epoch=authEpoch;
   if(!canGroup('moderation')){$('moderation-section').hidden=true;$('moderation-list').replaceChildren();return;}
