@@ -103,3 +103,21 @@ def test_unused_disabled_server_only(client):
     execute("UPDATE servers SET state='disabled' WHERE id='test-wg'")
     assert client.delete('/api/admin/servers/test-wg',headers=headers()).status_code==200
     assert one("SELECT id FROM servers WHERE id='test-wg'") is None
+
+
+def test_administrator_cannot_revoke_or_delete_even_with_customer_access(client):
+    first=client.post('/api/admin/auth/bootstrap',headers=headers(),json={
+        'email':'developer@example.org','password':'long-developer-password'})
+    assert first.status_code==200,first.text
+    made=client.post('/api/admin/staff',json={
+        'email':'admin@example.org','password':'long-admin-password',
+        'role':'administrator'})
+    assert made.status_code==201,made.text
+    client.post('/api/admin/auth/logout')
+    logged=client.post('/api/admin/auth/login',json={
+        'email':'admin@example.org','password':'long-admin-password'})
+    assert logged.status_code==200,logged.text
+    assert client.post('/api/admin/subscriptions/unknown/revoke').status_code==403
+    assert client.delete('/api/admin/subscriptions/unknown').status_code==403
+    assert client.delete('/api/admin/plans/month').status_code==403
+    assert client.delete('/api/admin/servers/test-wg').status_code==403
