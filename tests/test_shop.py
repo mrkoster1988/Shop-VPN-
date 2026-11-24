@@ -1054,3 +1054,57 @@ def test_free_tariff_requires_both_zero_prices(client):
     assert bad.status_code == 422
     bad = save_plan(client, plan_edit(client, price=199, stars=0))
     assert bad.status_code == 422
+
+
+def test_free_activation_cap_and_quota_restrictions(client, monkeypatch):
+    register(client)
+    payload=plan_edit(client, price=0, stars=0, free_activation_limit=1,
+                      free_traffic_gb=2)
+    assert save_plan(client,payload).status_code==200
+    assert client.post('/api/orders',json={
+        'plan':'month','plan_version':2,'protocol':'wg'}).status_code==409
+    first=client.post('/api/orders',json={
+        'plan':'month','plan_version':2,'protocol':'xui'})
+    assert first.status_code==200,first.text
+    assert one("SELECT free_traffic_gb FROM orders WHERE method='free'")['free_traffic_gb']==2
+    client.post('/api/auth/logout')
+    register(client,'another@example.com')
+    second=client.post('/api/orders',json={
+        'plan':'month','plan_version':2,'protocol':'xui'})
+    assert second.status_code==409
+    assert one("SELECT count(*) AS n FROM orders WHERE method='free'")['n']==1
+
+
+def test_free_renewal_is_bounded_and_automated(client, monkeypatch):
+    register(client)
+    payload=plan_edit(client, price=0, stars=0, free_auto_renew=True,
+                      free_max_renewals=1)
+    assert save_plan(client,payload).status_code==200
+    result=client.post('/api/orders',json={
+        'plan':'month','plan_version':2,'protocol':'xui'})
+    assert result.status_code==200,result.text
+    async def provision(sub):return 'vless://'+sub['id']
+    monkeypatch.setattr(providers,'provision',provision)
+    asyncio.run(service.fulfill(result.json()['id']))
+    execute("UPDATE subscriptions SET expires=?",(int(time.time())+30,))
+    service.enqueue_free_renewals(int(time.time()))
+    queued=one("SELECT id FROM orders WHERE kind='free_renewal' AND status='paid'")
+    assert queued
+    asyncio.run(service.fulfill(queued['id']))
+    sub=one("SELECT free_renewals_used,expires FROM subscriptions")
+    assert sub['free_renewals_used']==1
+    assert sub['expires']>time.time()+29*86400
+    execute("UPDATE subscriptions SET expires=?",(int(time.time())+30,))
+    service.enqueue_free_renewals(int(time.time()))
+    assert one("SELECT count(*) AS n FROM orders WHERE kind='free_renewal'")['n']==1
+
+
+def test_free_offer_cannot_replace_paid_active_access(client):
+    register(client)
+    paid=order(client)
+    assert confirm(client,paid['id']).status_code==200
+    execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state) VALUES (?,?,?,?,?)",
+            ('paid-test',1,'xui',int(time.time())+86400,'active'))
+    assert save_plan(client,plan_edit(client, price=0, stars=0)).status_code==200
+    assert client.post('/api/orders',json={
+        'plan':'month','plan_version':2,'protocol':'xui'}).status_code==409
