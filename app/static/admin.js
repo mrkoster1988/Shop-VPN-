@@ -517,6 +517,8 @@ function planForm(plan) {
       <label>Срок, дней<input name="days" type="number" value="${plan.days}" min="1" max="3650" step="1" required></label>
       <label>Цена на сайте, ₽<input name="price" type="number" value="${plan.price}" min="0" max="1000000" step="1" required></label>
       <label>Цена в Telegram, Stars (для бесплатного тарифа обе цены — 0)<input name="stars" type="number" value="${plan.stars}" min="0" max="100000" step="1" required></label>
+      <label>Бесплатных активаций всего (0 — без ограничения)<input name="free_activation_limit" type="number" value="${plan.free_activation_limit ?? 0}" min="0" max="1000000" step="1" required></label>
+      <label>Трафик на профиль 3x-ui, ГБ (0 — без ограничения)<input name="free_traffic_gb" type="number" value="${plan.free_traffic_gb ?? 0}" min="0" max="10000" step="1" required></label>
       <label>Дополнительных профилей (0 — только основной)<input name="device_limit" type="number" value="${plan.device_limit ?? 4}" min="0" max="20" step="1" required></label>
     </div>
     <label class="plan-enabled"><input name="enabled" type="checkbox" ${plan.enabled ? 'checked' : ''}> Доступен для новых покупок</label>
@@ -1166,7 +1168,7 @@ $('plan-editors').onsubmit = async event => {
   try {
     const saved = await api('plans/' + encodeURIComponent(form.dataset.planId), {method: 'PUT', data: {
       name: values.get('name'), days: Number(values.get('days')), price: Number(values.get('price')),
-      stars: Number(values.get('stars')), device_limit:Number(values.get('device_limit') ?? 4), enabled: values.has('enabled'), version: Number(form.dataset.version),
+      stars: Number(values.get('stars')), device_limit:Number(values.get('device_limit') ?? 4), free_activation_limit:Number(values.get('free_activation_limit') ?? 0), free_traffic_gb:Number(values.get('free_traffic_gb') ?? 0), enabled: values.has('enabled'), version: Number(form.dataset.version),
     }});
     form.outerHTML = planForm(saved);
     $('admin-notice').textContent = 'Тариф сохранён. Новые условия действуют для новых заказов.';
@@ -1196,7 +1198,7 @@ $('create-plan-form').onsubmit = async event => {
   try {
     const saved = await api('plans', {method: 'POST', data: {
       id: values.get('id'), name: values.get('name'), days: Number(values.get('days')),
-      price: Number(values.get('price')), stars: Number(values.get('stars')), device_limit:Number(values.get('device_limit') ?? 4), enabled: values.has('enabled'),
+      price: Number(values.get('price')), stars: Number(values.get('stars')), device_limit:Number(values.get('device_limit') ?? 4), free_activation_limit:Number(values.get('free_activation_limit') ?? 0), free_traffic_gb:Number(values.get('free_traffic_gb') ?? 0), enabled: values.has('enabled'),
     }});
     $('plan-editors').insertAdjacentHTML('beforeend', planForm(saved));
     $('create-plan-dialog').close();
