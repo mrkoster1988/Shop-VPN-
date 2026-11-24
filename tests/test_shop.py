@@ -1021,3 +1021,36 @@ def test_icon_sprite_served_at_configured_prefix(client, monkeypatch, base):
             url, symbol = use.split('#')
             assert url == base + '/static/pushok-icons.svg'
             assert symbol in ids
+
+
+def test_free_tariff_has_no_payment_and_is_not_repeatable(client, monkeypatch):
+    """A 0 RUB / 0 Stars offer uses normal provisioning, never a payment invoice."""
+    register(client)
+    assert save_plan(client, plan_edit(client, price=0, stars=0)).status_code == 200
+    catalog = client.get('/api/catalog').json()
+    selected = next(p for p in catalog['plans'] if p['id'] == 'month')
+    assert selected['price'] == 0
+    assert selected['version'] == 2
+    result = client.post('/api/orders', json={
+        'plan': 'month', 'plan_version': 2, 'protocol': 'xui',
+    })
+    assert result.status_code == 200, result.text
+    data = result.json()
+    assert data['amount'] == 0 and data['method'] == 'free'
+    assert data['status'] == 'paid' and not data['payment_url']
+    assert client.post('/api/orders', json={
+        'plan': 'month', 'plan_version': 2, 'protocol': 'xui',
+    }).status_code == 409
+    async def provision(subscription):
+        return 'vless://test-' + subscription['id']
+    monkeypatch.setattr(providers, 'provision', provision)
+    asyncio.run(service.fulfill(data['id']))
+    assert one('SELECT status FROM orders WHERE id=?', (data['id'],))['status'] == 'active'
+    assert one('SELECT expires FROM subscriptions WHERE protocol=?', ('xui',))['expires'] > time.time()
+
+
+def test_free_tariff_requires_both_zero_prices(client):
+    bad = save_plan(client, plan_edit(client, price=0, stars=10))
+    assert bad.status_code == 422
+    bad = save_plan(client, plan_edit(client, price=199, stars=0))
+    assert bad.status_code == 422
