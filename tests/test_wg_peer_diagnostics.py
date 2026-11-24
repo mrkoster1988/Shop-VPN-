@@ -77,7 +77,7 @@ def test_missing_key_is_diagnosed_without_creation(client, monkeypatch):
     ('present', 'peer_found'),
     ('absent', 'peer_missing'),
     ('restricted', 'peer_restricted'),
-    ('unavailable', 'panel_unavailable'),
+    ('unavailable', 'panel_connection_failed'),
 ])
 def test_real_wgdashboard_read_contract_is_redacted(client, monkeypatch, remote, expected):
     setup_user(client)
