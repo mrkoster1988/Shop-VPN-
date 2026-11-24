@@ -23,12 +23,13 @@ def _subscription(conn, user_id):
 
 def _grant(conn, user_id):
     row = conn.execute(
-        'SELECT state,attempts,next_attempt FROM flow_auto_grants WHERE user_id=?',
+        'SELECT state,attempts,next_attempt,target_expires FROM flow_auto_grants WHERE user_id=?',
         (user_id,)).fetchone()
     if row is None:
         return None
     return {'state': row['state'], 'attempts': row['attempts'],
-            'next_attempt': row['next_attempt'] if row['state'] == 'pending' else None}
+            'next_attempt': row['next_attempt'] if row['state'] == 'pending' else None,
+            'target_expires': row['target_expires']}
 
 
 def _new_client():
@@ -77,7 +78,8 @@ async def inspect(user_id):
             'server_state': server['state'] if server else None,
             'grant': grant, 'can_retry': bool(
                 auto_enabled and grant and grant['state'] == 'pending'
-                and sub['state'] == 'pending' and not sub['secret'])}
+                and sub['state'] == 'pending' and not sub['secret']
+                and grant['target_expires'] > checked)}
 
     if not sub['server_id']:
         return {**base, 'status': 'server_unbound', 'can_retry': False}
