@@ -1284,9 +1284,11 @@ async function loadUser(page) {
         : sub.state === 'revoked' ? 'Доступ отозван' : 'Неактивна';
       const tools = role==='owner'
         ? `<div class="record-actions">
+          ${sub.protocol==='wg' ? '<button type="button" class="secondary" data-peer-check="'+esc(sub.id)+'">Проверить пир</button>' : ''}
           ${sub.state!=='revoked' ? '<button type="button" class="danger-action" data-subscription-revoke="'+esc(sub.id)+'">Отозвать доступ</button>' : ''}
           ${sub.state==='revoked' && sub.can_delete ? '<button type="button" class="danger-action" data-subscription-delete="'+esc(sub.id)+'">Удалить запись</button>' : ''}
           </div>
+          ${sub.protocol==='wg' ? '<div class="record-note" role="status" aria-live="polite" data-peer-status="'+esc(sub.id)+'"></div>' : ''}
           ${sub.state==='revoked' && !sub.can_delete ? '<p class="record-note">'+esc(sub.delete_blocker||'Запись хранится для истории')+'</p>' : ''}
           <p class="record-note">Сначала отзываются пиры на сервере. Оплаченные заказы и финансовая история сохраняются.</p>`
         : '';
@@ -1305,7 +1307,59 @@ async function loadUser(page) {
 }
 // Destructive actions require the developer role and explicit confirmation.
 // Server failure never removes the card or pretends the peer was revoked.
+const PEER_STATUS_LABELS = {
+  no_subscription:'У пользователя нет подписки WireGuard.',
+  server_unbound:'Подписка не закреплена за сервером. Автоматически переносить её нельзя.',
+  server_missing:'Закреплённый сервер отсутствует или протокол изменился.',
+  server_configuration_error:'Ошибка сохранённой конфигурации сервера.',
+  other_backend:'Подписка закреплена за другим адаптером, не WGDashboard.',
+  key_not_created:'Shop ещё не сохранил ключ пира для этого сервера.',
+  key_unreadable:'Ключ Shop повреждён или недоступен для расшифровки.',
+  peer_missing:'Пир с ключом Shop отсутствует на закреплённом WGDashboard.',
+  peer_restricted:'Пир существует, но ограничен на стороне WGDashboard.',
+  peer_found:'Пир существует на закреплённом WGDashboard.',
+  panel_unavailable:'WGDashboard не ответил на проверку. Данные подписки не изменены.'
+};
 $('user-subscriptions').onclick = async event => {
+  const check=event.target.closest('[data-peer-check]');
+  const retry=event.target.closest('[data-peer-retry]');
+  if ((check || retry) && role==='owner' && selectedUser!==null) {
+    const button=check||retry;
+    const sid=check?check.dataset.peerCheck:retry.dataset.peerRetry;
+    const card=button.closest('.subscription');
+    const panel=card?.querySelector('[data-peer-status]');
+    if(!panel || panel.dataset.peerStatus!==sid)return;
+    const uid=selectedUser,epoch=authEpoch;
+    if(retry && !confirm('Повторить создание пира из существующей очереди? Узел и ключ не изменятся.'))return;
+    button.disabled=true;
+    panel.textContent=retry?'Повторная выдача ставится в очередь…':'Проверяем ключ и пир на закреплённом сервере…';
+    try {
+      const url='users/'+encodeURIComponent(uid)+'/wireguard/'+(retry?'retry':'peer');
+      const result=await api(url,{method:retry?'POST':'GET'});
+      if(uid!==selectedUser || epoch!==authEpoch || panel.isConnected===false)return;
+      panel.replaceChildren();
+      if(retry){
+        panel.textContent='Заявка поставлена в очередь. Повторная попытка выполняется фоновым обработчиком.';
+      } else {
+        const state=PEER_STATUS_LABELS[result.status]||'Статус не определён.';
+        const extra=result.server_name?' Закреплённый узел: '+result.server_name+'.':'';
+        const attempts=result.grant?.state==='pending'
+          ? ' В очереди, попыток: '+result.grant.attempts+'.':'';
+        panel.textContent=state+extra+attempts;
+        if(result.can_retry){
+          const action=document.createElement('button');
+          action.type='button';
+          action.className='small secondary';
+          action.dataset.peerRetry=sid;
+          action.textContent='Повторить выдачу';
+          panel.appendChild(action);
+        }
+      }
+    }catch(error){
+      if(uid===selectedUser && epoch===authEpoch && panel.isConnected!==false)panel.textContent=error.message;
+    }finally{button.disabled=false}
+    return;
+  }
   const revoke=event.target.closest('[data-subscription-revoke]');
   const erase=event.target.closest('[data-subscription-delete]');
   const button=revoke || erase;
