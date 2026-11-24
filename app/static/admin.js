@@ -515,8 +515,8 @@ function planForm(plan) {
     <label>Название<input name="name" value="${esc(plan.name)}" maxlength="80" required></label>
     <div class="plan-editor-fields">
       <label>Срок, дней<input name="days" type="number" value="${plan.days}" min="1" max="3650" step="1" required></label>
-      <label>Цена на сайте, ₽<input name="price" type="number" value="${plan.price}" min="1" max="1000000" step="1" required></label>
-      <label>Цена в Telegram, Stars<input name="stars" type="number" value="${plan.stars}" min="1" max="100000" step="1" required></label>
+      <label>Цена на сайте, ₽<input name="price" type="number" value="${plan.price}" min="0" max="1000000" step="1" required></label>
+      <label>Цена в Telegram, Stars (для бесплатного тарифа обе цены — 0)<input name="stars" type="number" value="${plan.stars}" min="0" max="100000" step="1" required></label>
       <label>Дополнительных профилей (0 — только основной)<input name="device_limit" type="number" value="${plan.device_limit ?? 4}" min="0" max="20" step="1" required></label>
     </div>
     <label class="plan-enabled"><input name="enabled" type="checkbox" ${plan.enabled ? 'checked' : ''}> Доступен для новых покупок</label>
