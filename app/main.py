@@ -30,7 +30,7 @@ from . import shop_settings, runtime_settings, platforms, protocols, bot_menu as
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision
+from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -1023,6 +1023,15 @@ async def flow_auto_policy():
 @app.put('/api/admin/flow/wireguard/auto', dependencies=[Depends(admin)])
 async def flow_auto_policy_update(data: flow_auto_provision.PolicyUpdate):
     return await flow_auto_provision.update_policy(data)
+
+
+# Public only in the sense that it needs no Shop cookie: every request must
+# carry a valid one-minute signed MTProxy proof, consumed exactly once.
+@app.post('/api/flow/bridge/exchange')
+async def flow_bridge_exchange(data: flow_identity_bridge.ExchangeRequest):
+    async with service.lock:
+        value = flow_identity_bridge.exchange(data.ticket, data.client_id)
+    return JSONResponse(value, headers=flow_identity_bridge.headers())
 
 
 # Shop-session endpoints for accounts that already own WireGuard access.
