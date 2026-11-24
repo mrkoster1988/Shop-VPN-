@@ -155,7 +155,7 @@ def make_order(data,user,method,email):
                 raise HTTPException(409,'Лимит трафика бесплатного тарифа поддерживается только для 3x-ui.')
             free_plan=conn.execute('SELECT free_activation_limit FROM plans WHERE id=?',(data.plan,)).fetchone()
             if free_plan['free_activation_limit']:
-                claims=conn.execute("SELECT count(*) FROM orders WHERE plan=? AND method='free' AND status!='canceled'",(data.plan,)).fetchone()[0]
+                claims=conn.execute("SELECT count(*) FROM orders WHERE plan=? AND method='free' AND kind='purchase' AND status!='canceled'",(data.plan,)).fetchone()[0]
                 if claims>=free_plan['free_activation_limit']:
                     raise HTTPException(409,'Все бесплатные активации этого тарифа использованы.')
             # One free grant per account, tariff and protocol. Prevent endlessly
