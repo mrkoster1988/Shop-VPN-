@@ -31,6 +31,7 @@ jobs:
         run: |
           node tests/panel_wizard_browser.cjs
           node tests/updates_browser.cjs
+          node tests/storefront_compact_browser.cjs
 
   tests:
     runs-on: ubuntu-latest
