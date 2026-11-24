@@ -1172,3 +1172,33 @@ def test_free_renewal_is_idempotent_when_worker_runs_twice(client, monkeypatch):
     asyncio.run(service.fulfill(queued['id']))
     assert one("SELECT free_renewals_used FROM subscriptions")['free_renewals_used']==1
     assert len(calls)==2
+
+
+def test_old_pending_paid_checkout_blocks_queued_free_renewal(client, monkeypatch):
+    register(client)
+    assert save_plan(client,plan_edit(client,price=0,stars=0,
+        free_auto_renew=True,free_max_renewals=2)).status_code==200
+    grant=client.post('/api/orders',json={'plan':'month',
+        'plan_version':2,'protocol':'xui'})
+    assert grant.status_code==200,grant.text
+    async def provision(sub):return 'vless://'+sub['id']
+    monkeypatch.setattr(providers,'provision',provision)
+    asyncio.run(service.fulfill(grant.json()['id']))
+    execute('UPDATE subscriptions SET expires=?',(int(time.time())+30,))
+    service.enqueue_free_renewals(int(time.time()))
+    queued=one("SELECT id,created FROM orders WHERE kind='free_renewal'")
+    assert queued
+    premium=client.post('/api/admin/plans',headers={
+        'Authorization':'Bearer '+c.ADMIN_TOKEN},json={
+        'id':'premium','name':'Платный','days':30,'price':299,
+        'stars':150,'enabled':True})
+    assert premium.status_code==201,premium.text
+    paid=client.post('/api/orders',json={'plan':'premium',
+        'plan_version':1,'protocol':'xui'})
+    assert paid.status_code==200,paid.text
+    # Pending payment may be older than an arbitrary renewal grace window.
+    execute("UPDATE orders SET created=? WHERE id=?",
+        (queued['created']+120,queued['id']))
+    asyncio.run(service.fulfill(queued['id']))
+    assert one("SELECT status FROM orders WHERE id=?",(queued['id'],))['status']=='canceled'
+    assert one('SELECT free_renewals_used FROM subscriptions')['free_renewals_used']==0
