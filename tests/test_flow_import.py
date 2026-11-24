@@ -39,7 +39,7 @@ def test_flow_landing_keeps_headers_and_assets_under_shop_prefix(client, monkeyp
     with TestClient(create_app('/shop')) as shop:
         assert_private_landing(shop.get('/shop/static/flow-import.html'))
         index = shop.get('/shop/').text
-        assert index.index('src="/shop/static/flow-links.js"') < index.index('src="/shop/static/app.js"')
+        assert index.index('src="/shop/static/flow-links.js?v=') < index.index('src="/shop/static/app.js?v=')
         assert 'id="flow-open" type="button" disabled' in index
         for asset in ('flow-links.js', 'flow-import.js', 'flow-import.css'):
             assert shop.get('/shop/static/' + asset).status_code == 200
