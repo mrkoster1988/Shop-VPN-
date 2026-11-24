@@ -274,3 +274,18 @@ def test_shop_finance_and_payment_policy_survive_encrypted_restore(source,tmp_pa
         assert conn.execute('SELECT amount_minor,state FROM shop_finance_entries WHERE id=?',(saved['id'],)).fetchone()==(12550,'recorded')
         assert conn.execute('SELECT count(*) FROM shop_finance_actions').fetchone()==(1,)
         assert conn.execute('PRAGMA foreign_key_check').fetchall()==[]
+
+
+def test_routing_policy_and_probe_history_survive_backup(source,tmp_path):
+    from app import server_routing as routing
+    data={k:v for k,v in routing.DEFAULT.items() if k!='updated'}
+    routing.update_policy(routing.PolicyUpdate(**(data|{'strategy':'utilization','monitor_enabled':True})))
+    routing.update_node('test-wg',routing.NodeUpdate(version=0,server_version=1,priority=400,reserve=True,accept_new=True))
+    execute("INSERT INTO server_probe_history(server_id,server_version,checked_at,status,duration_ms,source) VALUES ('test-wg',1,1,'ok',50,'manual')")
+    create(source);target=tmp_path/'routing-restored'
+    b.restore(source[2],PASSWORD,target)
+    with sqlite3.connect(target/'shop.db') as conn:
+        assert conn.execute('SELECT strategy,monitor_enabled,version FROM server_routing_policy').fetchone()==('utilization',1,1)
+        assert conn.execute('SELECT priority,reserve,version FROM server_routing_nodes').fetchone()==(400,1,1)
+        assert conn.execute('SELECT status,duration_ms FROM server_probe_history').fetchone()==('ok',50)
+        assert conn.execute('PRAGMA foreign_key_check').fetchall()==[]
