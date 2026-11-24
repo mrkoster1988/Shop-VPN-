@@ -26,6 +26,29 @@ def init_db():
           telegram_id INTEGER UNIQUE, created INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS sessions (
           token TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), expires INTEGER);
+        CREATE TABLE IF NOT EXISTS shop_id_policy (
+          id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+          allow_new_accounts INTEGER NOT NULL CHECK(allow_new_accounts IN (0,1)),
+          version INTEGER NOT NULL CHECK(version>0),updated INTEGER NOT NULL,config_hash TEXT,
+          CHECK((enabled=0 AND config_hash IS NULL) OR (enabled=1 AND config_hash IS NOT NULL)));
+        CREATE TABLE IF NOT EXISTS shop_id_links (
+          subject TEXT PRIMARY KEY,user_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
+          telegram_id INTEGER NOT NULL UNIQUE,created INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS shop_id_requests (
+          request_hash TEXT PRIMARY KEY,browser_hash TEXT NOT NULL UNIQUE,
+          mode TEXT NOT NULL CHECK(mode IN ('signin','link')),
+          local_user_id INTEGER REFERENCES users(id),local_session_hash TEXT,
+          policy_version INTEGER NOT NULL,config_hash TEXT NOT NULL,created INTEGER NOT NULL,expires INTEGER NOT NULL,
+          subject TEXT,telegram_id INTEGER,approved_at INTEGER,
+          CHECK((mode='signin' AND local_user_id IS NULL AND local_session_hash IS NULL)
+            OR (mode='link' AND local_user_id IS NOT NULL AND local_session_hash IS NOT NULL)),
+          CHECK((subject IS NULL AND telegram_id IS NULL AND approved_at IS NULL)
+            OR (subject IS NOT NULL AND telegram_id IS NOT NULL AND approved_at IS NOT NULL)));
+        CREATE INDEX IF NOT EXISTS shop_id_requests_expiry ON shop_id_requests(expires);
+        CREATE TABLE IF NOT EXISTS shop_id_sessions (
+          session_hash TEXT PRIMARY KEY REFERENCES sessions(token) ON DELETE CASCADE,
+          user_id INTEGER NOT NULL REFERENCES users(id),config_hash TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS shop_id_sessions_user ON shop_id_sessions(user_id);
         CREATE TABLE IF NOT EXISTS tickets (
           token TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), expires INTEGER);
         CREATE TABLE IF NOT EXISTS password_reset_tokens (
@@ -145,6 +168,25 @@ def init_db():
           server_id TEXT NOT NULL REFERENCES servers(id), credential_id TEXT NOT NULL,
           job_id TEXT NOT NULL, target_expires INTEGER NOT NULL, updated INTEGER NOT NULL,
           PRIMARY KEY(server_id,credential_id), UNIQUE(server_id,job_id));
+        CREATE TABLE IF NOT EXISTS server_routing_policy (
+          id INTEGER PRIMARY KEY CHECK(id=1),strategy TEXT NOT NULL CHECK(strategy IN ('least_count','utilization')),
+          reserve_enabled INTEGER NOT NULL CHECK(reserve_enabled IN (0,1)),
+          require_recent INTEGER NOT NULL CHECK(require_recent IN (0,1)),max_age_minutes INTEGER NOT NULL CHECK(max_age_minutes BETWEEN 1 AND 1440),
+          monitor_enabled INTEGER NOT NULL CHECK(monitor_enabled IN (0,1)),
+          monitor_interval_minutes INTEGER NOT NULL CHECK(monitor_interval_minutes BETWEEN 1 AND 1440),
+          monitor_batch INTEGER NOT NULL CHECK(monitor_batch BETWEEN 1 AND 4),
+          version INTEGER NOT NULL CHECK(version>0),updated INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS server_routing_nodes (
+          server_id TEXT PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
+          priority INTEGER NOT NULL CHECK(priority BETWEEN 0 AND 1000),
+          reserve INTEGER NOT NULL CHECK(reserve IN (0,1)),accept_new INTEGER NOT NULL CHECK(accept_new IN (0,1)),
+          version INTEGER NOT NULL CHECK(version>0),updated INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS server_probe_history (
+          id INTEGER PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+          server_version INTEGER NOT NULL,checked_at INTEGER NOT NULL,status TEXT NOT NULL CHECK(status IN ('ok','error')),
+          duration_ms INTEGER NOT NULL CHECK(duration_ms BETWEEN 0 AND 30000),
+          source TEXT NOT NULL CHECK(source IN ('manual','automatic')));
+        CREATE INDEX IF NOT EXISTS server_probe_history_node ON server_probe_history(server_id,id);
         CREATE TABLE IF NOT EXISTS server_changes (
           id INTEGER PRIMARY KEY, server_id TEXT NOT NULL REFERENCES servers(id), created INTEGER NOT NULL,
           action TEXT NOT NULL, version INTEGER NOT NULL);
@@ -203,6 +245,17 @@ def init_db():
           protocol TEXT NOT NULL, created INTEGER NOT NULL, policy_version INTEGER NOT NULL, terms_snapshot TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS trial_policy_changes (
           id INTEGER PRIMARY KEY, created INTEGER NOT NULL, before_data TEXT NOT NULL, after_data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS flow_bridge_identities (
+          mtproxy_uuid TEXT PRIMARY KEY, telegram_id INTEGER NOT NULL UNIQUE,
+          shop_user_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
+          created INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS flow_bridge_devices (
+          shop_user_id INTEGER PRIMARY KEY REFERENCES users(id),
+          client_hash CHAR(64) NOT NULL, created INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS flow_bridge_nonces (
+          nonce_hash CHAR(64) PRIMARY KEY, expires INTEGER NOT NULL,
+          created INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS flow_bridge_nonces_expiry ON flow_bridge_nonces(expires);
         CREATE TABLE IF NOT EXISTS flow_auto_policy (
           id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL DEFAULT 0
           CHECK(enabled IN (0,1)), days INTEGER NOT NULL DEFAULT 1 CHECK(days BETWEEN 1 AND 30),
@@ -266,6 +319,18 @@ def init_db():
           role TEXT NOT NULL CHECK(role IN ('owner','panel_operator','mtproxy_manager','finance','support')),
           enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)), created INTEGER NOT NULL,
           updated INTEGER NOT NULL, created_by INTEGER REFERENCES staff_users(id), last_login INTEGER);
+        -- New roles use additive effective-role assignments; legacy rows are disabled
+        -- for these accounts so a previous binary cannot grant broader fallback rights.
+        CREATE TABLE IF NOT EXISTS staff_role_assignments (
+          staff_id INTEGER PRIMARY KEY REFERENCES staff_users(id) ON DELETE CASCADE,
+          role TEXT NOT NULL CHECK(role IN ('administrator','moderator')),
+          enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));
+        CREATE TABLE IF NOT EXISTS staff_permission_limits (
+          staff_id INTEGER PRIMARY KEY REFERENCES staff_users(id) ON DELETE CASCADE,
+          permissions TEXT, version INTEGER NOT NULL CHECK(version>0), updated INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS staff_role_policies (
+          role TEXT PRIMARY KEY CHECK(role IN ('administrator','moderator')),
+          permissions TEXT NOT NULL, version INTEGER NOT NULL CHECK(version>0), updated INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS staff_sessions (
           token_hash TEXT PRIMARY KEY, staff_id INTEGER NOT NULL REFERENCES staff_users(id) ON DELETE CASCADE,
           created INTEGER NOT NULL, expires INTEGER NOT NULL);
@@ -276,6 +341,26 @@ def init_db():
         CREATE INDEX IF NOT EXISTS admin_audit_created ON admin_audit(created,id);
         CREATE TABLE IF NOT EXISTS audit (
           id INTEGER PRIMARY KEY, created INTEGER NOT NULL, action TEXT NOT NULL, order_id TEXT);
+        CREATE TABLE IF NOT EXISTS shop_payment_policy (
+          id INTEGER PRIMARY KEY CHECK(id=1),web_mode TEXT NOT NULL CHECK(web_mode IN ('inherit','manual','yookassa','sbp')),
+          web_enabled INTEGER NOT NULL CHECK(web_enabled IN (0,1)),stars_enabled INTEGER NOT NULL CHECK(stars_enabled IN (0,1)),
+          manual_text TEXT NOT NULL,version INTEGER NOT NULL CHECK(version>0),updated INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS shop_finance_entries (
+          id TEXT PRIMARY KEY,kind TEXT NOT NULL CHECK(kind IN ('expense','fee','refund')),
+          category TEXT NOT NULL,currency TEXT NOT NULL CHECK(currency IN ('RUB','XTR')),
+          amount_minor INTEGER NOT NULL CHECK(amount_minor>0),occurred_at INTEGER NOT NULL,
+          order_id TEXT REFERENCES orders(id),reference TEXT NOT NULL,note TEXT NOT NULL,
+          state TEXT NOT NULL CHECK(state IN ('recorded','void')),version INTEGER NOT NULL CHECK(version>0),
+          created INTEGER NOT NULL,staff_id INTEGER,UNIQUE(currency,reference));
+        CREATE INDEX IF NOT EXISTS shop_finance_period ON shop_finance_entries(occurred_at,id);
+        CREATE INDEX IF NOT EXISTS shop_finance_order ON shop_finance_entries(order_id,kind,state);
+        CREATE TABLE IF NOT EXISTS shop_finance_actions (
+          operation_id TEXT PRIMARY KEY,entry_id TEXT NOT NULL REFERENCES shop_finance_entries(id),
+          action TEXT NOT NULL CHECK(action IN ('record','void')),fingerprint TEXT NOT NULL,
+          note TEXT NOT NULL,created INTEGER NOT NULL,staff_id INTEGER,UNIQUE(entry_id,action));
+        CREATE TABLE IF NOT EXISTS shop_runtime_settings (
+          section TEXT PRIMARY KEY CHECK(section IN ('appearance','sales','notifications')),
+          content TEXT NOT NULL, version INTEGER NOT NULL CHECK(version>0), updated INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS store_settings (
           id INTEGER PRIMARY KEY CHECK(id=1), support_text TEXT NOT NULL, terms_text TEXT NOT NULL,
           version INTEGER NOT NULL DEFAULT 1, updated INTEGER NOT NULL DEFAULT 0);

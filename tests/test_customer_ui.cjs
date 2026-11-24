@@ -832,3 +832,78 @@ test('closing device manager drops its Flow URL and prevents stale launches',asy
   assert.equal(p.element('link-dialog').open,false);assert.equal(p.element('link-value').value,'');
   p.element('flow-open').onclick();assert.equal(p.state.opened.length,0);
 });
+
+
+test('storefront applies customer-facing text safely and sales pause independently of trial',async()=>{
+ const p=await customerPage();
+ p.state.catalog.appearance={brand_name:'Shop <img>',headline:'<script>headline</script>',description:'Описание',announcement:'<b>Объявление</b>',theme:'ocean'};
+ Object.assign(p.state.catalog.protocols[0],{available:false,sales_allowed:false,trial_available:true});
+ p.state.catalog.sale_notice='Продажи временно закрыты';
+ p.state.catalog.trial={enabled:true,eligible:true,days:1,version:1,claim:null};
+ await p.run('refreshMe()');
+ assert.equal(p.element('shop-headline-custom').textContent,'<script>headline</script>');
+ assert.equal(p.element('shop-headline-custom').innerHTML,'');
+ assert.equal(p.element('shop-headline-default').hidden,true);
+ assert.equal(p.element('shop-announcement').textContent,'<b>Объявление</b>');
+ assert.equal(p.element('provider-note').textContent,'Продажи временно закрыты');
+ assert.match(p.element('plan-list').innerHTML,/disabled/);
+ assert.equal(p.element('trial-start').disabled,false);
+ await assert.rejects(p.run("beginCheckout('month')"),/Продажи временно закрыты/);
+});
+
+
+test('payment pause disables paid checkout but preserves eligible trial',async()=>{
+ const p=await customerPage();
+ p.state.catalog.payment_available=false;p.state.catalog.payment_notice='Оплата приостановлена';
+ p.state.catalog.trial={enabled:true,eligible:true,days:1,version:1,claim:null};
+ await p.run('refreshMe()');
+ assert.equal(p.element('provider-note').textContent,'Оплата приостановлена');
+ assert.match(p.element('plan-list').innerHTML,/disabled/);
+ assert.equal(p.element('trial-start').disabled,false);
+ await assert.rejects(p.run("beginCheckout('month')"),/Оплата приостановлена/);
+});
+
+
+test('Pushok ID requires explicit browser confirmation after central approval',async()=>{
+ const p=await customerPage({anonymous:true});
+ p.state.catalog.pushok_id={enabled:true,wallet_status:'not_connected'};
+ await p.run('refreshMe()');
+ assert.equal(p.element('pushok-id-signin').hidden,false);
+ const status='/shop/api/auth/pushok-id/status',subject='57c00362-45d4-4aae-8b3d-c2bc23172b71';
+ p.respond(status,{state:'missing'});
+ await p.run("openPushokIdentity('signin')");
+ p.respond('/shop/api/auth/pushok-id/start',{state:'pending',approval_url:'https://auth.example/?shop_request=fixture&shop_audience=pushok-shop%3Afixture',expires_at:123});
+ await p.run('startPushokIdentity()');
+ assert.equal(p.element('pushok-id-portal').hidden,false);
+ p.respond(status,{state:'approved',mode:'signin',confirmation:'a'.repeat(64),subject,telegram_id:777});
+ await p.run('checkPushokIdentity()');
+ assert.equal(p.element('pushok-id-confirm-form').hidden,false);
+ assert.equal(p.element('pushok-id-confirm').disabled,true);
+ assert.match(p.element('pushok-id-confirm-identity').textContent,/777/);
+ const before=p.calls.length;
+ await p.run('finishPushokIdentity()');
+ assert.equal(p.calls.length,before);
+ p.element('pushok-id-consent').checked=true;
+ p.respond('/shop/api/auth/pushok-id/finish',{ok:true,linked:true,signed_in:true,wallet_status:'not_connected'});
+ p.state.customer={id:7,telegram_id:777,subscriptions:[],orders:[],pushok_id:{linked:true,subject,wallet_status:'not_connected'}};
+ await p.run('finishPushokIdentity()');
+ const call=p.calls.find(c=>c.url.endsWith('/pushok-id/finish'));
+ assert.deepEqual(JSON.parse(call.opts.body),{confirmation:'a'.repeat(64),subject,confirm:true});
+ assert.equal(p.element('account-dialog').open,true);
+ assert.match(p.element('pushok-id-link-state').textContent,/Связан/);
+ assert.equal(p.element('pushok-id-link').hidden,true);
+});
+test('Pushok ID ignores a late approval after closing and does not offer automatic email merging',async()=>{
+ const p=await customerPage();
+ p.state.catalog.pushok_id={enabled:true};await p.run('refreshMe()');
+ assert.equal(p.element('pushok-id-link').hidden,true);
+ assert.match(p.element('pushok-id-link-state').textContent,/Email-аккаунт/);
+ p.state.customer.telegram_id=777;await p.run('refreshMe()');
+ const resolve=p.defer('/shop/api/auth/pushok-id/status');
+ const opening=p.run("openPushokIdentity('link')");
+ p.element('pushok-id-dialog').close();
+ resolve({state:'approved',mode:'link',confirmation:'a'.repeat(64),subject:'57c00362-45d4-4aae-8b3d-c2bc23172b71',telegram_id:777});
+ await opening;
+ assert.equal(p.element('pushok-id-confirm-form').hidden,true);
+ assert.equal(p.element('pushok-id-confirm-identity').textContent,'');
+});

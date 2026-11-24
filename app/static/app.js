@@ -7,7 +7,7 @@ let miniappCurrentRoute = 'home';
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const statusLabel = {pending:'Ожидает оплаты',checkout:'Оплата не завершена',paid:'Оплачено · готовим VPN',active:'Доступ выдан',canceled:'Отменён'};
 const money=(amount,currency)=>amount.toLocaleString('ru-RU')+' '+(currency==='XTR'?'★':'₽');
-let checkoutQuote=null,quoteRequest=0,promoIntent='';
+let checkoutQuote=null,quoteRequest=0,promoIntent='',checkoutPolicyVersion=null;
 let referralIntents=new Map();
 let adsPolicy=null,adsPage=1,adsRequest=0,adsMutation=0,adsIntent=new Map();
 let passwordOperation=null, logoutPending=false, supportRequest=0, selectedSupportCase=null;
@@ -105,10 +105,30 @@ function date(ts) { return new Date(ts*1000).toLocaleDateString('ru-RU'); }
 function protocolName(id) { return ({wg:'WireGuard',xui:'VLESS',vmess:'VMess',hysteria2:'Hysteria2',tuic:'TUIC v5'})[id] || id; }
 function profileAllowance(limit) { return limit===0 ? 'Только основной профиль' : 'Основной + до '+limit+' дополнительных профилей'; }
 function displayOrderStatus(order) { if(order.progress?.title)return order.progress.title; return order.kind==='referral'&&order.status==='paid'?'Добавляем бонусные дни':order.kind==='referral'&&order.status==='active'?'Бонусные дни добавлены':order.kind==='trial'&&order.status==='paid'?'Готовим пробный VPN':order.kind==='trial'&&order.status==='active'?'Пробный доступ выдан':statusLabel[order.status] || order.status; }
+function renderAppearance(){
+ const config=catalog?.appearance;
+ if(!config)return;
+ const textFields=[['brand',config.brand_name==='pushok.vpn'?'':config.brand_name],['headline',config.headline],['description',config.description]];
+ for(const [field,value] of textFields){
+  const custom=$('shop-'+field+'-custom'),original=$('shop-'+field+'-default');
+  const text=typeof value==='string'?value:'';
+  custom.textContent=text;custom.hidden=!text;original.hidden=!!text;
+ }
+ const announcement=typeof config.announcement==='string'?config.announcement:'';
+ $('shop-announcement').textContent=announcement;$('shop-announcement').hidden=!announcement;
+ if(document.documentElement?.dataset)document.documentElement.dataset.shopTheme=['pushok','ocean','graphite','violet'].includes(config.theme)?config.theme:'pushok';
+}
+function trialProtocolAvailable(){
+ const item=catalog.protocols.find(p=>p.id===protocol);
+ return !!(item?.trial_available??item?.available);
+}
 function renderPlans() {
+  renderPushokIdentity();
+  renderAppearance();
   $('protocols').innerHTML = catalog.protocols.map(p => `<button class="${p.id===protocol?'chosen':''}" data-protocol="${p.id}" aria-pressed="${p.id===protocol}">${esc(protocolName(p.id))}${p.available?'':' · скоро'}</button>`).join('');
-  const available = catalog.protocols.find(p => p.id===protocol).available;
-  $('provider-note').textContent = available ? '' : 'Подключение этого протокола ещё не настроено. Покупки временно недоступны.';
+  const selected=catalog.protocols.find(p=>p.id===protocol);
+  const available=!!selected?.available && catalog.payment_available!==false;
+  $('provider-note').textContent = available ? '' : catalog.payment_available===false ? (catalog.payment_notice||'Оплата временно недоступна.') : selected?.sales_allowed===false ? (catalog.sale_notice||'Продажи временно приостановлены.') : 'Подключение этого протокола ещё не настроено. Покупки временно недоступны.';
   $('plan-list').innerHTML = catalog.plans.length ? catalog.plans.map((p,i) => `<article class="plan ${i===1?'featured':''}">${i===1?'<span class="badge">УДОБНЫЙ ВЫБОР</span>':''}<h3>${esc(p.name)}</h3><div class="price">${p.price.toLocaleString('ru-RU')} <small>${catalog.currency==='XTR'?'★':'₽'}</small></div><p>${p.days} дней доступа · ${esc(protocolName(protocol))}</p><ul><li>${esc(profileAllowance(p.device_limit ?? 4))}</li><li>Настройки и QR-код в кабинете</li><li>Продление с сохранением дней</li></ul><button data-plan="${p.id}" ${available?'':'disabled'}>${available?'Выбрать тариф ↗':'Скоро'}</button></article>`).join('') : '<p class="plans-empty">Тарифы временно недоступны. Пожалуйста, обратитесь в поддержку.</p>';
   renderTrial();
 }
@@ -128,7 +148,7 @@ function clearPassword() {
 }
 $('account-dialog').addEventListener('close',clearPassword);
 function clearPayment() {
-  paymentOrder=null;paymentRequest++;paymentBusy=false;$('payment-result').replaceChildren();$('checkout-submit').disabled=false;
+  paymentOrder=null;paymentRequest++;paymentBusy=false;checkoutPolicyVersion=null;$('payment-result').replaceChildren();$('checkout-submit').disabled=false;
 }
 function clearAds() {
   adsRequest++;adsMutation++;adsPolicy=null;adsPage=1;adsIntent.clear();
@@ -137,6 +157,7 @@ function clearAds() {
   $('ads-list').replaceChildren();$('ads-form').hidden=true;$('ads-submit').disabled=false;
 }
 function clearPrivate(clearPromoIntent=true) {
+  if(clearPromoIntent){$('pushok-id-dialog').close();clearPushokIdentity();$('pushok-id-account').hidden=true;$('pushok-id-link-state').textContent='';}
   $('ads-dialog').close();clearAds();
   if(clearPromoIntent)promoIntent='';
   clearPayment();
@@ -184,6 +205,7 @@ async function refreshMe() {
 }
 function renderAccount() {
   if (!me) return;
+  renderPushokIdentity();
   $('password-settings').hidden=!me.can_change_password;
   renderReferrals();
   $('identity').textContent = me.email || 'Telegram · ' + me.telegram_id;
@@ -238,9 +260,12 @@ async function beginCheckout(id) {
   selectedPlan = catalog.plans.find(p => p.id===id);
   if (!selectedPlan) throw new Error('Тариф больше недоступен. Выберите другой тариф.');
   if (!me) { show('auth-dialog'); return; }
+  if(catalog.protocols.find(p=>p.id===protocol)?.sales_allowed===false)throw new Error(catalog.sale_notice||'Продажи временно приостановлены.');
+  if(catalog.payment_available===false)throw new Error(catalog.payment_notice||'Оплата временно недоступна.');
   $('promo-controls').hidden=false;renderCheckoutAmount();
   if(promoIntent){$('promo-code').value=promoIntent;$('promo-status').textContent='Промокод из ссылки. Нажмите «Применить», чтобы проверить скидку и итоговую цену.';}
   clearPayment(); $('checkout-form').hidden = false;
+  checkoutPolicyVersion=Number.isSafeInteger(catalog.payment_policy_version)?catalog.payment_policy_version:null;
   $('checkout-submit').textContent=catalog.payment_mode==='sbp'?'Создать счёт СБП →':'Оформить заказ →';
   $('terms-text').textContent=catalog.terms; $('accept-terms').checked=false; $('accept-terms').required=catalog.payment_mode==='stars';
   $('receipt-label').hidden = !catalog.receipts; $('receipt-label').querySelector('input').required = catalog.receipts;
@@ -305,6 +330,117 @@ async function refreshPaymentOrder(silent=false) {
 $('protocols').onclick = event => { const b=event.target.closest('[data-protocol]'); if(b) { protocol=b.dataset.protocol; renderPlans(); } };
 $('plan-list').onclick = event => { const b=event.target.closest('[data-plan]'); if(b) beginCheckout(b.dataset.plan).catch(e=>toast(e.message)); };
 document.querySelectorAll('[data-close]').forEach(button => button.onclick=()=>$(button.dataset.close).close());
+// В браузер поступает только случайный номер запроса. Подпись приходит от ID на сервер Shop.
+let pushokIdMode=null,pushokIdConfirmation=null,pushokIdSeq=0,pushokIdBusy=false,pushokIdFinish=null;
+function renderPushokIdentity(){
+ const enabled=catalog?.pushok_id?.enabled===true,linked=me?.pushok_id?.linked===true;
+ $('pushok-id-signin').hidden=!enabled||!!me;
+ $('pushok-id-account').hidden=!me||(!enabled&&!linked);
+ $('pushok-id-link').hidden=!enabled||!me?.telegram_id||linked;
+ $('pushok-id-revoke').hidden=!linked;
+ $('pushok-id-link-state').textContent=linked?'Связан с Pushok ID '+me.pushok_id.subject:
+  me?.telegram_id?'Аккаунт пока не связан.':'Email-аккаунт нельзя объединить автоматически. Требуется проверенный Telegram ID.';
+}
+function clearPushokIdentity(){
+ pushokIdSeq++;pushokIdMode=null;pushokIdConfirmation=null;pushokIdBusy=false;
+ $('pushok-id-portal').removeAttribute('href');$('pushok-id-portal').hidden=true;
+ $('pushok-id-status').textContent='';$('pushok-id-confirm-identity').textContent='';
+ $('pushok-id-confirm-form').hidden=true;$('pushok-id-consent').checked=false;$('pushok-id-confirm').disabled=true;
+ $('pushok-id-start').disabled=false;$('pushok-id-check').disabled=false;$('pushok-id-cancel').disabled=false;$('pushok-id-close').disabled=false;
+}
+function identityControls(busy){
+ pushokIdBusy=busy;
+ for(const id of ['pushok-id-start','pushok-id-check','pushok-id-cancel','pushok-id-close'])$(id).disabled=busy;
+ $('pushok-id-confirm').disabled=busy||!pushokIdConfirmation||!$('pushok-id-consent').checked;
+}
+function identityCurrent(seq,epoch){
+ return seq===pushokIdSeq&&epoch===sessionEpoch&&$('pushok-id-dialog').open;
+}
+function safeApprovalUrl(value){
+ const url=new URL(value);
+ if(url.protocol!=='https:'||url.username||url.password||url.hash||!url.searchParams.get('shop_request')||!url.searchParams.get('shop_audience'))throw new Error('Некорректный адрес Pushok ID');
+ return url.href;
+}
+async function openPushokIdentity(mode){
+ if(catalog?.pushok_id?.enabled!==true||logoutPending||pushokIdFinish)return;
+ if(mode==='link'&&(!me?.telegram_id||me?.pushok_id?.linked))return;
+ if(mode==='signin'&&me)return;
+ clearPushokIdentity();pushokIdMode=mode;
+ show('pushok-id-dialog');await checkPushokIdentity();
+}
+async function startPushokIdentity(){
+ if(!pushokIdMode||pushokIdBusy||!$('pushok-id-dialog').open)return;
+ const seq=++pushokIdSeq,epoch=sessionEpoch;
+ pushokIdConfirmation=null;$('pushok-id-confirm-form').hidden=true;$('pushok-id-consent').checked=false;
+ $('pushok-id-portal').removeAttribute('href');$('pushok-id-portal').hidden=true;identityControls(true);
+ try{
+  const result=await api('/api/auth/pushok-id/start',{mode:pushokIdMode});
+  if(!identityCurrent(seq,epoch))return;
+  const url=safeApprovalUrl(result.approval_url);
+  $('pushok-id-portal').href=url;$('pushok-id-portal').hidden=false;
+  $('pushok-id-status').textContent='Запрос создан на 5 минут. Откройте Pushok ID и подтвердите его.';
+ }catch(e){if(identityCurrent(seq,epoch))$('pushok-id-status').textContent=e.message;}
+ finally{if(identityCurrent(seq,epoch))identityControls(false);}
+}
+async function checkPushokIdentity(){
+ if(!pushokIdMode||pushokIdBusy||!$('pushok-id-dialog').open)return;
+ const seq=++pushokIdSeq,epoch=sessionEpoch;
+ pushokIdConfirmation=null;$('pushok-id-confirm-form').hidden=true;$('pushok-id-consent').checked=false;identityControls(true);
+ try{
+  const result=await api('/api/auth/pushok-id/status');
+  if(!identityCurrent(seq,epoch))return;
+  if(result.state==='approved'){
+   if(result.mode!==pushokIdMode||!Number.isSafeInteger(result.telegram_id)||result.telegram_id<=0||
+      !/^[a-f0-9]{64}$/.test(result.confirmation)||! /^[a-f0-9-]{36}$/.test(result.subject))throw new Error('Подтверждение не соответствует текущему запросу');
+   pushokIdConfirmation={confirmation:result.confirmation,subject:result.subject};
+   $('pushok-id-confirm-identity').textContent='Подтверждённый Telegram ID: '+result.telegram_id+' · Pushok ID: '+result.subject+'. Сверьте эти данные в центральном кабинете.';
+   $('pushok-id-confirm-form').hidden=false;$('pushok-id-status').textContent='Личность подтверждена центральным кабинетом. Требуется ваше согласие.';
+  }else if(result.state==='pending')$('pushok-id-status').textContent='Ожидается подтверждение в Pushok ID. Если вкладка потеряна, начните новый запрос.';
+  else $('pushok-id-status').textContent='Нет действующего запроса. Нажмите «Начать новый запрос».';
+ }catch(e){if(identityCurrent(seq,epoch))$('pushok-id-status').textContent=e.message;}
+ finally{if(identityCurrent(seq,epoch))identityControls(false);}
+}
+function finishPushokIdentity(){
+ if(!pushokIdConfirmation||!$('pushok-id-consent').checked||pushokIdBusy||pushokIdFinish||!$('pushok-id-dialog').open)return;
+ const seq=++pushokIdSeq,epoch=sessionEpoch,body={...pushokIdConfirmation,confirm:true};
+ identityControls(true);
+ pushokIdFinish=(async()=>{
+  try{
+   const result=await api('/api/auth/pushok-id/finish',body);
+   if(epoch!==sessionEpoch)return;
+   if(result.ok!==true)throw new Error('Вход не подтверждён');
+   $('pushok-id-dialog').close();clearPushokIdentity();$('auth-dialog').close();
+   await refreshMe();if(epoch===sessionEpoch&&me&&!logoutPending){show('account-dialog');toast('Pushok ID связан с вашим аккаунтом Shop.');}
+  }catch(e){if(identityCurrent(seq,epoch))$('pushok-id-status').textContent=e.message;}
+  finally{if(identityCurrent(seq,epoch))identityControls(false);pushokIdFinish=null;}
+ })();
+ return pushokIdFinish;
+}
+$('pushok-id-signin').onclick=()=>openPushokIdentity('signin');
+$('pushok-id-link').onclick=()=>openPushokIdentity('link');
+$('pushok-id-start').onclick=startPushokIdentity;
+$('pushok-id-check').onclick=checkPushokIdentity;
+$('pushok-id-consent').onchange=()=>identityControls(pushokIdBusy);
+$('pushok-id-confirm-form').onsubmit=event=>{event.preventDefault();return finishPushokIdentity();};
+$('pushok-id-dialog').addEventListener('cancel',event=>{if(pushokIdBusy)event.preventDefault();});
+$('pushok-id-dialog').addEventListener('close',clearPushokIdentity);
+$('pushok-id-cancel').onclick=async()=>{
+ if(pushokIdBusy)return;const seq=++pushokIdSeq,epoch=sessionEpoch;identityControls(true);
+ try{await api('/api/auth/pushok-id/cancel',{});if(identityCurrent(seq,epoch))$('pushok-id-dialog').close();}
+ catch(e){if(identityCurrent(seq,epoch))$('pushok-id-status').textContent=e.message;}
+ finally{if(identityCurrent(seq,epoch))identityControls(false);}
+};
+$('pushok-id-revoke').onclick=async()=>{
+ if(!me?.pushok_id?.linked||logoutPending||!window.confirm('Завершить сеансы Shop, созданные через Pushok ID? Подписки не будут отключены.'))return;
+ const epoch=sessionEpoch,button=$('pushok-id-revoke');button.disabled=true;
+ try{
+  const result=await api('/api/auth/pushok-id/revoke',{});
+  if(epoch!==sessionEpoch)return;
+  if(result.signed_out){sessionEpoch++;meRequest++;clearPrivate();}
+  await refreshMe();toast('Сеансы входа через Pushok ID завершены.');
+ }catch(e){if(epoch===sessionEpoch)toast(e.message);}finally{button.disabled=false;}
+};
+
 $('account-btn').onclick = async () => { if(logoutPending)return; try { await refreshMe(); show(me?'account-dialog':'auth-dialog'); } catch(e) { toast(e.message); } };
 function showForgotForm(show){
  $('auth-form').hidden=show;$('auth-switch').hidden=show;$('forgot-open').hidden=show;$('forgot-form').hidden=!show;
@@ -327,7 +463,7 @@ $('auth-form').onsubmit = async event => {
 };
 $('checkout-form').onsubmit = async event => {
   event.preventDefault(); const b=$('checkout-submit'); b.disabled=true; const request=paymentRequest,epoch=sessionEpoch;
-  try { if(!checkoutTrial && $('promo-code').value.trim() && !checkoutQuote)throw new Error('Сначала нажмите «Применить» и проверьте сумму скидки.'); const email=new FormData(event.target).get('receipt_email'); const path=checkoutTrial?'/api/trial':'/api/orders';const payload=checkoutTrial?{protocol:checkoutTrial.protocol,policy_version:checkoutTrial.version,accept_terms:$('accept-terms').checked}:{plan:selectedPlan.id,plan_version:selectedPlan.version,protocol,receipt_email:email||null,accept_terms:$('accept-terms').checked,...(checkoutQuote?{promo_code:checkoutQuote.promo_code,promo_version:checkoutQuote.promo_version,quoted_amount:checkoutQuote.amount,quote_currency:checkoutQuote.currency}:{})};const order=await api(path,payload);if(request!==paymentRequest || epoch!==sessionEpoch || !$('checkout-dialog').open)return;promoIntent='';checkoutTrial=null;paymentResult(order);await refreshMe(); }
+  try { if(!checkoutTrial && $('promo-code').value.trim() && !checkoutQuote)throw new Error('Сначала нажмите «Применить» и проверьте сумму скидки.'); const email=new FormData(event.target).get('receipt_email'); const path=checkoutTrial?'/api/trial':'/api/orders';const payload=checkoutTrial?{protocol:checkoutTrial.protocol,policy_version:checkoutTrial.version,accept_terms:$('accept-terms').checked}:{plan:selectedPlan.id,plan_version:selectedPlan.version,protocol,receipt_email:email||null,accept_terms:$('accept-terms').checked,...(checkoutPolicyVersion===null?{}:{payment_policy_version:checkoutPolicyVersion}),...(checkoutQuote?{promo_code:checkoutQuote.promo_code,promo_version:checkoutQuote.promo_version,quoted_amount:checkoutQuote.amount,quote_currency:checkoutQuote.currency}:{})};const order=await api(path,payload);if(request!==paymentRequest || epoch!==sessionEpoch || !$('checkout-dialog').open)return;promoIntent='';checkoutTrial=null;paymentResult(order);await refreshMe(); }
   catch(e) {
     if(request!==paymentRequest || epoch!==sessionEpoch || !$('checkout-dialog').open)return;
     if (e.status===409) {
@@ -481,7 +617,7 @@ function renderTrial() {
   const trial=catalog.trial;
   $('trial-offer').hidden=!trial || (!trial.enabled&&!trial.claim);
   if(!trial)return;
-  const available=!!catalog.protocols.find(p=>p.id===protocol)?.available;
+  const available=trialProtocolAvailable();
   const messages={telegram_required:'Войдите через Telegram, чтобы попробовать VPN.',existing_customer:'Пробный доступ доступен аккаунтам без прежних заказов и подписок.',limit_reached:'Пробные активации временно недоступны.',not_configured:'Пробный доступ готовится к запуску.',disabled:'Пробный доступ отключён.'};
   $('trial-info').textContent=trial.claim?'Пробный доступ уже выбран: '+protocolName(trial.claim.protocol)+'. Статус и настройки — в кабинете.':trial.eligible?trial.days+' дн. · '+protocolName(protocol)+' · только основной профиль.':messages[trial.reason] || 'Пробный доступ уже использован.';
   $('trial-start').textContent=trial.claim?'Открыть кабинет':trial.reason==='telegram_required'?'Войти через Telegram':'Попробовать бесплатно';
@@ -492,7 +628,7 @@ async function beginTrial() {
   await refreshMe();const trial=catalog.trial;
   if(trial?.claim){show('account-dialog');return;}
   if(!me?.telegram_id){show('auth-dialog');toast('Пробный доступ доступен при входе через Telegram-бота.');return;}
-  if(!trial?.eligible || !catalog.protocols.find(p=>p.id===protocol)?.available)throw new Error('Пробный доступ сейчас недоступен.');
+  if(!trial?.eligible || !trialProtocolAvailable())throw new Error('Пробный доступ сейчас недоступен.');
   selectedPlan=null;checkoutTrial={protocol,version:trial.version};$('promo-controls').hidden=true;
   $('checkout-info').textContent='Пробный доступ / '+trial.days+' дн. / '+protocolName(protocol)+' / без оплаты / только основной профиль';
   clearPayment();$('checkout-form').hidden=false;$('receipt-label').hidden=true;$('receipt-label').querySelector('input').required=false;
@@ -727,7 +863,7 @@ $('password-form').onsubmit = event => {
 $('logout').onclick = async () => {
   if(logoutPending)return;
   logoutPending=true; $('logout').disabled=true;
-  const pending=passwordOperation;
+  const pending=Promise.allSettled([passwordOperation,pushokIdFinish]);
   sessionEpoch++; meRequest++; clearPrivate();
   try { if(pending)await pending; await api('/api/auth/logout',{}); catalog=await api('/api/catalog'); renderPlans(); }
   catch(e) { toast('Не удалось подтвердить выход. '+e.message); }

@@ -183,10 +183,14 @@ def restore(path,password,target,*,preserve_device_links=False):
     with tempfile.TemporaryDirectory(prefix='pushok-restore-') as temp:
         database=Path(temp)/'shop.db';database.write_bytes(files['shop.db']);report=validate(database,files['.env'])
         with closing(sqlite3.connect(database)) as conn:
-            # Restoring a snapshot must not resurrect device bearer URLs.
+            # Snapshot recovery must never resurrect a previously disabled bearer URL.
             if not preserve_device_links and conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='flow_wireguard_device_links'").fetchone():
                 conn.execute("""UPDATE flow_wireguard_device_links SET enabled=0,token_hash=NULL,
                     token_secret=NULL,version=version+1 WHERE enabled=1""")
+            # Pending SSO approvals and their locally issued sessions must never resurrect.
+            for table in ('shop_id_requests','shop_id_sessions'):
+                if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():
+                    conn.execute('DELETE FROM '+table)
             sessions=conn.execute('DELETE FROM sessions').rowcount;tickets=conn.execute('DELETE FROM tickets').rowcount;conn.commit()
         # No extraction, replacement, container startup or mutation of the source installation.
         target=Path(target);target.mkdir(mode=0o700)

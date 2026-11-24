@@ -6,7 +6,7 @@ import uuid
 from typing import Literal
 from fastapi import HTTPException
 from pydantic import BaseModel,Field,field_validator
-from . import config as c, protocols
+from . import config as c, protocols, runtime_settings, payment_policy
 from .db import db,all_rows
 
 class CouponFields(BaseModel):
@@ -110,6 +110,8 @@ def quote_locked(conn,data,user):
 def quote(data,user):
     with db() as conn:
         conn.execute('BEGIN')
+        runtime_settings.require_sale(conn,user,data.protocol)
+        payment_policy.require_new(conn,user,payment_policy.method_for(user,conn))
         return quote_locked(conn,data,user)[0]
 
 
@@ -136,6 +138,8 @@ def make_order(data,user,method,email):
             previous=conn.execute("SELECT * FROM orders WHERE user_id=? AND protocol=? AND plan=? AND method=? AND plan_version=? AND promo_id IS NULL AND kind='purchase' AND status='pending' AND created>? ORDER BY created DESC,id LIMIT 1",
                 (user['id'],data.protocol,data.plan,method,data.plan_version,int(time.time())-1800)).fetchone()
             if previous:return dict(previous)
+        runtime_settings.require_sale(conn,user,data.protocol)
+        payment_policy.require_new(conn,user,method,getattr(data,'payment_policy_version',None))
         oid=str(uuid.uuid4());now=int(time.time())
         conn.execute('INSERT INTO orders(id,user_id,protocol,plan,days,amount,created,receipt_email,currency,method,plan_version,plan_name,device_limit,base_amount,discount,promo_id,promo_code,promo_version,promo_percent) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             (oid,user['id'],data.protocol,data.plan,result['days'],result['amount'],now,email,result['currency'],method,result['plan_version'],result['plan_name'],result['device_limit'],result['base_amount'],result['discount'],coupon['id'] if coupon else None,code,result['promo_version'],result['promo_percent']))

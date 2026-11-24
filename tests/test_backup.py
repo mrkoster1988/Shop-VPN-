@@ -264,3 +264,72 @@ def test_device_links_backup_validation_and_restore_policy(source,tmp_path):
     with sqlite3.connect(managed/'shop.db') as conn:
         assert conn.execute('SELECT enabled,version FROM flow_wireguard_device_links').fetchone()==(1,1)
     assert one('SELECT enabled,version FROM flow_wireguard_device_links')=={'enabled':1,'version':1}
+
+
+def test_runtime_configuration_and_role_limits_survive_encrypted_backup(source,tmp_path):
+    from app import runtime_settings,staff_permissions
+    runtime_settings.update('appearance',runtime_settings.AppearanceUpdate(version=0,brand_name='Backup Shop',
+        headline='',description='',announcement='Fixture',theme='graphite'))
+    staff_id=execute("INSERT INTO staff_users(email,password,role,enabled,created,updated) VALUES (?,?,'support',0,1,1)",
+                     ('restricted@example.com','fixture-hash'))
+    execute("INSERT INTO staff_role_assignments VALUES (?,'moderator',1)",(staff_id,))
+    staff_permissions.individual_update(staff_id,staff_permissions.IndividualUpdate(
+        version=0,role_version=0,role='moderator',inherit=False,permissions=[]))
+    create(source);target=tmp_path/'runtime-restored'
+    b.restore(source[2],PASSWORD,target)
+    with sqlite3.connect(target/'shop.db') as conn:
+        content,version=conn.execute("SELECT content,version FROM shop_runtime_settings WHERE section='appearance'").fetchone()
+        assert json.loads(content)['brand_name']=='Backup Shop' and version==1
+        assert conn.execute('SELECT permissions,version FROM staff_permission_limits WHERE staff_id=?',(staff_id,)).fetchone()==('[]',1)
+        assert conn.execute('PRAGMA foreign_key_check').fetchall()==[]
+
+
+def test_shop_finance_and_payment_policy_survive_encrypted_restore(source,tmp_path):
+    from app import payment_policy,shop_finance
+    import time
+    payment_policy.update(payment_policy.Update(version=0,web_mode='manual',web_enabled=False,
+        stars_enabled=True,manual_text='Fixture instructions'))
+    saved=shop_finance.record(shop_finance.Entry(operation_id=uuid.uuid4(),kind='expense',
+        category='server',currency='RUB',amount_minor=12550,occurred_at=int(time.time())-1,
+        reference='fixture-server',note='Confirmed fixture',verified=True),{'id':None})
+    create(source);target=tmp_path/'finance-restored'
+    b.restore(source[2],PASSWORD,target)
+    with sqlite3.connect(target/'shop.db') as conn:
+        assert conn.execute('SELECT web_enabled,version FROM shop_payment_policy').fetchone()==(0,1)
+        assert conn.execute('SELECT amount_minor,state FROM shop_finance_entries WHERE id=?',(saved['id'],)).fetchone()==(12550,'recorded')
+        assert conn.execute('SELECT count(*) FROM shop_finance_actions').fetchone()==(1,)
+        assert conn.execute('PRAGMA foreign_key_check').fetchall()==[]
+
+
+def test_routing_policy_and_probe_history_survive_backup(source,tmp_path):
+    from app import server_routing as routing
+    data={k:v for k,v in routing.DEFAULT.items() if k!='updated'}
+    routing.update_policy(routing.PolicyUpdate(**(data|{'strategy':'utilization','monitor_enabled':True})))
+    routing.update_node('test-wg',routing.NodeUpdate(version=0,server_version=1,priority=400,reserve=True,accept_new=True))
+    execute("INSERT INTO server_probe_history(server_id,server_version,checked_at,status,duration_ms,source) VALUES ('test-wg',1,1,'ok',50,'manual')")
+    create(source);target=tmp_path/'routing-restored'
+    b.restore(source[2],PASSWORD,target)
+    with sqlite3.connect(target/'shop.db') as conn:
+        assert conn.execute('SELECT strategy,monitor_enabled,version FROM server_routing_policy').fetchone()==('utilization',1,1)
+        assert conn.execute('SELECT priority,reserve,version FROM server_routing_nodes').fetchone()==(400,1,1)
+        assert conn.execute('SELECT status,duration_ms FROM server_probe_history').fetchone()==('ok',50)
+        assert conn.execute('PRAGMA foreign_key_check').fetchall()==[]
+
+
+def test_id_restore_preserves_identity_but_clears_all_transient_approvals_and_sessions(source,tmp_path):
+    uid=one('SELECT id FROM users')['id']
+    execute('UPDATE users SET telegram_id=777 WHERE id=?',(uid,))
+    execute("INSERT INTO shop_id_policy VALUES (1,1,0,1,1,'fixture-config-hash')")
+    execute('INSERT INTO shop_id_links VALUES (?,?,?,?)',('57c00362-45d4-4aae-8b3d-c2bc23172b71',uid,777,1))
+    execute("INSERT INTO shop_id_sessions VALUES ('old-session-hash',?,?)",(uid,'fixture-config-hash'))
+    execute("""INSERT INTO shop_id_requests(request_hash,browser_hash,mode,policy_version,config_hash,created,expires,subject,telegram_id,approved_at)
+        VALUES ('fixture-request-hash','fixture-browser-hash','signin',1,'fixture-config-hash',1,2000000000,?,777,1)""",
+        ('57c00362-45d4-4aae-8b3d-c2bc23172b71',))
+    create(source);target=tmp_path/'identity-restored'
+    b.restore(source[2],PASSWORD,target)
+    with sqlite3.connect(target/'shop.db') as conn:
+        assert conn.execute('SELECT count(*) FROM shop_id_links').fetchone()==(1,)
+        assert conn.execute('SELECT count(*) FROM shop_id_policy').fetchone()==(1,)
+        for table in ('sessions','shop_id_requests','shop_id_sessions'):
+            assert conn.execute('SELECT count(*) FROM '+table).fetchone()==(0,)
+        assert conn.execute('PRAGMA foreign_key_check').fetchall()==[]

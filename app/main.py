@@ -26,11 +26,11 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 from . import ads_bookings as bookings, ads_finance as finance
 from . import support as support_cases
-from . import shop_settings, platforms, protocols, bot_menu as menu_editor, payment_events
-from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
+from . import shop_settings, runtime_settings, payment_policy, shop_finance, platforms, protocols, bot_menu as menu_editor, payment_events
+from . import config as c, providers, service, servers, server_routing, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_wireguard_devices
+from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, pushok_identity, flow_wireguard_devices
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -58,6 +58,7 @@ async def lifespan(app):
     if os.getenv('BACKGROUND_TASKS', 'true') == 'true' and os.getenv('MAINTENANCE_MODE')!='true':
         tasks.append(asyncio.create_task(service.worker()))
         tasks.append(asyncio.create_task(updates.worker()))
+        tasks.append(asyncio.create_task(server_routing.worker()))
         if c.BOT_TOKEN:
             tasks.append(asyncio.create_task(service.bot_loop()))
     yield
@@ -76,7 +77,7 @@ async def safe_validation(request, exc):
         return JSONResponse({'detail':'Проверьте поля сервера и профиль подключения.'},status_code=422)
     if request.url.path.removeprefix(c.BASE_PATH).startswith(('/api/ads/','/api/admin/ads/')):
         return JSONResponse({'detail':'Проверьте поля рекламной заявки или настроек.'},status_code=422)
-    if request.url.path.removeprefix(c.BASE_PATH).startswith('/api/auth/'):
+    if request.url.path.removeprefix(c.BASE_PATH).startswith(('/api/auth/','/api/admin/auth/','/api/admin/staff')):
         return JSONResponse({'detail':'Проверьте данные для входа или смены пароля.'},status_code=422)
     return await request_validation_exception_handler(request,exc)
 
@@ -102,11 +103,12 @@ async def safety(request, call_next):
             return JSONResponse({'detail': 'Слишком большой запрос'}, status_code=413)
     if private_feed or path.startswith('/api/'):
         ip = request.client.host if request.client else 'unknown'
-        bucket = hits[(ip, 'sub' if private_feed else 'auth' if path.startswith('/api/auth/') else 'api')]
+        category='sub' if private_feed else 'id_approval' if path=='/api/auth/pushok-id/approve' else 'id_auth' if path.startswith('/api/auth/pushok-id/') else 'auth' if path.startswith('/api/auth/') else 'api'
+        bucket=hits[(ip,category)]
         now = time.monotonic()
         while bucket and bucket[0] < now - 60:
             bucket.popleft()
-        limit = 60 if private_feed else 20 if path.startswith(('/api/auth/','/api/admin/auth/')) else 180
+        limit = 60 if private_feed else 120 if category=='id_approval' else 30 if category=='id_auth' else 20 if path.startswith(('/api/auth/','/api/admin/auth/')) else 180
         if len(bucket) >= limit:
             return JSONResponse({'detail': 'Слишком много запросов. Подождите минуту.'}, status_code=429,headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer'})
         bucket.append(now)
@@ -163,6 +165,7 @@ class Purchase(BaseModel):
     promo_version: int | None = Field(default=None,ge=1,strict=True)
     quoted_amount: int | None = Field(default=None,ge=1,le=1000000,strict=True)
     quote_currency: Literal['RUB','XTR'] | None = None
+    payment_policy_version: int | None = Field(default=None,ge=0,strict=True)
 
 
 class PlanFields(BaseModel):
@@ -263,10 +266,10 @@ class StaffLogin(BaseModel):
 class StaffCreate(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=12, max_length=128)
-    role: Literal['panel_operator','mtproxy_manager','finance','support']
+    role: Literal['administrator','moderator','panel_operator','mtproxy_manager','finance','support']
 class StaffUpdate(BaseModel):
     enabled: bool | None = None
-    role: Literal['owner','panel_operator','mtproxy_manager','finance','support'] | None = None
+    role: Literal['owner','administrator','moderator','panel_operator','mtproxy_manager','finance','support'] | None = None
 @app.post('/api/admin/auth/login')
 async def staff_login(data: StaffLogin, response: Response):
     return staff.login(data.email, data.password, response)
@@ -277,7 +280,7 @@ async def staff_bootstrap(data: StaffLogin, request: Request, response: Response
 @app.get('/api/admin/auth/me')
 async def staff_me(request: Request):
     actor=staff.authorize(request)
-    return {'id':actor.get('id'),'email':actor['email'],'role':actor['role'],'role_label':staff.ROLE_LABELS[actor['role']]}
+    return {'id':actor.get('id'),'email':actor['email'],'role':actor['role'],'role_label':staff.ROLE_LABELS[actor['role']], 'permissions':actor.get('permissions',[])}
 @app.post('/api/admin/auth/logout')
 async def staff_logout(request: Request, response: Response):
     raw=request.cookies.get('staff_session','')
@@ -317,26 +320,73 @@ async def updates_check():
 
 @app.get('/api/admin/shop-settings',dependencies=[Depends(admin)])
 async def shop_settings_get(request: Request):
-    if request.state.admin_actor['role']!='owner':
-        raise HTTPException(403,'Настройки магазина доступны только владельцу')
     return shop_settings.get()
 
 @app.put('/api/admin/shop-settings',dependencies=[Depends(admin)])
 async def shop_settings_update(data: shop_settings.SettingsUpdate, request: Request):
-    if request.state.admin_actor['role']!='owner':
-        raise HTTPException(403,'Изменять настройки магазина может только владелец')
     return shop_settings.update(data)
+
+# Эксплуатационные настройки: каждая секция имеет свою версию и отдельное право.
+@app.get('/api/admin/runtime/appearance',dependencies=[Depends(admin)])
+async def runtime_appearance_get():
+    return runtime_settings.get('appearance')
+
+@app.put('/api/admin/runtime/appearance',dependencies=[Depends(admin)])
+async def runtime_appearance_update(data:runtime_settings.AppearanceUpdate):
+    return runtime_settings.update('appearance',data)
+
+@app.get('/api/admin/runtime/sales',dependencies=[Depends(admin)])
+async def runtime_sales_get():
+    return runtime_settings.get('sales')
+
+@app.put('/api/admin/runtime/sales',dependencies=[Depends(admin)])
+async def runtime_sales_update(data:runtime_settings.SalesUpdate):
+    return runtime_settings.update('sales',data)
+
+@app.get('/api/admin/runtime/notifications',dependencies=[Depends(admin)])
+async def runtime_notifications_get():
+    return runtime_settings.get('notifications')
+
+@app.put('/api/admin/runtime/notifications',dependencies=[Depends(admin)])
+async def runtime_notifications_update(data:runtime_settings.NotificationsUpdate):
+    return runtime_settings.update('notifications',data)
+
+@app.get('/api/admin/pushok-id',dependencies=[Depends(admin)])
+async def pushok_id_admin():
+    return pushok_identity.admin_status()
+
+@app.put('/api/admin/pushok-id',dependencies=[Depends(admin)])
+async def pushok_id_policy(data:pushok_identity.PolicyUpdate):
+    async with service.lock:return pushok_identity.update_policy(data)
+
+@app.get('/api/admin/payment-policy',dependencies=[Depends(admin)])
+async def payment_policy_get():
+    return payment_policy.get()
+
+@app.put('/api/admin/payment-policy',dependencies=[Depends(admin)])
+async def payment_policy_update(data:payment_policy.Update):
+    async with service.lock:return payment_policy.update(data)
+
+@app.get('/api/admin/shop-finance',dependencies=[Depends(admin)])
+async def shop_finance_report(start:int|None=Query(default=None,ge=0,le=commerce_analytics.MAX_TIME),
+                              end:int|None=Query(default=None,ge=1,le=commerce_analytics.MAX_TIME),
+                              page:int=Query(default=1,ge=1,le=100000)):
+    return shop_finance.report(start,end,page)
+
+@app.post('/api/admin/shop-finance/entries',dependencies=[Depends(admin)])
+async def shop_finance_entry(data:shop_finance.Entry,request:Request):
+    return shop_finance.record(data,request.state.admin_actor)
+
+@app.post('/api/admin/shop-finance/entries/{eid}/void',dependencies=[Depends(admin)])
+async def shop_finance_void(eid:UUID,data:shop_finance.Void,request:Request):
+    return shop_finance.void(str(eid),data,request.state.admin_actor)
 
 @app.get('/api/admin/bot-menu',dependencies=[Depends(admin)])
 async def bot_menu_get(request: Request):
-    if request.state.admin_actor['role'] != 'owner':
-        raise HTTPException(403, 'Редактор Telegram-меню доступен только владельцу')
     return menu_editor.get()
 
 @app.put('/api/admin/bot-menu',dependencies=[Depends(admin)])
 async def bot_menu_put(data: menu_editor.MenuUpdate, request: Request):
-    if request.state.admin_actor['role'] != 'owner':
-        raise HTTPException(403, 'Изменять Telegram-меню может только владелец')
     return menu_editor.update(data)
 
 @app.get('/api/admin/staff',dependencies=[Depends(admin)])
@@ -352,6 +402,46 @@ async def staff_update(staff_id: int, data: StaffUpdate, request: Request):
     actor=request.state.admin_actor
     if actor['role']!='owner': raise HTTPException(403,'Управлять сотрудниками может только владелец')
     return staff.update_staff(staff_id,data.enabled,data.role,actor.get('id'))
+@app.get('/api/admin/staff/{staff_id}/permissions',dependencies=[Depends(admin)])
+async def staff_individual_permissions(staff_id:int):
+    return staff_permissions.individual_get(staff_id)
+
+@app.put('/api/admin/staff/{staff_id}/permissions',dependencies=[Depends(admin)])
+async def staff_individual_permissions_update(staff_id:int,data:staff_permissions.IndividualUpdate):
+    return staff_permissions.individual_update(staff_id,data)
+
+@app.get('/api/admin/role-policies',dependencies=[Depends(admin)])
+async def role_policies():
+    return staff_permissions.get_all()
+
+@app.put('/api/admin/role-policies/{role}',dependencies=[Depends(admin)])
+async def role_policy_update(role: Literal['administrator','moderator'],data: staff_permissions.PolicyUpdate):
+    return staff_permissions.update(role,data)
+
+@app.get('/api/admin/dashboard-summary',dependencies=[Depends(admin)])
+async def dashboard_summary():
+    return {'users':one('SELECT count(*) AS n FROM users')['n'],
+            'active':one("SELECT count(*) AS n FROM subscriptions WHERE state='active' AND expires>?",(int(time.time()),))['n'],
+            'pending_orders':one("SELECT count(*) AS n FROM orders WHERE status IN ('pending','checkout','paid')")['n']}
+
+# Модерация не раскрывает финансовую историю, данные пользователей или ключи.
+MODERATION_FIELDS=('id','channel','comment','state','reason','version','created','updated')
+
+@app.get('/api/admin/moderation/requests',dependencies=[Depends(admin)])
+async def moderation_requests(page:int=Query(default=1,ge=1,le=100000),
+                              state:Literal['pending','approved','rejected','canceled']='pending'):
+    with db() as conn:
+        conn.execute('BEGIN')
+        total=conn.execute('SELECT count(*) FROM ads_requests WHERE state=?',(state,)).fetchone()[0]
+        rows=conn.execute('SELECT '+','.join(MODERATION_FIELDS)+' FROM ads_requests WHERE state=? ORDER BY created DESC,id DESC LIMIT 20 OFFSET ?',
+                          (state,(page-1)*20)).fetchall()
+    return {'requests':[dict(r) for r in rows],'total':total,'page':page,'page_size':20}
+
+@app.put('/api/admin/moderation/requests/{rid}',dependencies=[Depends(admin)])
+async def moderation_decision(rid:UUID,data:ads.Decision):
+    result=ads.transition(str(rid),data)
+    return {k:result[k] for k in MODERATION_FIELDS}
+
 @app.get('/api/admin/audit',dependencies=[Depends(admin)])
 async def admin_audit(limit: int = Query(default=200,ge=1,le=500)):
     return staff.audit_rows(limit)
@@ -366,12 +456,15 @@ async def catalog(request: Request):
         tg = False
     plans = [{**p, 'price': p['stars'] if tg else p['price']} for p in all_rows('SELECT id,name,days,price,stars,version,device_limit FROM plans WHERE enabled=1 ORDER BY position,id')]
     public_settings=shop_settings.public()
-    return {'plans': plans, 'currency': 'XTR' if tg else 'RUB', 'protocols': [
-                {**item, 'available': providers.available(item['id'], customer['id'] if customer else None)}
-                for item in protocols.sales_options()],
-            'trial':trials.offer(customer), 'payment_mode': 'stars' if tg else c.PAYMENT_MODE, 'bot_username': c.BOT_USERNAME,
+    options,sale_notice=runtime_settings.catalog_options(customer,providers.available)
+    appearance=runtime_settings.get('appearance')
+    payment=payment_policy.catalog(customer)
+    return {'plans': plans, 'currency': 'XTR' if tg else 'RUB', 'protocols': options,
+            'appearance':{k:v for k,v in appearance.items() if k not in ('version','updated')},
+            'sale_notice':sale_notice,'pushok_id':pushok_identity.public_capabilities(),
+            'trial':trials.offer(customer), **payment, 'bot_username': c.BOT_USERNAME,
             'support': public_settings['support'],
-            'receipts': not tg and os.getenv('YOOKASSA_RECEIPTS') == 'true',
+            'receipts': not tg and payment['payment_mode'] in ('yookassa','sbp') and os.getenv('YOOKASSA_RECEIPTS') == 'true',
             'terms': public_settings['terms']}
 
 @app.get('/api/support/tickets')
@@ -581,6 +674,30 @@ async def confirm_password_reset(data: PasswordResetConfirm):
 async def reset_password_page():
     return html_page('reset-password.html')
 
+@app.post('/api/auth/pushok-id/start')
+async def pushok_id_start(data:pushok_identity.Start,request:Request):
+    return pushok_identity.start(data,request)
+
+@app.post('/api/auth/pushok-id/approve')
+async def pushok_id_approve(data:pushok_identity.Approval):
+    return pushok_identity.approve(data)
+
+@app.get('/api/auth/pushok-id/status')
+async def pushok_id_status(request:Request):
+    return pushok_identity.status(request)
+
+@app.post('/api/auth/pushok-id/finish')
+async def pushok_id_finish(data:pushok_identity.Finish,request:Request):
+    async with service.lock:return pushok_identity.finish(data,request)
+
+@app.post('/api/auth/pushok-id/cancel')
+async def pushok_id_cancel(request:Request):
+    return pushok_identity.cancel(request)
+
+@app.post('/api/auth/pushok-id/revoke')
+async def pushok_id_revoke(request:Request,user=Depends(current_user)):
+    return pushok_identity.revoke(request,user)
+
 @app.post('/api/auth/telegram')
 async def tg_login(data: TgAuth):
     tg = telegram_user(data.init_data)
@@ -607,13 +724,13 @@ async def logout(request: Request):
     execute('DELETE FROM sessions WHERE token=?', (digest(request.cookies.get('session', '')),))
     response = JSONResponse({'ok': True})
     response.delete_cookie('session', path=c.COOKIE_PATH)
-    return response
+    return pushok_identity.cancel(request,response)
 
 @app.get('/api/me')
 async def me(user=Depends(current_user)):
     subs = all_rows('SELECT s.id,s.protocol,s.expires,s.state,s.device_limit,s.primary_key_state,s.access_source,(s.rotation_error IS NOT NULL) AS primary_retrying,coalesce(l.enabled,0) AS link_enabled,coalesce(l.follow_rotation,0) AS link_follows_rotation FROM subscriptions s LEFT JOIN subscription_links l ON l.subscription_id=s.id WHERE s.user_id=?', (user['id'],))
     orders = all_rows('SELECT id,protocol,plan,plan_name,days,amount,currency,method,status,created,payment_url,attempts,device_limit,kind,base_amount,discount,promo_code,promo_percent FROM orders WHERE user_id=? ORDER BY created DESC LIMIT 50', (user['id'],))
-    return {'id': user['id'], 'email': user['email'], 'telegram_id': user['telegram_id'], 'can_change_password': bool(user['email'] and user['password']), 'subscriptions': subs, 'orders': [{**row,'progress':order_progress.public(row)} for row in orders], 'referrals':referrals.summary(user)}
+    return {'id': user['id'], 'email': user['email'], 'telegram_id': user['telegram_id'], 'can_change_password': bool(user['email'] and user['password']), 'pushok_id':pushok_identity.own_link(user['id']), 'subscriptions': subs, 'orders': [{**row,'progress':order_progress.public(row)} for row in orders], 'referrals':referrals.summary(user)}
 
 @app.post('/api/referrals/code')
 async def referral_code(user=Depends(current_user)):
@@ -639,16 +756,17 @@ async def referral_policy_update(data: referrals.PolicyUpdate):
 async def purchase(data: Purchase, user=Depends(current_user)):
     if not providers.available(data.protocol, user['id']):
         raise HTTPException(503, 'Этот способ подключения ещё не настроен')
-    method = 'stars' if user['telegram_id'] else c.PAYMENT_MODE
-    if method == 'stars' and (not c.BOT_TOKEN or not shop_settings.terms_configured()):
-        raise HTTPException(503, 'Владелец ещё не настроил оплату и условия продажи в Telegram')
-    if method == 'stars' and not data.accept_terms:
-        raise HTTPException(422, 'Подтвердите согласие с условиями продажи')
-    email = email_address(data.receipt_email) if data.receipt_email else user['email']
-    if method in ('yookassa', 'sbp') and os.getenv('YOOKASSA_RECEIPTS') == 'true' and not email:
-        raise HTTPException(422, 'Укажите email для чека')
     async with service.lock:
+        method = payment_policy.method_for(user)
+        if method == 'stars' and (not c.BOT_TOKEN or not shop_settings.terms_configured()):
+            raise HTTPException(503, 'Владелец ещё не настроил оплату и условия продажи в Telegram')
+        if method == 'stars' and not data.accept_terms:
+            raise HTTPException(422, 'Подтвердите согласие с условиями продажи')
+        email = email_address(data.receipt_email) if data.receipt_email else user['email']
+        if method in ('yookassa', 'sbp') and os.getenv('YOOKASSA_RECEIPTS') == 'true' and not email:
+            raise HTTPException(422, 'Укажите email для чека')
         order = promos.make_order(data,user,method,email)
+        method = order['method']
         if method == 'stars' and order['status']=='pending' and not order['payment_url']:
             try:
                 url = await providers.stars_invoice(order)
@@ -673,7 +791,7 @@ async def order_status(order_id: str, user=Depends(current_user)):
         raise HTTPException(404, 'Заказ не найден')
     return {k: order[k] for k in ('id', 'protocol', 'plan_name', 'days', 'amount', 'currency', 'method', 'status', 'payment_url','device_limit','kind','base_amount','discount','promo_code','promo_percent')} | {
         'progress': order_progress.public(order),
-        'instructions': os.getenv('MANUAL_PAYMENT_TEXT', 'Свяжитесь с поддержкой и сообщите номер заказа.')
+        'instructions': payment_policy.manual_instructions()
         if order['method'] == 'manual' and order['status'] in ('pending','checkout') else ''}
 
 @app.post('/api/payments/yookassa/notify')
@@ -992,6 +1110,15 @@ async def flow_auto_policy_update(data: flow_auto_provision.PolicyUpdate):
     return await flow_auto_provision.update_policy(data)
 
 
+# Public only in the sense that it needs no Shop cookie: every request must
+# carry a valid one-minute signed MTProxy proof, consumed exactly once.
+@app.post('/api/flow/bridge/exchange')
+async def flow_bridge_exchange(data: flow_identity_bridge.ExchangeRequest):
+    async with service.lock:
+        value = flow_identity_bridge.exchange(data.ticket, data.client_id)
+    return JSONResponse(value, headers=flow_identity_bridge.headers())
+
+
 # Shop-session endpoints for accounts that already own WireGuard access.
 # They do not create free subscriptions or accept an MTProxy read-only token.
 @app.get('/api/flow/wireguard/connections')
@@ -1063,20 +1190,29 @@ async def update_server_credentials(sid: str, data: ServerCredentials):
 
 @app.post('/api/admin/servers/{sid}/check', dependencies=[Depends(admin)])
 async def check_server(sid: str):
-    row = one('SELECT * FROM servers WHERE id=?',(sid,))
-    if not row:
-        raise HTTPException(404,'Сервер не найден')
-    try:
-        await providers.probe_server(row)
-        health, error = 'ok', None
-    except Exception:
-        health, error = 'error', 'ProviderCheckFailed'
-    with db() as conn:
-        changed = conn.execute('UPDATE servers SET health=?,checked_at=?,error_code=? WHERE id=? AND version=?',
-            (health,int(time.time()),error,sid,row['version'])).rowcount
-    if not changed:
-        raise HTTPException(409,'Настройки изменились во время проверки. Запустите проверку заново.')
+    await server_routing.probe(sid)
     return next(item for item in servers.list_servers() if item['id']==sid)
+
+
+@app.get('/api/admin/server-routing',dependencies=[Depends(admin)])
+async def routing_report():
+    return server_routing.report()
+
+
+@app.put('/api/admin/server-routing/policy',dependencies=[Depends(admin)])
+async def routing_policy(data:server_routing.PolicyUpdate):
+    return server_routing.update_policy(data)
+
+
+@app.put('/api/admin/server-routing/nodes/{sid}',dependencies=[Depends(admin)])
+async def routing_node(sid:str,data:server_routing.NodeUpdate):
+    return server_routing.update_node(sid,data)
+
+
+@app.get('/api/admin/server-routing/history/{sid}',dependencies=[Depends(admin)])
+async def routing_history(sid:str):
+    return server_routing.history(sid)
+
 
 @app.get('/api/admin/plans', dependencies=[Depends(admin)])
 async def admin_plans():

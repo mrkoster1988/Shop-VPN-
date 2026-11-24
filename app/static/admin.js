@@ -227,6 +227,128 @@ let adsStopRequest=0,adsStopPage=1;
 let adsSitesCache=[],adsPrivateSites=[],adsSitesRequest=0,adsSiteEditor=null,adsSiteMutation=0,adsPlacementIntents=new Map();
 let adsPolicy=null,adsPage=1,adsRequest=0,adsPaymentIntents=new Map();
 let token = '', role = '', authEpoch = 0, usersPage = 1, usersQuery = '', usersRequest = 0, shopSettingsVersion = 0, commerceAnalyticsRequest = 0;
+let delegatedPermissions=new Set(),staffActorId=null,moderationRequest=0,moderationPage=1,rolePolicyRequest=0;
+const STAFF_LABELS={owner:'Разработчик',administrator:'Администратор',moderator:'Модератор',panel_operator:'Оператор панелей',mtproxy_manager:'Менеджер MTProxy',finance:'Финансовый сотрудник',support:'Поддержка'};
+const DELEGATED_ROLES=['administrator','moderator'];
+const LEGACY_GROUPS={panel_operator:['dashboard','customers','orders','servers_read','diagnostics'],support:['dashboard','customers','orders','support','diagnostics'],finance:['dashboard','orders','payments','analytics','advertising','ad_finance'],mtproxy_manager:['advertising','placements']};
+function delegatedRole(){return DELEGATED_ROLES.includes(role);}
+function canGroup(group){
+  return role==='owner' || (delegatedRole()?delegatedPermissions.has(group):(LEGACY_GROUPS[role]||[]).includes(group));
+}
+function acceptStaffRole(result){
+  role=typeof result.role==='string'?result.role:'';
+  if(!Object.hasOwn(STAFF_LABELS,role))throw new Error('Неизвестная роль сотрудника');
+  staffActorId=Number.isSafeInteger(result.id)?result.id:staffActorId;
+  delegatedPermissions=new Set(Array.isArray(result.permissions)?result.permissions.filter(x=>typeof x==='string'):[]);
+}
+const MANAGEMENT_SECTIONS=[
+  ['shop-settings','store_settings','Настройки'],['appearance-section','store_settings','Оформление'],['pushok-id-settings','developer','Pushok ID'],['sales-controls-section','sales_controls','Продажи'],['payment-policy-section','payment_settings','Оплата'],['shop-finance-section','finance_read','Финансы Shop'],['notifications-section','notifications','Уведомления'],['updates-panel','developer','Обновления'],
+  ['bot-menu-panel','bot_menu','Меню Telegram'],['staff-management','developer','Сотрудники'],
+  ['role-policy-section','developer','Полномочия'],['moderation-section','moderation','Модерация'],
+  ['support-admin','support','Поддержка'],['commerce-analytics','analytics','Аналитика'],
+  ['plans-section','catalog','Тарифы'],['users-section','customers','Пользователи'],
+  ['orders-section','orders','Заказы'],['servers-section','servers_read','Серверы'],['server-routing-section','servers_read','Распределение'],
+  ['protocols-panel','servers_read','Протоколы'],['flow-auto-section','starter','Автовыдача'],
+  ['coupons-section','promotions','Промокоды'],['referrals-section','promotions','Бонусы'],
+  ['trial-section','promotions','Пробный доступ'],['ads-requests-section','advertising','Реклама MTProxy'],
+  ['ads-finance-section','ad_finance','Финансы рекламы'],['ads-bookings-section','placements','Брони'],
+  ['ads-stop-section','placements','Остановки'],['ads-sites-section','placements','Площадки'],
+  ['diagnostics-section','diagnostics','Диагностика']
+];
+function renderManagementNav(){
+  $('management-role').textContent=STAFF_LABELS[role]||'Кабинет сотрудника';
+  $('management-scope').textContent=role==='owner'?'Полный доступ к настройкам магазина и сотрудникам.':'Доступ только к назначенным разделам.';
+  const visible=[];
+  for(const [id,group,title] of MANAGEMENT_SECTIONS){
+    const allowed=canGroup(group);
+    $(id).hidden=!allowed;
+    if(allowed)visible.push('<a href="#'+id+'">'+esc(title)+'</a>');
+  }
+  $('management-nav').innerHTML=visible.join('')||'<span>Нет назначенных разделов</span>';
+  $('new-server').hidden=delegatedRole();
+}
+async function refreshModeration(){
+  const seq=++moderationRequest,epoch=authEpoch;
+  if(!canGroup('moderation')){$('moderation-section').hidden=true;$('moderation-list').replaceChildren();return;}
+  $('moderation-section').hidden=false;
+  try{
+    const filter=$('moderation-state').value||'pending';
+    const data=await api('moderation/requests?page='+moderationPage+'&state='+encodeURIComponent(filter));
+    if(seq!==moderationRequest||epoch!==authEpoch||!canGroup('moderation'))return;
+    const labels={pending:'На модерации',approved:'Одобрено',rejected:'Отклонено',canceled:'Отменено'};
+    $('moderation-list').innerHTML=data.requests.map(r=>'<article class="admin-order"><h3>'+esc('@'+r.channel)+'</h3><p>'+esc(labels[r.state]||r.state)+'</p><p>'+esc(r.comment||'')+'</p><p>'+esc(r.reason||'')+'</p>'+
+      (r.state==='pending'?'<form data-moderation-id="'+esc(r.id)+'" data-version="'+r.version+'"><label>Решение<select name="state"><option value="approved">Одобрить</option><option value="rejected">Отклонить</option></select></label><label>Причина<textarea name="reason" maxlength="500"></textarea></label><button type="submit" class="small">Сохранить решение</button></form>':'')+'</article>').join('')||'<p>Заявок нет.</p>';
+    $('moderation-page').textContent='Страница '+data.page+' · всего '+data.total;
+    $('moderation-prev').disabled=data.page<=1;$('moderation-next').disabled=data.page*data.page_size>=data.total;
+    $('moderation-status').textContent='';
+  }catch(e){if(seq===moderationRequest&&epoch===authEpoch){$('moderation-list').replaceChildren();$('moderation-status').textContent=e.message;}}
+}
+$('moderation-refresh').onclick=()=>refreshModeration();
+$('moderation-state').onchange=()=>{moderationPage=1;return refreshModeration();};
+$('moderation-prev').onclick=()=>{if(moderationPage>1){moderationPage--;return refreshModeration();}};
+$('moderation-next').onclick=()=>{if(!$('moderation-next').disabled){moderationPage++;return refreshModeration();}};
+$('moderation-list').onsubmit=async event=>{
+  event.preventDefault();const f=event.target.closest('[data-moderation-id]');if(!f||!canGroup('moderation'))return;
+  const values=new FormData(f),epoch=authEpoch,seq=moderationRequest,button=f.querySelector('button');
+  if(button.disabled)return;button.disabled=true;
+  try{await api('moderation/requests/'+encodeURIComponent(f.dataset.moderationId),{method:'PUT',data:{version:Number(f.dataset.version),state:values.get('state'),reason:String(values.get('reason')||'')}});
+    if(epoch===authEpoch&&seq===moderationRequest&&canGroup('moderation'))await refreshModeration();
+  }catch(e){if(epoch===authEpoch&&seq===moderationRequest)$('moderation-status').textContent=e.message;}
+  finally{button.disabled=false;}
+};
+async function refreshRolePolicies(){
+  const seq=++rolePolicyRequest,epoch=authEpoch;
+  if(role!=='owner'){$('role-policy-section').hidden=true;$('role-policy-list').replaceChildren();return;}
+  $('role-policy-section').hidden=false;
+  try{
+    const data=await api('role-policies');
+    if(seq!==rolePolicyRequest||epoch!==authEpoch||role!=='owner')return;
+    $('role-policy-list').innerHTML=data.roles.map(p=>'<form class="plan-editor" data-role-policy="'+esc(p.role)+'" data-version="'+p.version+'"><h3>'+esc(STAFF_LABELS[p.role]||p.role)+'</h3><div class="permission-grid">'+p.allowed.map(key=>'<label class="permission-choice"><input type="checkbox" name="permissions" value="'+esc(key)+'" '+(p.permissions.includes(key)?'checked':'')+'>'+esc(data.labels[key]||key)+'</label>').join('')+'</div><button class="small" type="submit">Сохранить полномочия</button></form>').join('');
+    $('role-policy-status').textContent='';
+  }catch(e){if(seq===rolePolicyRequest&&epoch===authEpoch)$('role-policy-status').textContent=e.message;}
+}
+$('role-policy-list').onsubmit=async event=>{
+  event.preventDefault();const f=event.target.closest('[data-role-policy]');if(!f||role!=='owner')return;
+  const data=new FormData(f),epoch=authEpoch,button=f.querySelector('button');if(button.disabled)return;button.disabled=true;
+  try{await api('role-policies/'+encodeURIComponent(f.dataset.rolePolicy),{method:'PUT',data:{version:Number(f.dataset.version),permissions:data.getAll('permissions')}});
+    if(epoch===authEpoch&&role==='owner'){await refreshRolePolicies();$('role-policy-status').textContent='Полномочия сохранены.';}
+  }catch(e){if(epoch===authEpoch)$('role-policy-status').textContent=e.message;}finally{button.disabled=false;}
+};
+function clearManagement(){
+  delegatedPermissions.clear();staffActorId=null;moderationRequest++;rolePolicyRequest++;moderationPage=1;
+  for(const id of ['management-nav','management-role','management-scope','moderation-list','moderation-status','moderation-page','role-policy-list','role-policy-status'])$(id).replaceChildren();
+  $('moderation-state').value='pending';$('moderation-section').hidden=true;$('role-policy-section').hidden=true;
+}
+async function refreshDelegated({plans=true}={}){
+  const epoch=authEpoch;
+  const identity=await api('auth/me');
+  if(epoch!==authEpoch)return;
+  acceptStaffRole(identity);
+  if(!delegatedRole())throw new Error('Роль изменилась. Войдите заново.');
+  renderManagementNav();
+  $('stats').replaceChildren();
+  const tasks=[];
+  if(canGroup('dashboard'))tasks.push(api('dashboard-summary').then(data=>{if(epoch===authEpoch)$('stats').innerHTML='<div>Пользователи<strong>'+esc(data.users)+'</strong></div><div>Подписки<strong>'+esc(data.active)+'</strong></div><div>Заказы в работе<strong>'+esc(data.pending_orders)+'</strong></div>';}));
+  if(canGroup('catalog')&&plans)tasks.push(api('plans').then(data=>{if(epoch===authEpoch)$('plan-editors').innerHTML=data.plans.map(planForm).join('');}));
+  if(canGroup('orders'))tasks.push(refreshOrders());
+  if(canGroup('customers'))tasks.push(refreshUsers());
+  if(canGroup('servers_read'))tasks.push(refreshServers(),refreshProtocols(),refreshRouting());else clearRouting();
+  if(canGroup('promotions'))tasks.push(refreshTrialPolicy(),refreshCoupons(),refreshReferralPolicy());
+  if(canGroup('starter'))tasks.push(refreshFlowAutoPolicy());
+  if(canGroup('moderation'))tasks.push(refreshModeration());
+  if(canGroup('support'))tasks.push(refreshSupportAdmin());
+  if(canGroup('store_settings'))tasks.push(refreshShopSettings(),refreshRuntime('appearance'));
+  if(canGroup('sales_controls'))tasks.push(refreshRuntime('sales'));
+  if(canGroup('notifications'))tasks.push(refreshRuntime('notifications'));
+  if(canGroup('payment_settings'))tasks.push(refreshPaymentPolicy());else clearPaymentPolicy();
+  if(canGroup('finance_read'))tasks.push(refreshShopFinance());else clearShopFinance();
+  if(canGroup('bot_menu'))tasks.push(refreshBotMenu());
+  if(canGroup('analytics'))tasks.push(refreshCommerceAnalytics());
+  if(canGroup('diagnostics'))tasks.push(refreshDiagnostics());
+  await Promise.all(tasks);
+  if(epoch===authEpoch)renderManagementNav();
+}
+
 let selectedUser = null, profilePage = 1, profileRequest = 0;
 let serverCache = [], editingServer = null;
 let serverWizardStep = 3, serverDialogEpoch = 0, serverSubmitting = false;
@@ -265,7 +387,7 @@ function renderProtocols() {
 }
 async function refreshProtocols() {
   const section = $('protocols-panel'), epoch = authEpoch, request = ++protocolsRequest;
-  if (!['owner', 'panel_operator'].includes(role)) {
+  if (!canGroup('servers_read')) {
     section.hidden = true; protocolCache = []; $('protocols-list').replaceChildren();
     $('protocols-status').textContent = ''; return;
   }
@@ -301,7 +423,7 @@ function planForm(plan) {
   </form>`;
 }
 async function refreshShopSettings(){
- const section=$('shop-settings');if(role!=='owner'){section.hidden=true;return}section.hidden=false;
+ const section=$('shop-settings');if(!canGroup('store_settings')){section.hidden=true;return}section.hidden=false;
  try{
   const data=await api('shop-settings');shopSettingsVersion=data.version;
   $('shop-support-text').value=data.support_text;$('shop-terms-text').value=data.terms_text;
@@ -318,6 +440,325 @@ $('shop-settings-form').onsubmit=async event=>{
  }catch(error){$('shop-settings-status').textContent=error.message}
  finally{button.disabled=false}
 };
+// Независимые версии формы: сохраняем только выбранный раздел.
+const RUNTIME_GROUPS={
+ appearance:{permission:'store_settings',fields:{brand_name:'text',headline:'text',description:'text',announcement:'text',theme:'text'}},
+ sales:{permission:'sales_controls',fields:{new_sales:'bool',renewals:'bool',web_sales:'bool',telegram_sales:'bool',enabled_protocols:'protocols',closed_notice:'text'}},
+ notifications:{permission:'notifications',fields:{order_ready_enabled:'bool',expiry_enabled:'bool',expiry_hours:'number',purchase_text:'text',trial_text:'text',bonus_text:'text',expiry_text:'text'}}
+};
+const RUNTIME_PROTOCOLS=['xui','wg','vmess','hysteria2','tuic'];
+const runtimeState={},runtimeSeq={},runtimeBusy={};
+function runtimeControl(key){return $('runtime-'+key);}
+function runtimeFields(group,callback){
+ for(const [key,type] of Object.entries(RUNTIME_GROUPS[group].fields)){
+  if(type==='protocols')for(const protocol of RUNTIME_PROTOCOLS)callback(runtimeControl('protocol-'+protocol),key,type,protocol);
+  else callback(runtimeControl(key),key,type);
+ }
+}
+function runtimeControls(group,disabled){
+ runtimeFields(group,element=>{element.disabled=disabled;});
+ $('runtime-'+group+'-save').disabled=disabled;
+}
+function clearRuntimeGroup(group){
+ runtimeSeq[group]=(runtimeSeq[group]||0)+1;runtimeState[group]=null;runtimeBusy[group]=false;
+ runtimeFields(group,(el,key,type)=>{if(type==='bool'||type==='protocols')el.checked=false;else el.value='';});
+ runtimeControls(group,true);$('runtime-'+group+'-status').textContent='';
+}
+function clearRuntime(){for(const group of Object.keys(RUNTIME_GROUPS))clearRuntimeGroup(group);}
+function applyRuntime(group,data){
+ if(!Number.isInteger(data.version)||data.version<0)throw new Error('Не удалось прочитать версию настроек');
+ for(const [key,type] of Object.entries(RUNTIME_GROUPS[group].fields)){
+  const value=data[key];
+  if(type==='protocols'?!Array.isArray(value):type==='bool'?typeof value!=='boolean':type==='number'?!Number.isInteger(value):typeof value!=='string')throw new Error('Не удалось прочитать настройки');
+ }
+ runtimeFields(group,(el,key,type,protocol)=>{
+  if(type==='protocols')el.checked=data[key].includes(protocol);
+  else if(type==='bool')el.checked=data[key];
+  else el.value=String(data[key]);
+ });
+ runtimeState[group]={version:data.version};
+ runtimeControls(group,false);
+}
+async function refreshRuntime(group){
+ const def=RUNTIME_GROUPS[group];
+ if(!def||!canGroup(def.permission)){if(def)clearRuntimeGroup(group);return;}
+ if(runtimeBusy[group])return;
+ const seq=runtimeSeq[group]=(runtimeSeq[group]||0)+1,epoch=authEpoch;
+ runtimeState[group]=null;runtimeControls(group,true);
+ $('runtime-'+group+'-status').textContent='Загрузка…';
+ try{
+  const data=await api('runtime/'+group);
+  if(seq!==runtimeSeq[group]||epoch!==authEpoch||!canGroup(def.permission))return;
+  applyRuntime(group,data);
+  $('runtime-'+group+'-status').textContent='Настройки загружены. Версия '+data.version+'.';
+ }catch(e){if(seq===runtimeSeq[group]&&epoch===authEpoch)$('runtime-'+group+'-status').textContent=e.message;}
+}
+function runtimePayload(group){
+ const payload={version:runtimeState[group].version};
+ for(const [key,type] of Object.entries(RUNTIME_GROUPS[group].fields)){
+  if(type==='protocols')payload[key]=RUNTIME_PROTOCOLS.filter(p=>runtimeControl('protocol-'+p).checked);
+  else if(type==='bool')payload[key]=runtimeControl(key).checked;
+  else if(type==='number')payload[key]=Number(runtimeControl(key).value);
+  else payload[key]=runtimeControl(key).value;
+ }
+ return payload;
+}
+async function saveRuntime(group){
+ const def=RUNTIME_GROUPS[group];
+ if(!def||!canGroup(def.permission)||!runtimeState[group]||runtimeBusy[group])return;
+ const payload=runtimePayload(group),epoch=authEpoch,seq=runtimeSeq[group]=(runtimeSeq[group]||0)+1;
+ runtimeBusy[group]=true;runtimeState[group]=null;runtimeControls(group,true);
+ try{
+  const data=await api('runtime/'+group,{method:'PUT',data:payload});
+  if(seq!==runtimeSeq[group]||epoch!==authEpoch||!canGroup(def.permission))return;
+  applyRuntime(group,data);
+  $('runtime-'+group+'-status').textContent='Сохранено. Версия '+data.version+'.';
+ }catch(e){
+  if(seq===runtimeSeq[group]&&epoch===authEpoch)$('runtime-'+group+'-status').textContent=e.message+' Обновите настройки перед повтором.';
+ }finally{if(seq===runtimeSeq[group]&&epoch===authEpoch)runtimeBusy[group]=false;}
+}
+for(const group of Object.keys(RUNTIME_GROUPS)){
+ $('runtime-'+group+'-form').onsubmit=event=>{event.preventDefault();return saveRuntime(group);};
+ $('runtime-'+group+'-refresh').onclick=()=>refreshRuntime(group);
+}
+
+// Платёжная конфигурация не хранит ключи и не изменяет открытые счета.
+let paymentPolicyVersion=null,paymentPolicySeq=0,paymentPolicyBusy=false;
+function clearPaymentPolicy(){
+ paymentPolicySeq++;paymentPolicyVersion=null;paymentPolicyBusy=false;
+ for(const id of ['shop-payment-mode','shop-payment-manual'])$(id).value='';
+ for(const id of ['shop-payment-web','shop-payment-stars'])$(id).checked=false;
+ for(const id of ['shop-payment-readiness','shop-payment-status'])$(id).textContent='';
+ $('shop-payment-save').disabled=true;
+}
+function renderPaymentPolicy(data){
+ if(!Number.isSafeInteger(data.version)||data.version<0||!['inherit','manual','sbp','yookassa'].includes(data.web_mode))throw new Error('Не удалось прочитать политику оплаты');
+ paymentPolicyVersion=data.version;
+ $('shop-payment-mode').value=data.web_mode;$('shop-payment-web').checked=data.web_enabled===true;
+ $('shop-payment-stars').checked=data.stars_enabled===true;$('shop-payment-manual').value=data.manual_text;
+ $('shop-payment-readiness').textContent='Текущий метод: '+data.effective_web_mode+' · Незакрытые счета: '+data.open_web_orders+
+ ' · ЮKassa/СБП (локальные реквизиты и HTTPS): '+(data.merchant_configured?'настроены':'не настроены')+
+ ' · Telegram-бот: '+(data.stars_bot_configured?'настроен':'не настроен')+'. Реальные платежи требуют проверки.';
+ $('shop-payment-save').disabled=false;
+}
+async function refreshPaymentPolicy(){
+ if(!canGroup('payment_settings')){clearPaymentPolicy();return;}
+ if(paymentPolicyBusy)return;
+ const seq=++paymentPolicySeq,epoch=authEpoch;paymentPolicyVersion=null;$('shop-payment-save').disabled=true;
+ try{const data=await api('payment-policy');if(seq===paymentPolicySeq&&epoch===authEpoch&&canGroup('payment_settings')){renderPaymentPolicy(data);$('shop-payment-status').textContent='';}}
+ catch(e){if(seq===paymentPolicySeq&&epoch===authEpoch)$('shop-payment-status').textContent=e.message;}
+}
+$('shop-payment-refresh').onclick=refreshPaymentPolicy;
+$('shop-payment-form').onsubmit=async event=>{
+ event.preventDefault();if(!canGroup('payment_settings')||paymentPolicyVersion===null||paymentPolicyBusy)return;
+ const data={version:paymentPolicyVersion,web_mode:$('shop-payment-mode').value,web_enabled:$('shop-payment-web').checked,stars_enabled:$('shop-payment-stars').checked,manual_text:$('shop-payment-manual').value};
+ const epoch=authEpoch,seq=++paymentPolicySeq;paymentPolicyBusy=true;paymentPolicyVersion=null;$('shop-payment-save').disabled=true;
+ try{const result=await api('payment-policy',{method:'PUT',data});if(epoch===authEpoch&&seq===paymentPolicySeq&&canGroup('payment_settings')){renderPaymentPolicy(result);$('shop-payment-status').textContent='Сохранено.';}}
+ catch(e){if(epoch===authEpoch&&seq===paymentPolicySeq)$('shop-payment-status').textContent=e.message+' Обновите настройки перед повтором.';}
+ finally{if(epoch===authEpoch&&seq===paymentPolicySeq)paymentPolicyBusy=false;}
+};
+
+let shopFinanceSeq=0,shopFinancePage=1,shopFinanceBusy=false,shopFinanceIntent=null,shopFinanceVoidIntents=new Map(),shopFinanceRows=[];
+const financeLabels={expense:'Расход',fee:'Комиссия',refund:'Возврат',server:'Серверы',commission:'Комиссии',marketing:'Маркетинг',tax:'Налоги',other:'Прочее'};
+function financeMoney(amount,currency){
+ return currency==='RUB'?(amount/100).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+' ₽':Number(amount).toLocaleString('ru-RU')+' ★';
+}
+function parseFinanceAmount(raw,currency){
+ const value=String(raw).trim().replace(',','.');
+ if(currency==='XTR'){if(!/^\d{1,11}$/.test(value))return null;const n=Number(value);return n>0&&n<=10000000000?n:null;}
+ const match=/^(\d{1,9})(?:\.(\d{1,2}))?$/.exec(value);
+ if(!match)return null;const n=Number(match[1])*100+Number((match[2]||'').padEnd(2,'0'));return n>0&&n<=10000000000?n:null;
+}
+function clearShopFinance(){
+ shopFinanceSeq++;shopFinancePage=1;shopFinanceBusy=false;shopFinanceIntent=null;shopFinanceVoidIntents.clear();shopFinanceRows=[];
+ for(const id of ['shop-finance-summary','shop-finance-coverage','shop-finance-methods','shop-finance-status','shop-finance-list','shop-finance-page'])$(id).replaceChildren();
+ for(const id of ['shop-finance-start','shop-finance-end','shop-finance-amount','shop-finance-date','shop-finance-order','shop-finance-reference','shop-finance-note'])$(id).value='';
+ $('shop-finance-verified').checked=false;$('shop-finance-kind').value='expense';$('shop-finance-category').value='server';$('shop-finance-currency').value='RUB';$('shop-finance-save').disabled=false;
+ $('shop-finance-prev').disabled=true;$('shop-finance-next').disabled=true;$('shop-finance-entry-form').hidden=true;
+}
+function shopFinanceKind(){
+ const kind=$('shop-finance-kind').value;
+ if(kind==='fee')$('shop-finance-category').value='commission';
+ else if(kind==='refund')$('shop-finance-category').value='refund';
+ else if(['commission','refund'].includes($('shop-finance-category').value))$('shop-finance-category').value='server';
+ $('shop-finance-category').disabled=kind!=='expense';
+ $('shop-finance-order').required=kind==='refund';
+}
+$('shop-finance-kind').onchange=shopFinanceKind;
+async function refreshShopFinance(){
+ if(!canGroup('finance_read')){clearShopFinance();return;}
+ const seq=++shopFinanceSeq,epoch=authEpoch;
+ $('shop-finance-entry-form').hidden=!canGroup('finance_write');
+ try{
+  const query=new URLSearchParams({page:String(shopFinancePage)});
+  const start=$('shop-finance-start').value,end=$('shop-finance-end').value;
+  if(Boolean(start)!==Boolean(end))throw new Error('Укажите обе границы периода');
+  if(start){const a=expenseDate(start),b=expenseDate(end);if(a===null||b===null||a>=b)throw new Error('Проверьте период');query.set('start',String(a));query.set('end',String(b));}
+  const data=await api('shop-finance?'+query);
+  if(seq!==shopFinanceSeq||epoch!==authEpoch||!canGroup('finance_read'))return;
+  shopFinanceRows=data.entries;
+  $('shop-finance-summary').innerHTML=['RUB','XTR'].map(currency=>{
+    const t=data.totals[currency],label=currency==='RUB'?'Рубли':'Stars';
+    return '<article class="admin-order"><h3>'+label+'</h3>'+[['Поступления',t.receipts],['Возвраты',t.refunds],['Комиссии',t.fees],['Расходы',t.expenses],['Разница учтённых сумм',t.net_recorded]].map(([name,n])=>'<p>'+name+': <b>'+esc(financeMoney(n,currency))+'</b></p>').join('')+'</article>';
+  }).join('');
+  $('shop-finance-coverage').textContent='Период '+dateTime(data.period.start)+' — '+dateTime(data.period.end)+'. Старых оплаченных заказов без даты подтверждения: '+data.missing_payment_timestamp+' (не включены в сумму периода).';
+  $('shop-finance-methods').textContent=data.receipts_by_method.map(r=>r.method+': '+financeMoney(r.amount_minor,r.currency)+' ('+r.count+' заказов)').join(' · ');
+  $('shop-finance-list').innerHTML=data.entries.map(e=>'<article class="admin-order"><h3>'+esc(financeLabels[e.kind]||e.kind)+' · '+esc(financeMoney(e.amount_minor,e.currency))+'</h3><p>'+esc(dateTime(e.occurred_at))+' · '+esc(e.reference)+' · '+(e.state==='void'?'Аннулирована в учёте':'Учтена')+'</p><p>'+esc(e.note)+'</p>'+(e.order_id?'<p>Заказ: '+esc(e.order_id)+'</p>':'')+(e.void_reason?'<p>Исправление: '+esc(e.void_reason)+'</p>':'')+(e.state==='recorded'&&canGroup('finance_write')?'<form data-finance-void="'+esc(e.id)+'"><label>Причина исправления<input name="note" maxlength="500" required></label><button type="submit" class="small secondary">Аннулировать запись</button></form>':'')+'</article>').join('')||'<p>Нет записей за период.</p>';
+  $('shop-finance-page').textContent='Страница '+data.page+' · всего '+data.total;
+  $('shop-finance-prev').disabled=data.page<=1;$('shop-finance-next').disabled=data.page*data.page_size>=data.total;
+  $('shop-finance-status').textContent='';
+ }catch(e){if(seq===shopFinanceSeq&&epoch===authEpoch){shopFinanceRows=[];for(const id of ['shop-finance-summary','shop-finance-coverage','shop-finance-methods','shop-finance-list'])$(id).replaceChildren();$('shop-finance-status').textContent=e.message;}}
+}
+$('shop-finance-filter').onsubmit=event=>{event.preventDefault();shopFinancePage=1;return refreshShopFinance();};
+$('shop-finance-prev').onclick=()=>{if(shopFinancePage>1){shopFinancePage--;return refreshShopFinance();}};
+$('shop-finance-next').onclick=()=>{if(!$('shop-finance-next').disabled){shopFinancePage++;return refreshShopFinance();}};
+$('shop-finance-entry-form').onsubmit=async event=>{
+ event.preventDefault();if(!canGroup('finance_write')||shopFinanceBusy)return;
+ const kind=$('shop-finance-kind').value||'expense',currency=$('shop-finance-currency').value||'RUB';
+ const amount=parseFinanceAmount($('shop-finance-amount').value,currency),occurred_at=expenseDate($('shop-finance-date').value);
+ if(amount===null||occurred_at===null||!$('shop-finance-verified').checked){$('shop-finance-status').textContent='Проверьте сумму, дату и подтверждение сверки.';return;}
+ const payload={kind,category:kind==='fee'?'commission':kind==='refund'?'refund':$('shop-finance-category').value,currency,amount_minor:amount,occurred_at,order_id:$('shop-finance-order').value.trim()||null,reference:$('shop-finance-reference').value.trim(),note:$('shop-finance-note').value.trim(),verified:true};
+ const signature=JSON.stringify(payload);
+ if(!shopFinanceIntent||shopFinanceIntent.signature!==signature)shopFinanceIntent={signature,id:crypto.randomUUID()};
+ const intent=shopFinanceIntent,epoch=authEpoch;
+ shopFinanceBusy=true;$('shop-finance-save').disabled=true;
+ try{
+  await api('shop-finance/entries',{method:'POST',data:{...payload,operation_id:intent.id}});
+  if(epoch!==authEpoch||!canGroup('finance_write'))return;
+  shopFinanceIntent=null;event.target.reset();shopFinanceKind();$('shop-finance-verified').checked=false;
+  await refreshShopFinance();if(epoch===authEpoch)$('shop-finance-status').textContent='Операция учтена. Денежный перевод не выполнялся.';
+ }catch(e){if(epoch===authEpoch)$('shop-finance-status').textContent=e.message+' При повторе без изменений используется прежний идентификатор.';}
+ finally{if(epoch===authEpoch){shopFinanceBusy=false;$('shop-finance-save').disabled=false;}}
+};
+$('shop-finance-list').onsubmit=async event=>{
+ event.preventDefault();if(!canGroup('finance_write')||shopFinanceBusy)return;
+ const form=event.target.closest('[data-finance-void]');if(!form)return;
+ const entry=shopFinanceRows.find(e=>e.id===form.dataset.financeVoid);if(!entry||entry.state!=='recorded')return;
+ const note=String(new FormData(form).get('note')||'').trim();if(!note)return;
+ if(!confirm('Аннулировать только ошибочную запись учёта? Деньги и подписка не изменятся.'))return;
+ const sig=JSON.stringify([entry.version,note]);let intent=shopFinanceVoidIntents.get(entry.id);
+ if(!intent||intent.sig!==sig){intent={sig,id:crypto.randomUUID()};shopFinanceVoidIntents.set(entry.id,intent);}
+ const epoch=authEpoch;shopFinanceBusy=true;
+ try{await api('shop-finance/entries/'+encodeURIComponent(entry.id)+'/void',{method:'POST',data:{operation_id:intent.id,version:entry.version,note}});if(epoch===authEpoch){shopFinanceVoidIntents.delete(entry.id);await refreshShopFinance();}}
+ catch(e){if(epoch===authEpoch)$('shop-finance-status').textContent=e.message;}
+ finally{if(epoch===authEpoch)shopFinanceBusy=false;}
+};
+
+// Распределение и наблюдение не редактируют секреты или привязки действующих подписок.
+let routingSeq=0,routingState=null,routingBusy=false,routingHistorySeq=0;
+const routingReasons={not_active:'Узел не активен',new_assignments_paused:'Новые назначения приостановлены',api_error:'Ошибка API',capacity:'Лимит заполнен',stale_check:'Нет свежей успешной проверки',reserve_disabled:'Резерв отключён политикой'};
+function clearRoutingHistory(){
+ routingHistorySeq++;$('routing-history-panel').hidden=true;
+ $('routing-history-list').replaceChildren();$('routing-history-title').textContent='История проверок';
+}
+function clearRouting(){
+ routingSeq++;routingState=null;routingBusy=false;clearRoutingHistory();
+ $('routing-summary').textContent='';$('routing-status').textContent='';$('routing-nodes').replaceChildren();
+ for(const id of ['routing-strategy','routing-max-age','routing-monitor-interval','routing-monitor-batch'])$(id).value='';
+ for(const id of ['routing-reserve-enabled','routing-require-recent','routing-monitor-enabled'])$(id).checked=false;
+ $('server-routing-policy').hidden=true;$('routing-policy-save').disabled=true;
+}
+function renderRouting(data){
+ const p=data.policy;
+ if(!Number.isSafeInteger(p?.version)||!Array.isArray(data.nodes)||!data.next_assignment)throw new Error('Не удалось прочитать правила');
+ routingState=data;const edit=canGroup('server_routing');
+ $('server-routing-policy').hidden=!edit;
+ $('routing-strategy').value=p.strategy;$('routing-reserve-enabled').checked=p.reserve_enabled===true;
+ $('routing-require-recent').checked=p.require_recent===true;$('routing-max-age').value=String(p.max_age_minutes);
+ $('routing-monitor-enabled').checked=p.monitor_enabled===true;$('routing-monitor-interval').value=String(p.monitor_interval_minutes);
+ $('routing-monitor-batch').value=String(p.monitor_batch);$('routing-policy-save').disabled=!edit;
+ const names=new Map(data.nodes.map(n=>[n.id,n.name]));
+ const choice=Object.entries(data.next_assignment).map(([proto,id])=>protocolLabel(proto)+': '+(id?names.get(id)||'Узел':'нет свободного узла')).join(' · ');
+ $('routing-summary').textContent=(p.monitor_enabled?'Автомониторинг включён':'Автомониторинг выключен')+'. Следующее назначение по текущему снимку: '+choice+'.';
+ $('routing-nodes').innerHTML=data.nodes.map(n=>{
+  const load=n.capacity>0?Math.min(100,Math.round(n.occupied*100/n.capacity)):null;
+  const last=n.last_probe?' · '+esc(n.last_probe.duration_ms)+' мс (API, '+(n.last_probe.source==='automatic'?'авто':'вручную')+')':'';
+  const status=n.blocked_reason?routingReasons[n.blocked_reason]||n.blocked_reason:'Подходит для нового назначения';
+  const settings=edit?'<form data-routing-node="'+esc(n.id)+'"><label>Приоритет (0–1000, выше — раньше)<input name="priority" type="number" min="0" max="1000" step="1" required value="'+esc(n.priority)+'"></label><label class="permission-choice"><input name="reserve" type="checkbox" '+(n.reserve?'checked':'')+'> Резервный узел</label><label class="permission-choice"><input name="accept_new" type="checkbox" '+(n.accept_new?'checked':'')+'> Разрешать новые привязки</label><button type="submit" class="small">Сохранить распределение</button></form>':'';
+  return '<article class="admin-order"><h3>'+esc(n.name)+'</h3><p>'+esc(protocolLabel(n.protocol))+' · '+esc(n.location||'')+' · '+(n.reserve?'Резерв':'Основной')+'</p><p>Приоритет: '+esc(n.priority)+' · '+esc(status)+'</p><p>Слоты: '+esc(n.occupied)+' / '+esc(n.capacity||'без лимита')+(load===null?'':' · '+load+'%')+'</p>'+(load===null?'':'<progress max="100" value="'+load+'" aria-label="Занятость подписок"></progress>')+'<p>API: '+esc(n.health)+' · '+esc(dateTime(n.checked_at))+last+'</p>'+settings+'<button type="button" class="small secondary" data-routing-history="'+esc(n.id)+'">История API</button></article>';
+ }).join('')||'<p>Серверы ещё не добавлены.</p>';
+}
+async function refreshRouting(){
+ if(!canGroup('servers_read')){clearRouting();return;}
+ const seq=++routingSeq,epoch=authEpoch;
+ routingState=null;$('routing-policy-save').disabled=true;$('routing-nodes').replaceChildren();
+ try{const data=await api('server-routing');if(seq===routingSeq&&epoch===authEpoch&&canGroup('servers_read')){renderRouting(data);$('routing-status').textContent='';}}
+ catch(e){if(seq===routingSeq&&epoch===authEpoch){$('routing-summary').textContent='';$('routing-status').textContent=e.message;}}
+}
+$('routing-refresh').onclick=()=>{if(!routingBusy)return refreshRouting();};
+async function changeRouting(path,data){
+ if(routingBusy||!routingState||!canGroup('server_routing'))return;
+ const epoch=authEpoch,seq=routingSeq;routingBusy=true;$('routing-policy-save').disabled=true;
+ try{
+  await api(path,{method:'PUT',data});
+  if(epoch!==authEpoch||seq!==routingSeq||!canGroup('servers_read'))return;
+  await refreshRouting();if(epoch===authEpoch&&canGroup('servers_read')&&routingState)$('routing-status').textContent='Правила сохранены.';
+ }catch(e){if(epoch===authEpoch&&seq===routingSeq){routingState=null;$('routing-nodes').replaceChildren();$('routing-status').textContent=e.message+' Обновите список перед повтором.';}}
+ finally{if(epoch===authEpoch)routingBusy=false;}
+}
+$('server-routing-policy').onsubmit=event=>{
+ event.preventDefault();if(!routingState)return;
+ return changeRouting('server-routing/policy',{version:routingState.policy.version,strategy:$('routing-strategy').value,
+ reserve_enabled:$('routing-reserve-enabled').checked,require_recent:$('routing-require-recent').checked,
+ max_age_minutes:Number($('routing-max-age').value),monitor_enabled:$('routing-monitor-enabled').checked,
+ monitor_interval_minutes:Number($('routing-monitor-interval').value),monitor_batch:Number($('routing-monitor-batch').value)});
+};
+$('routing-nodes').onsubmit=event=>{
+ event.preventDefault();if(!routingState||!canGroup('server_routing')||routingBusy)return;
+ const form=event.target.closest('[data-routing-node]');if(!form)return;
+ const row=routingState.nodes.find(n=>n.id===form.dataset.routingNode);if(!row)return;
+ const values=new FormData(form);
+ return changeRouting('server-routing/nodes/'+encodeURIComponent(row.id),{version:row.routing_version,
+ server_version:row.version,priority:Number(values.get('priority')),reserve:values.has('reserve'),accept_new:values.has('accept_new')});
+};
+async function openRoutingHistory(id){
+ if(!routingState||!canGroup('servers_read'))return;
+ const node=routingState.nodes.find(n=>n.id===id);if(!node)return;
+ clearRoutingHistory();const seq=routingHistorySeq,epoch=authEpoch;
+ $('routing-history-panel').hidden=false;$('routing-history-title').textContent='История API · '+node.name;
+ try{
+  const data=await api('server-routing/history/'+encodeURIComponent(id));
+  if(seq!==routingHistorySeq||epoch!==authEpoch||!canGroup('servers_read'))return;
+  $('routing-history-list').innerHTML=data.checks.map(r=>'<p>'+esc(dateTime(r.checked_at))+' · '+(r.status==='ok'?'Доступен':'Ошибка')+' · '+esc(r.duration_ms)+' мс · '+(r.source==='automatic'?'Авто':'Вручную')+' · конфигурация v'+esc(r.server_version)+'</p>').join('')||'<p>Проверок пока нет.</p>';
+ }catch(e){if(seq===routingHistorySeq&&epoch===authEpoch)$('routing-history-list').textContent=e.message;}
+}
+$('routing-nodes').onclick=event=>{
+ const button=event.target.closest('[data-routing-history]');if(button)return openRoutingHistory(button.dataset.routingHistory);
+};
+$('routing-history-close').onclick=clearRoutingHistory;
+
+// Интеграционные ключи и запуск доверенной авторизации — только разработчик.
+let idPolicySeq=0,idPolicyVersion=null,idPolicyBusy=false;
+function clearIdPolicy(){
+ idPolicySeq++;idPolicyVersion=null;idPolicyBusy=false;
+ $('id-policy-enabled').checked=false;$('id-policy-registration').checked=false;
+ $('id-policy-readiness').textContent='';$('id-policy-status').textContent='';$('id-policy-save').disabled=true;
+}
+function renderIdPolicy(data){
+ if(!Number.isSafeInteger(data.version)||data.version<0)throw new Error('Не удалось прочитать версию');
+ idPolicyVersion=data.version;
+ $('id-policy-enabled').checked=data.enabled===true;$('id-policy-registration').checked=data.allow_new_accounts===true;
+ $('id-policy-readiness').textContent='Локальная конфигурация: '+(data.configured?'настроена':'не настроена')+' · Связано: '+data.linked_accounts+
+ ' · Ожидающие запросы: '+data.pending_requests+' · Сеансы: '+data.active_id_sessions+
+ ' · Срок Shop-сеанса: '+Math.floor(data.session_ttl/60)+' мин. · Общий кошелёк не подключён. Центральный issuer требует отдельной проверки.'+(data.reapproval_required?' Конфигурация изменилась. Сохраните настройки после проверки новой пары ключей; прежние ID-сеансы будут отозваны.':'');
+ $('id-policy-save').disabled=false;
+}
+async function refreshIdPolicy(){
+ if(role!=='owner'){clearIdPolicy();return;}
+ if(idPolicyBusy)return;const seq=++idPolicySeq,epoch=authEpoch;idPolicyVersion=null;$('id-policy-save').disabled=true;
+ try{const data=await api('pushok-id');if(seq===idPolicySeq&&epoch===authEpoch&&role==='owner'){renderIdPolicy(data);$('id-policy-status').textContent='';}}
+ catch(e){if(seq===idPolicySeq&&epoch===authEpoch)$('id-policy-status').textContent=e.message;}
+}
+$('id-policy-refresh').onclick=refreshIdPolicy;
+$('id-policy-form').onsubmit=async event=>{
+ event.preventDefault();if(role!=='owner'||idPolicyBusy||idPolicyVersion===null)return;
+ const data={version:idPolicyVersion,enabled:$('id-policy-enabled').checked,allow_new_accounts:$('id-policy-registration').checked};
+ const seq=++idPolicySeq,epoch=authEpoch;idPolicyBusy=true;idPolicyVersion=null;$('id-policy-save').disabled=true;
+ try{const result=await api('pushok-id',{method:'PUT',data});if(seq===idPolicySeq&&epoch===authEpoch&&role==='owner'){renderIdPolicy(result);$('id-policy-status').textContent='Настройки сохранены.';}}
+ catch(e){if(seq===idPolicySeq&&epoch===authEpoch)$('id-policy-status').textContent=e.message+' Обновите раздел перед повтором.';}
+ finally{if(seq===idPolicySeq&&epoch===authEpoch)idPolicyBusy=false;}
+};
+
 // Настройки меню бот получает из базы при отправке очередного /start.
 let botMenuVersion=0,botMenuButtons=[],botMenuRequest=0;
 function menuFields(){
@@ -351,7 +792,7 @@ function renderBotMenu(){
 }
 async function refreshBotMenu(){
  const section=$('bot-menu-panel');
- if(role!=='owner'){section.hidden=true;return}
+ if(!canGroup('bot_menu')){section.hidden=true;return}
  section.hidden=false;
  const epoch=authEpoch,request=++botMenuRequest;
  try{
@@ -364,7 +805,7 @@ async function refreshBotMenu(){
 $('bot-menu-rows').oninput=()=>menuPreview(menuFields());
 $('bot-menu-rows').onchange=()=>menuPreview(menuFields());
 $('bot-menu-form').onsubmit=async event=>{
- event.preventDefault();if(role!=='owner')return;
+ event.preventDefault();if(!canGroup('bot_menu'))return;
  const button=$('bot-menu-save'),epoch=authEpoch;
  button.disabled=true;
  try{
@@ -376,27 +817,89 @@ $('bot-menu-form').onsubmit=async event=>{
  finally{if(epoch===authEpoch)button.disabled=false}
 };
 async function refreshStaff(){
- const section=$('staff-management');if(role!=='owner'){section.hidden=true;return}section.hidden=false;
+ const section=$('staff-management'),epoch=authEpoch;
+ if(role!=='owner'){section.hidden=true;return}section.hidden=false;
  try{
-  const out=await Promise.all([api('staff'),api('audit?limit=50')]),data=out[0],audit=out[1];
-  $('staff-list').innerHTML=data.staff.map(s=>'<article class="admin-order"><b>'+esc(s.email)+'</b><p>'+esc(s.role_label)+' · '+(s.enabled?'активен':'отключён')+' · последний вход: '+(s.last_login?esc(dateTime(s.last_login)):'—')+'</p>'+((s.role==='owner'&&data.staff.filter(x=>x.enabled&&x.role==='owner').length<=1)?'':'<button class="small secondary" data-staff-id="'+s.id+'" data-enabled="'+(!s.enabled)+'">'+(s.enabled?'Отключить':'Включить')+'</button>')+'</article>').join('');
-  $('audit-list').innerHTML=audit.events.map(e=>'<article class="admin-order"><b>'+esc(e.actor_email)+' · '+esc(e.role)+'</b><p>'+esc(e.action)+' '+esc(e.resource)+' · HTTP '+e.status+' · '+esc(dateTime(e.created))+'</p></article>').join('')||'<p>Записей пока нет.</p>';
- }catch(error){$('staff-error').textContent=error.message}
+  const [data,audit]=await Promise.all([api('staff'),api('audit?limit=50')]);
+  if(epoch!==authEpoch||role!=='owner')return;
+  const developers=data.staff.filter(x=>x.enabled&&x.role==='owner').length;
+  $('staff-list').innerHTML=data.staff.map(s=>{
+    const protectedRole=s.id===staffActorId||(s.role==='owner'&&s.enabled&&developers<=1);
+    const select=Object.entries(STAFF_LABELS).map(([key,label])=>'<option value="'+key+'" '+(s.role===key?'selected':'')+'>'+esc(label)+'</option>').join('');
+    return '<article class="admin-order"><b>'+esc(s.email)+'</b><p class="staff-role staff-role-'+esc(s.role)+'">'+esc(s.role_label)+' · '+(s.enabled?'активен':'отключён')+'</p><p>Последний вход: '+(s.last_login?esc(dateTime(s.last_login)):'—')+'</p>'+
+      (DELEGATED_ROLES.includes(s.role)?'<button type="button" class="small secondary" data-staff-permissions="'+s.id+'">Индивидуальные права</button>':'')+
+      (protectedRole?'<p>Защищённая учётная запись разработчика.</p>':'<form data-staff-role="'+s.id+'"><label>Роль<select name="role">'+select+'</select></label><button type="submit" class="small">Изменить роль</button></form><button class="small secondary" data-staff-id="'+s.id+'" data-enabled="'+(!s.enabled)+'">'+(s.enabled?'Отключить':'Включить')+'</button>')+'</article>';
+  }).join('');
+  $('audit-list').innerHTML=audit.events.map(e=>'<article class="admin-order"><b>'+esc(e.actor_email)+' · '+esc(STAFF_LABELS[e.role]||e.role)+'</b><p>'+esc(e.action)+' '+esc(e.resource)+' · HTTP '+e.status+' · '+esc(dateTime(e.created))+'</p></article>').join('')||'<p>Записей пока нет.</p>';
+ }catch(error){if(epoch===authEpoch)$('staff-error').textContent=error.message}
 }
 $('staff-create').onsubmit=async event=>{
- event.preventDefault();const form=event.target,values=new FormData(form);
- try{await api('staff',{method:'POST',data:{email:values.get('email'),password:values.get('password'),role:values.get('role')}});form.reset();$('staff-error').textContent='Сотрудник добавлен.';await refreshStaff()}
- catch(error){$('staff-error').textContent=error.message}
+ event.preventDefault();if(role!=='owner')return;
+ const form=event.target,values=new FormData(form),epoch=authEpoch;
+ try{await api('staff',{method:'POST',data:{email:values.get('email'),password:values.get('password'),role:values.get('role')}});if(epoch!==authEpoch)return;form.reset();$('staff-error').textContent='Сотрудник добавлен.';await refreshStaff()}
+ catch(error){if(epoch===authEpoch)$('staff-error').textContent=error.message}
 };
 $('staff-list').onclick=async event=>{
- const button=event.target.closest('[data-staff-id]');if(!button)return;
- try{await api('staff/'+button.dataset.staffId,{method:'PATCH',data:{enabled:button.dataset.enabled==='true'}});await refreshStaff()}
- catch(error){$('staff-error').textContent=error.message}
+ const edit=event.target.closest('[data-staff-permissions]');
+ if(edit&&role==='owner')return openStaffIndividual(Number(edit.dataset.staffPermissions));
+ const button=event.target.closest('[data-staff-id]');if(!button||role!=='owner')return;
+ const epoch=authEpoch;
+ try{await api('staff/'+encodeURIComponent(button.dataset.staffId),{method:'PATCH',data:{enabled:button.dataset.enabled==='true'}});if(epoch===authEpoch)await refreshStaff()}
+ catch(error){if(epoch===authEpoch)$('staff-error').textContent=error.message}
 };
+$('staff-list').onsubmit=async event=>{
+ event.preventDefault();const form=event.target.closest('[data-staff-role]');if(!form||role!=='owner')return;
+ const next=new FormData(form).get('role'),epoch=authEpoch,button=form.querySelector('button');
+ if(!Object.hasOwn(STAFF_LABELS,next)||button.disabled)return;
+ if(next==='owner'&&!confirm('Назначить разработчика с полным доступом к магазину?'))return;
+ button.disabled=true;
+ try{await api('staff/'+encodeURIComponent(form.dataset.staffRole),{method:'PATCH',data:{role:next}});if(epoch===authEpoch){clearStaffIndividual();await refreshStaff();$('staff-error').textContent='Роль изменена. Сеансы прежней роли отозваны.';}}
+ catch(error){if(epoch===authEpoch)$('staff-error').textContent=error.message}finally{button.disabled=false;}
+};
+
+let individualState=null,individualSeq=0,individualBusy=false;
+function clearStaffIndividual(){
+ individualSeq++;individualState=null;individualBusy=false;
+ $('staff-individual-editor').hidden=true;$('staff-individual-form').replaceChildren();$('staff-individual-status').textContent='';
+}
+function renderStaffIndividual(data){
+ if(!DELEGATED_ROLES.includes(data.role)||!Number.isInteger(data.version)||!Number.isInteger(data.role_version)||!Array.isArray(data.allowed)||!Array.isArray(data.permissions)||!Array.isArray(data.effective))throw new Error('Не удалось прочитать полномочия');
+ individualState=data;
+ $('staff-individual-editor').hidden=false;
+ const selected=data.inherit?data.allowed:data.permissions;
+ $('staff-individual-form').innerHTML='<form id="individual-policy-form"><p>Сотрудник № '+esc(data.staff_id)+' · '+esc(STAFF_LABELS[data.role])+'</p>'+
+   '<label class="permission-choice"><input id="individual-inherit" type="checkbox" '+(data.inherit?'checked':'')+'> Наследовать права роли</label>'+
+   '<div class="permission-grid" id="individual-choices">'+data.allowed.map(key=>'<label class="permission-choice"><input name="permissions" type="checkbox" value="'+esc(key)+'" '+(selected.includes(key)?'checked':'')+' '+(data.inherit?'disabled':'')+'>'+esc(data.labels[key]||key)+'</label>').join('')+'</div><p>Действующие права: '+data.effective.map(key=>esc(data.labels[key]||key)).join(', ')+'</p><button class="small" type="submit">Сохранить индивидуальные права</button></form>';
+}
+async function openStaffIndividual(id){
+ if(role!=='owner'||!Number.isSafeInteger(id)||id<1)return;
+ clearStaffIndividual();const seq=individualSeq,epoch=authEpoch;
+ $('staff-individual-editor').hidden=false;$('staff-individual-status').textContent='Загрузка…';
+ try{const data=await api('staff/'+id+'/permissions');if(seq!==individualSeq||epoch!==authEpoch||role!=='owner')return;renderStaffIndividual(data);$('staff-individual-status').textContent='';}
+ catch(e){if(seq===individualSeq&&epoch===authEpoch)$('staff-individual-status').textContent=e.message;}
+}
+$('staff-individual-form').onchange=event=>{
+ if(event.target.id!=='individual-inherit')return;
+ for(const input of $('individual-choices').querySelectorAll('input'))input.disabled=event.target.checked;
+};
+$('staff-individual-form').onsubmit=async event=>{
+ event.preventDefault();if(role!=='owner'||!individualState||individualBusy)return;
+ const form=event.target.closest('#individual-policy-form');if(!form)return;
+ const before=individualState,seq=individualSeq,epoch=authEpoch;
+ const inherit=$('individual-inherit').checked,values=new FormData(form);
+ const data={version:before.version,role_version:before.role_version,role:before.role,inherit,permissions:inherit?[]:values.getAll('permissions')};
+ individualBusy=true;const button=form.querySelector('button');button.disabled=true;
+ try{
+  const result=await api('staff/'+before.staff_id+'/permissions',{method:'PUT',data});
+  if(seq===individualSeq&&epoch===authEpoch&&role==='owner'){renderStaffIndividual(result);$('staff-individual-status').textContent='Сохранено.';}
+ }catch(e){if(seq===individualSeq&&epoch===authEpoch){$('staff-individual-status').textContent=e.message+' Откройте карточку заново.';individualState=null;}}
+ finally{if(seq===individualSeq&&epoch===authEpoch)individualBusy=false;}
+};
+$('staff-individual-close').onclick=clearStaffIndividual;
 
 let selectedAdminCase=null,adminCaseVersion=0;
 async function refreshSupportAdmin(){
- const panel=$('support-admin');if(role!=='owner'&&role!=='support'){panel.hidden=true;return}panel.hidden=false;
+ const panel=$('support-admin');if(!canGroup('support')){panel.hidden=true;return}panel.hidden=false;
  try{
   const q=$('support-admin-filter').value,listing=await api('support/tickets?page=1'+(q?'&status='+encodeURIComponent(q):''));
   $('support-admin-list').innerHTML=listing.cases.map(c=>'<article class="admin-order"><b>'+esc(c.subject)+'</b><p>'+esc(c.status)+' · клиент № '+c.user_id+(c.order_id?' · заказ '+esc(c.order_id):'')+'</p><p>'+esc(c.last_message||'')+'</p><button class="small secondary" data-admin-case="'+esc(c.id)+'">Открыть</button></article>').join('')||'<p>Обращений нет.</p>';
@@ -442,7 +945,7 @@ function commerceEventsMarkup(result){
 }
 async function refreshCommerceAnalytics(){
  const section=$('commerce-analytics');
- if(role!=='owner'&&role!=='finance'){section.hidden=true;return}
+ if(!canGroup('analytics')){section.hidden=true;return}
  section.hidden=false;
  const epoch=authEpoch,request=++commerceAnalyticsRequest;
  const start=$('commerce-analytics-start').value,end=$('commerce-analytics-end').value;
@@ -475,7 +978,8 @@ async function refreshCommerceAnalytics(){
 }
 $('commerce-analytics-period').onsubmit=event=>{event.preventDefault();return refreshCommerceAnalytics();};
 
-async function refresh({plans = role==='owner'} = {}) {
+async function refresh({plans = role==='owner' || canGroup('catalog')} = {}) {
+  if(delegatedRole())return refreshDelegated({plans});
   const data = role==='mtproxy_manager' ? {users:'—',active:'—',revenue:'—',stars:'—'} : await api('overview');
   const catalog = plans ? await api('plans') : null;
   $('stats').innerHTML = `<div>Пользователи<strong>${data.users}</strong></div><div>Подписки<strong>${data.active}</strong></div><div>Подтверждено<strong>${data.revenue} ₽ / ${data.stars} ★</strong></div>`;
@@ -485,9 +989,10 @@ async function refresh({plans = role==='owner'} = {}) {
   if(role==='owner') await Promise.all([refreshAdsAdmin(),refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers(),refreshTrialPolicy(),refreshFlowAutoPolicy(),refreshCoupons(),refreshReferralPolicy(),refreshCommerceAnalytics()]);
   else if(role==='mtproxy_manager') await refreshAdsAdmin();
   else if(role==='finance') await Promise.all([refreshAdsAdmin(),refreshOrders(),refreshCommerceAnalytics()]);
-  else if(role==='panel_operator') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers()]);
+  else if(role==='panel_operator') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers(),refreshRouting()]);
   else if(role==='support') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshSupportAdmin()]);
-  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates()]);}
+  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates(),refreshRolePolicies(),refreshModeration(),refreshRuntime('appearance'),refreshRuntime('sales'),refreshRuntime('notifications'),refreshPaymentPolicy(),refreshShopFinance(),refreshRouting(),refreshIdPolicy()]);}
+  renderManagementNav();
 }
 $('admin-login').onsubmit = async event => {
   event.preventDefault(); const button=event.target.querySelector('button'); button.disabled=true; authEpoch++;
@@ -500,14 +1005,14 @@ $('admin-login').onsubmit = async event => {
       result=await response.json();
     }
     if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'Не удалось войти');
-    role=result.role;token='';await refresh();
+    acceptStaffRole(result);token='';await refresh();
     $('key').value='';$('staff-password').value='';$('admin-login').hidden=true;$('dashboard').hidden=false;$('error').textContent='';
   } catch(error){authEpoch++;token='';$('error').textContent=error.message}
   finally{button.disabled=false}
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{}); role='';
-  clearUpdates();
+  clearUpdates(); clearManagement(); clearRuntime(); clearStaffIndividual(); clearPaymentPolicy(); clearShopFinance(); clearRouting(); clearIdPolicy();
   protocolsRequest++; protocolCache = []; $('protocols-list').replaceChildren();
   $('protocols-status').textContent = ''; $('protocols-filter').value = 'all';
   $('protocols-panel').hidden = true; $('protocols-refresh').disabled = false;
@@ -688,7 +1193,7 @@ async function refreshOrders() {
     $('orders-page').textContent = 'Страница ' + data.page + ' из ' + pages;
     $('orders-prev').disabled = data.page <= 1;
     $('orders-next').disabled = data.page * data.page_size >= data.total;
-    $('list').innerHTML = data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${esc(protocolLabel(order.protocol))} · ${order.method==='referral'?'Бонус · '+order.days+' дней':order.amount+' '+(order.currency === 'XTR' ? '★' : '₽')}</b><p><button class="text-link" data-order-user="${order.user_id}">${esc(order.email || 'Telegram ' + order.telegram_id)} · № ${order.user_id}</button></p><p>Заказ: ${esc(order.id)}</p>${order.promo_code?`<p>Код ${esc(order.promo_code)} · скидка ${order.discount} ${order.currency==='XTR'?'★':'₽'} от ${order.base_amount}</p>`:''}<p>${esc(orderStatus[order.status] || order.status)} · ${esc(order.method==='referral'?'Бонусное продление':order.method==='trial'?'Пробный доступ':order.method)} · ${esc(dateTime(order.created))}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}<div class="actions">${order.can_confirm ? `<button data-action="confirm" data-id="${esc(order.id)}">Подтвердить поступление оплаты</button>` : ''}${order.can_reject ? `<button class="secondary" data-action="reject" data-id="${esc(order.id)}">Отменить заказ</button>` : ''}${order.can_retry ? `<button data-action="retry" data-id="${esc(order.id)}">Повторить выдачу</button>` : ''}</div></article>`).join('');
+    $('list').innerHTML = data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${esc(protocolLabel(order.protocol))} · ${order.method==='referral'?'Бонус · '+order.days+' дней':order.amount+' '+(order.currency === 'XTR' ? '★' : '₽')}</b><p><button class="text-link" data-order-user="${order.user_id}">${esc(order.email || 'Telegram ' + order.telegram_id)} · № ${order.user_id}</button></p><p>Заказ: ${esc(order.id)}</p>${order.promo_code?`<p>Код ${esc(order.promo_code)} · скидка ${order.discount} ${order.currency==='XTR'?'★':'₽'} от ${order.base_amount}</p>`:''}<p>${esc(orderStatus[order.status] || order.status)} · ${esc(order.method==='referral'?'Бонусное продление':order.method==='trial'?'Пробный доступ':order.method)} · ${esc(dateTime(order.created))}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}<div class="actions">${order.can_confirm && (!delegatedRole() || canGroup('payments')) ? `<button data-action="confirm" data-id="${esc(order.id)}">Подтвердить поступление оплаты</button>` : ''}${order.can_reject && (!delegatedRole() || canGroup('payments')) ? `<button class="secondary" data-action="reject" data-id="${esc(order.id)}">Отменить заказ</button>` : ''}${order.can_retry ? `<button data-action="retry" data-id="${esc(order.id)}">Повторить выдачу</button>` : ''}</div></article>`).join('');
   } catch (error) {
     if (request === ordersRequest) { $('list').replaceChildren(); $('orders-state').textContent = error.message; }
     throw error;
@@ -715,7 +1220,7 @@ function serverCard(server) {
 async function refreshServers() {
   const data = await api('servers');
   serverCache = data.servers;
-  $('server-list').innerHTML = data.servers.map(serverCard).join('');
+  $('server-list').innerHTML = data.servers.map(s=>delegatedRole()?'<article class="admin-order"><h3>'+esc(s.name)+'</h3><p>'+esc(protocolLabel(s.protocol))+' · '+esc(serverState[s.state]||s.state)+'</p><p>API: '+esc(s.health)+' · Занято: '+esc(s.occupied)+' · Лимит: '+esc(s.capacity||'без лимита')+'</p><p>Проверено: '+esc(dateTime(s.checked_at))+'</p></article>':serverCard(s)).join('');
   $('servers-notice').textContent = data.unassigned_subscriptions ? 'Есть подписки без привязки: '+data.unassigned_subscriptions+'. Автоматический перенос запрещён; проверьте настройки миграции.' : data.servers.length ? '' : 'Добавьте первый сервер для продажи VPN.';
 }
 function setServerStep(step) {
@@ -926,7 +1431,7 @@ $('server-list').onclick = async event => {
 async function refreshFlowAutoPolicy() {
   const epoch=authEpoch;
   const p=await api('flow/wireguard/auto');
-  if(epoch!==authEpoch || role!=='owner')return;
+  if(epoch!==authEpoch || !canGroup('starter'))return;
   $('flow-auto-count').textContent='Зарезервировано: '+p.used+' из '+p.max_users+'. Осталось: '+p.remaining;
   $('flow-auto-editor').innerHTML=
     '<form class="plan-editor" data-flow-auto-version="'+p.version+'">'+
@@ -940,7 +1445,7 @@ async function refreshFlowAutoPolicy() {
 $('flow-auto-editor').onsubmit=async event=>{
   event.preventDefault();
   const form=event.target.closest('[data-flow-auto-version]');
-  if(!form || role!=='owner')return;
+  if(!form || !canGroup('starter'))return;
   const values=new FormData(form),button=form.querySelector('button');
   button.disabled=true;
   try {

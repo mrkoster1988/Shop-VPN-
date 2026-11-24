@@ -7,7 +7,7 @@ import uuid
 from decimal import Decimal, InvalidOperation
 from urllib.parse import parse_qsl, urlencode, urlsplit
 import httpx
-from . import config as c, providers, servers, referrals, shop_settings, bot_menu as menu_editor
+from . import config as c, providers, servers, referrals, shop_settings, runtime_settings, bot_menu as menu_editor
 from .db import db, one, all_rows, execute
 from .security import digest
 from .pushok_button_icons import without_icons
@@ -276,27 +276,37 @@ async def tick():
     await process_devices()
     from . import flow_auto_provision
     await flow_auto_provision.process_pending()
-    for order in all_rows("SELECT o.*,u.telegram_id FROM orders o JOIN users u ON u.id=o.user_id WHERE o.status='active' AND o.notified=0 AND u.telegram_id IS NOT NULL"):
-        if not c.BOT_TOKEN:
-            continue
-        try:
-            await send(order['telegram_id'], 'Пробный VPN готов! Настройки находятся в личном кабинете.' if order['kind']=='trial' else 'Бонусные дни добавлены к подписке.' if order['kind']=='referral' else 'Оплата подтверждена. VPN готов! Подключение находится в личном кабинете.',
-                       reply_markup=notification_button('Открыть кабинет'))
-            execute('UPDATE orders SET notified=1 WHERE id=?', (order['id'],))
-        except Exception:
-            pass
-    for sub in all_rows("SELECT s.*,u.telegram_id FROM subscriptions s JOIN users u ON u.id=s.user_id WHERE s.state='active' AND s.expires>? AND s.expires<? AND s.reminder=0 AND u.telegram_id IS NOT NULL", (now, now + 86400)):
-        if not c.BOT_TOKEN:
-            continue
-        try:
-            await send(sub['telegram_id'], 'Подписка Pushok VPN закончится менее чем через сутки. Продлите её в магазине.',
-                       reply_markup=notification_button('Продлить VPN'))
-            execute('UPDATE subscriptions SET reminder=1 WHERE id=?', (sub['id'],))
-        except Exception:
-            pass
+    await notify_customers(now)
     with db() as conn:
         conn.execute('DELETE FROM sessions WHERE expires<?', (now,))
         conn.execute('DELETE FROM tickets WHERE expires<?', (now,))
+        conn.execute('DELETE FROM shop_id_requests WHERE expires<=?',(now,))
+
+
+async def notify_customers(now):
+    if not c.BOT_TOKEN:return
+    try:
+        policy=runtime_settings.get('notifications')
+    except Exception as exc:
+        # Ошибка настройки рассылки не блокирует выдачу, истечение и очистку сеансов.
+        log.warning('Notification settings unavailable: %s',type(exc).__name__)
+        return
+    if policy['order_ready_enabled']:
+        for order in all_rows("SELECT o.*,u.telegram_id FROM orders o JOIN users u ON u.id=o.user_id WHERE o.status='active' AND o.notified=0 AND u.telegram_id IS NOT NULL"):
+            message=policy['trial_text'] if order['kind']=='trial' else policy['bonus_text'] if order['kind']=='referral' else policy['purchase_text']
+            try:
+                await send(order['telegram_id'],message,reply_markup=notification_button('Открыть кабинет'))
+                execute('UPDATE orders SET notified=1 WHERE id=?',(order['id'],))
+            except Exception:
+                pass
+    if policy['expiry_enabled']:
+        for sub in all_rows("SELECT s.*,u.telegram_id FROM subscriptions s JOIN users u ON u.id=s.user_id WHERE s.state='active' AND s.expires>? AND s.expires<? AND s.reminder=0 AND u.telegram_id IS NOT NULL",(now,now+policy['expiry_hours']*3600)):
+            try:
+                await send(sub['telegram_id'],policy['expiry_text'],reply_markup=notification_button('Продлить VPN'))
+                # Не отмечаем напоминание нового срока, если подписку продлили во время отправки.
+                execute('UPDATE subscriptions SET reminder=1 WHERE id=? AND expires=?',(sub['id'],sub['expires']))
+            except Exception:
+                pass
 
 
 async def worker():

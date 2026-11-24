@@ -941,3 +941,178 @@ test('owner can inspect starter WireGuard grant policy; logout clears editor',as
   assert.equal(p.element('flow-auto-editor').innerHTML,'');
   assert.equal(p.element('flow-auto-section').hidden,true);
 });
+
+
+test('moderator navigation only exposes assigned moderation and optional support',async()=>{
+  const p=adminPage();
+  p.run("acceptStaffRole({role:'moderator',permissions:['moderation']});renderManagementNav()");
+  assert.equal(p.element('management-role').textContent,'Модератор');
+  assert.equal(p.element('moderation-section').hidden,false);
+  assert.equal(p.element('plans-section').hidden,true);
+  assert.equal(p.element('staff-management').hidden,true);
+  assert.equal(p.element('ads-finance-section').hidden,true);
+  assert.equal(p.element('support-admin').hidden,true);
+  assert.match(p.element('management-nav').innerHTML,/Модерация/);
+  assert.doesNotMatch(p.element('management-nav').innerHTML,/Тарифы|Финансы|Сотрудники/);
+  p.run("delegatedPermissions.add('support');renderManagementNav()");
+  assert.equal(p.element('support-admin').hidden,false);
+});
+
+test('moderation queue escapes applicant content and ignores late replies after logout',async()=>{
+  const p=adminPage();
+  const pending=p.run("acceptStaffRole({role:'moderator',permissions:['moderation']});refreshModeration()");
+  assert.equal(p.requests[0],'/shop/api/admin/moderation/requests?page=1&state=pending');
+  const data={requests:[{id:'r1',channel:'<img src=x>',comment:'<script>bad</script>',state:'pending',reason:'',version:1}],page:1,page_size:20,total:1};
+  p.reply(data);await pending;
+  assert.match(p.element('moderation-list').innerHTML,/&lt;img/);
+  assert.doesNotMatch(p.element('moderation-list').innerHTML,/<img|<script|payment/);
+  const late=p.run('refreshModeration()');p.run("$('exit').onclick()");p.replyAt(1,data);await late;
+  assert.equal(p.element('moderation-list').innerHTML,'');
+  assert.equal(p.element('moderation-section').hidden,true);
+});
+
+test('developer permission editor renders separate roles and only permitted choices',async()=>{
+  const p=adminPage(),req=p.run("role='owner';refreshRolePolicies()");
+  p.reply({labels:{moderation:'Модерация',catalog:'Тарифы'},roles:[
+    {role:'moderator',version:3,permissions:['moderation'],allowed:['moderation']},
+    {role:'administrator',version:4,permissions:[],allowed:['catalog']}]});await req;
+  assert.match(p.element('role-policy-list').innerHTML,/Модератор/);
+  assert.match(p.element('role-policy-list').innerHTML,/Администратор/);
+  assert.match(p.element('role-policy-list').innerHTML,/data-role-policy="moderator" data-version="3"/);
+  p.run("role='moderator'");
+  await p.run('refreshRolePolicies()');
+  assert.equal(p.element('role-policy-section').hidden,true);
+  assert.equal(p.element('role-policy-list').innerHTML,'');
+  assert.equal(p.requests.length,1);
+});
+
+test('delegated administrator sees server status without credentials or server mutation forms',async()=>{
+  const p=adminPage(),req=p.run("acceptStaffRole({role:'administrator',permissions:['servers_read']});renderManagementNav();refreshServers()");
+  p.reply({servers:[{id:'node-a',name:'WG node',protocol:'wg',state:'active',health:'ok',capacity:10,occupied:1}],unassigned_subscriptions:0});await req;
+  assert.equal(p.element('new-server').hidden,true);
+  assert.match(p.element('server-list').innerHTML,/WG node/);
+  assert.doesNotMatch(p.element('server-list').innerHTML,/<form|data-server-credentials|data-server-edit/);
+});
+
+
+function salesSettings(overrides={}){
+ return {new_sales:true,renewals:true,web_sales:true,telegram_sales:true,enabled_protocols:['xui','wg'],closed_notice:'На паузе',version:2,updated:0,...overrides};
+}
+test('sales settings use explicit full versioned payload and stop on stale version',async()=>{
+ const p=adminPage(),load=p.run("role='owner';refreshRuntime('sales')");
+ p.reply(salesSettings());await load;
+ assert.equal(p.element('runtime-new_sales').checked,true);
+ assert.equal(p.element('runtime-protocol-wg').checked,true);
+ p.element('runtime-new_sales').checked=false;
+ const saved=p.run("saveRuntime('sales')");
+ assert.deepEqual(p.bodies[1],{version:2,new_sales:false,renewals:true,web_sales:true,telegram_sales:true,enabled_protocols:['xui','wg'],closed_notice:'На паузе'});
+ p.replyAt(1,{detail:'Версия изменилась'},409);await saved;
+ assert.equal(p.element('runtime-sales-save').disabled,true);
+ assert.match(p.element('runtime-sales-status').textContent,/Обновите/);
+ const n=p.requests.length;await p.run("saveRuntime('sales')");assert.equal(p.requests.length,n);
+});
+test('runtime settings are hidden from unauthorized staff and late loads cannot reappear',async()=>{
+ const p=adminPage();
+ p.run("acceptStaffRole({role:'moderator',permissions:['moderation']});renderManagementNav()");
+ assert.equal(p.element('sales-controls-section').hidden,true);
+ await p.run("refreshRuntime('sales')");assert.equal(p.requests.length,0);
+ const pending=p.run("role='owner';refreshRuntime('sales')");
+ p.run("$('exit').onclick()");p.replyAt(0,salesSettings());await pending;
+ assert.equal(p.element('runtime-sales-save').disabled,true);
+ assert.equal(p.element('runtime-closed_notice').value,'');
+});
+test('individual permission form is scoped to selected employee and rejects late response',async()=>{
+ const p=adminPage(),pending=p.run("role='owner';openStaffIndividual(7)");
+ assert.equal(p.requests[0],'/shop/api/admin/staff/7/permissions');
+ const card={staff_id:7,role:'moderator',version:1,role_version:2,inherit:false,allowed:['moderation','support'],permissions:['moderation'],effective:['moderation'],labels:{moderation:'Модерация',support:'Поддержка'}};
+ p.reply(card);await pending;
+ assert.match(p.element('staff-individual-form').innerHTML,/Сотрудник № 7/);
+ assert.match(p.element('staff-individual-form').innerHTML,/Действующие права: Модерация/);
+ const later=p.run('openStaffIndividual(8)');p.run("clearStaffIndividual()");p.replyAt(1,{...card,staff_id:8});await later;
+ assert.equal(p.element('staff-individual-editor').hidden,true);
+ assert.equal(p.element('staff-individual-form').innerHTML,'');
+});
+
+
+test('finance parses rubles exactly and refuses fractional stars',()=>{
+ const p=adminPage();
+ assert.equal(p.run("parseFinanceAmount('123,45','RUB')"),12345);
+ assert.equal(p.run("parseFinanceAmount('0.01','RUB')"),1);
+ assert.equal(p.run("parseFinanceAmount('1.001','RUB')"),null);
+ assert.equal(p.run("parseFinanceAmount('1.2','XTR')"),null);
+ assert.equal(p.run("parseFinanceAmount('150','XTR')"),150);
+ assert.equal(p.run("parseFinanceAmount('1e3','RUB')"),null);
+});
+test('payment settings expose readiness without secrets and reject stale updates',async()=>{
+ const p=adminPage(),load=p.run("role='owner';refreshPaymentPolicy()");
+ p.reply({version:3,web_mode:'manual',effective_web_mode:'manual',web_enabled:true,stars_enabled:true,manual_text:'Fixture',merchant_configured:false,stars_bot_configured:true,open_web_orders:1});await load;
+ assert.match(p.element('shop-payment-readiness').textContent,/Незакрытые счета: 1/);
+ p.element('shop-payment-stars').checked=false;
+ const pending=p.element('shop-payment-form').onsubmit({preventDefault(){}});
+ assert.deepEqual(p.bodies[1],{version:3,web_mode:'manual',web_enabled:true,stars_enabled:false,manual_text:'Fixture'});
+ p.replyAt(1,{detail:'Настройки изменились'},409);await pending;
+ assert.equal(p.element('shop-payment-save').disabled,true);
+});
+test('finance view-only role cannot record and late responses cannot restore journal',async()=>{
+ const p=adminPage();
+ const read=p.run("acceptStaffRole({role:'administrator',permissions:['finance_read']});refreshShopFinance()");
+ const report={totals:{RUB:{receipts:12345,refunds:0,fees:0,expenses:0,net_recorded:12345},XTR:{receipts:90,refunds:0,fees:0,expenses:0,net_recorded:90}},period:{start:1,end:2},missing_payment_timestamp:1,receipts_by_method:[],entries:[{id:'e1',kind:'expense',currency:'RUB',amount_minor:100,occurred_at:1,reference:'<img>',note:'<script>fixture</script>',state:'recorded'}],page:1,page_size:25,total:1};
+ p.reply(report);await read;
+ assert.equal(p.element('shop-finance-entry-form').hidden,true);
+ assert.match(p.element('shop-finance-summary').innerHTML,/123,45/);
+ assert.match(p.element('shop-finance-list').innerHTML,/&lt;script&gt;/);
+ assert.doesNotMatch(p.element('shop-finance-list').innerHTML,/<script|data-finance-void/);
+ const pending=p.run('refreshShopFinance()');p.run("$('exit').onclick()");p.replyAt(1,report);await pending;
+ assert.equal(p.element('shop-finance-list').innerHTML,'');
+});
+
+
+function routingFixture(overrides={}){
+ return {policy:{version:2,strategy:'least_count',reserve_enabled:true,require_recent:false,max_age_minutes:60,monitor_enabled:false,monitor_interval_minutes:5,monitor_batch:2},nodes:[{id:'node-a',name:'<img> WG',location:'EU',protocol:'wg',state:'active',health:'ok',capacity:10,occupied:2,priority:100,routing_version:1,version:3,reserve:false,accept_new:true,blocked_reason:null,last_probe:{duration_ms:12,source:'manual'}}],next_assignment:{wg:'node-a'},...overrides};
+}
+test('server routing read-only users see occupancy but not mutation controls',async()=>{
+ const p=adminPage(),load=p.run("acceptStaffRole({role:'administrator',permissions:['servers_read']});refreshRouting()");
+ assert.equal(p.requests[0],'/shop/api/admin/server-routing');
+ p.reply(routingFixture());await load;
+ assert.equal(p.element('server-routing-policy').hidden,true);
+ assert.match(p.element('routing-nodes').innerHTML,/&lt;img&gt; WG/);
+ assert.match(p.element('routing-nodes').innerHTML,/20%/);
+ assert.doesNotMatch(p.element('routing-nodes').innerHTML,/<img|data-routing-node/);
+ assert.match(p.element('routing-summary').textContent,/Автомониторинг выключен/);
+});
+test('routing updates send the exact policy version and refuse stale state',async()=>{
+ const p=adminPage(),load=p.run("role='owner';refreshRouting()");
+ p.reply(routingFixture());await load;
+ p.element('routing-monitor-enabled').checked=true;
+ const save=p.element('server-routing-policy').onsubmit({preventDefault(){}});
+ assert.deepEqual(p.bodies[1],{version:2,strategy:'least_count',reserve_enabled:true,require_recent:false,max_age_minutes:60,monitor_enabled:true,monitor_interval_minutes:5,monitor_batch:2});
+ p.replyAt(1,{detail:'Правила изменились'},409);await save;
+ assert.equal(p.element('routing-policy-save').disabled,true);
+ assert.match(p.element('routing-status').textContent,/Обновите/);
+});
+test('server history and routing replies cannot restore data after logout',async()=>{
+ const p=adminPage(),load=p.run("role='owner';refreshRouting()");
+ p.reply(routingFixture());await load;
+ const history=p.run("openRoutingHistory('node-a')");
+ p.run("$('exit').onclick()");
+ p.replyAt(1,{checks:[{checked_at:1,status:'ok',duration_ms:10,source:'manual',server_version:3}]});await history;
+ assert.equal(p.element('routing-history-panel').hidden,true);
+ assert.equal(p.element('routing-history-list').innerHTML,'');
+ assert.equal(p.element('routing-nodes').innerHTML,'');
+});
+
+
+test('Pushok ID trust configuration is developer-only and uses version checks',async()=>{
+ const p=adminPage();
+ p.run("acceptStaffRole({role:'administrator',permissions:['store_settings']});renderManagementNav()");
+ assert.equal(p.element('pushok-id-settings').hidden,true);
+ await p.run('refreshIdPolicy()');assert.equal(p.requests.length,0);
+ const pending=p.run("role='owner';refreshIdPolicy()");
+ p.reply({version:2,configured:true,enabled:false,allow_new_accounts:false,linked_accounts:1,pending_requests:0,active_id_sessions:0,session_ttl:3600});await pending;
+ assert.match(p.element('id-policy-readiness').textContent,/Кошелёк|кошелёк/);
+ p.element('id-policy-enabled').checked=true;
+ const save=p.element('id-policy-form').onsubmit({preventDefault(){}});
+ assert.deepEqual(p.bodies[1],{version:2,enabled:true,allow_new_accounts:false});
+ p.replyAt(1,{detail:'Настройки изменились'},409);await save;
+ assert.equal(p.element('id-policy-save').disabled,true);
+});
