@@ -83,11 +83,18 @@ async def revoke_subscription(sid: str):
 
         profile = None
         if sub['server_id']:
-            row = servers.for_subscription(sub, revoking=True)
-            profile = row[1]
+            try:
+                _, profile = servers.for_subscription(sub, revoking=True)
+            except Exception:
+                raise HTTPException(409, 'Нельзя найти прежнюю привязку сервера. '
+                                    'Запись сохранена до проверки узла.') from None
         try:
             if profile is None:
                 _remote_identity(sub, server_profile={})
+                if any(d.get('secret') or d.get('credential_id') or
+                       d['state'] == 'active' for d in devices):
+                    raise HTTPException(409, 'Не найден сервер для дополнительных пиров. '
+                                        'Сначала восстановите привязку.')
             else:
                 if _remote_identity(sub, server_profile=profile):
                     await providers.disable({**sub, 'id': service.primary_identity(sub)})
@@ -169,8 +176,14 @@ def purge_subscription(sid: str):
         conn.execute('DELETE FROM subscription_links WHERE subscription_id=?', (sid,))
         conn.execute('DELETE FROM flow_wireguard_links WHERE subscription_id=?', (sid,))
         conn.execute('DELETE FROM flow_wireguard_versions WHERE subscription_id=?', (sid,))
-        identities = [service.primary_identity(sub)] + [
-            service.device_identity(dict(device)) for device in devices]
+        # The successful remote revoke is recorded before any persisted key
+        # is erased. If a historical identity cannot be decrypted, do not purge.
+        try:
+            identities = [service.primary_identity(sub)] + [
+                service.device_identity(dict(device)) for device in devices]
+        except Exception:
+            raise HTTPException(409, 'Не удалось проверить сохранённые идентификаторы '
+                                'пиров. Запись оставлена для ручной проверки.') from None
         if sub['server_id']:
             for identity in identities:
                 conn.execute('DELETE FROM wgdashboard_expirations '
