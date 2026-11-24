@@ -255,18 +255,119 @@ const MANAGEMENT_SECTIONS=[
   ['ads-stop-section','placements','Остановки'],['ads-sites-section','placements','Площадки'],
   ['diagnostics-section','diagnostics','Диагностика']
 ];
+// Keep navigation metadata separate from permissions: the API remains the
+// sole authority. All menu items resolve to existing approved sections.
+const MANAGEMENT_NAV_GROUPS = [
+  ['Подключения', ['servers-section','server-routing-section','protocols-panel','flow-auto-section','trial-section']],
+  ['Пользователи', ['users-section','orders-section','moderation-section','staff-management','support-admin']],
+  ['Финансы', ['plans-section','payment-policy-section','shop-finance-section','commerce-analytics','coupons-section','referrals-section']],
+  ['Реклама', ['ads-requests-section','ads-finance-section','ads-bookings-section','ads-stop-section','ads-sites-section']],
+  ['Система', ['shop-settings','appearance-section','sales-controls-section','notifications-section','updates-panel','bot-menu-panel','role-policy-section','diagnostics-section','pushok-id-settings']]
+];
+const MANAGEMENT_SEARCH_TAGS={
+  'servers-section':'wgdashboard wireguard wg0 3x-ui сервер api ключ',
+  'server-routing-section':'узлы маршрутизация',
+  'flow-auto-section':'wireguard flow 30 дней бесплатная выдача',
+  'diagnostics-section':'состояние api здоровье',
+  'users-section':'аккаунты регистрация',
+  'updates-panel':'версия релиз обновление',
+  'bot-menu-panel':'telegram бот кнопки'
+};
+const MANAGEMENT_QUICK = [
+  ['servers-section','Подключить WGDashboard','Добавить WireGuard-сервер и проверить API','⚙'],
+  ['flow-auto-section','Flow · 30 дней','Настроить лимит бесплатных подключений','◈'],
+  ['users-section','Пользователи','Аккаунты и персональные подключения','♙'],
+  ['orders-section','Заказы','Ожидающие действия и выдача','▤'],
+  ['diagnostics-section','Диагностика','Проверка работы компонентов','ⓘ'],
+  ['updates-panel','Обновления','Версия и безопасное обновление Shop','↻']
+];
+let currentManagementSection='management-overview';
+function managementMeta(id){
+  return MANAGEMENT_SECTIONS.find(section=>section[0]===id);
+}
+function canViewManagementSection(id){
+  return id==='management-overview' || !!(managementMeta(id)&&canGroup(managementMeta(id)[1]));
+}
+function managementAnchor(id,title,extraClass=''){
+  const active=currentManagementSection===id?' aria-current="page"':'';
+  return '<a href="#'+id+'" data-admin-target="'+id+'"'+active+' class="'+extraClass+'">'+esc(title)+'</a>';
+}
+function renderManagementNavItems(){
+  const query=($('management-search').value||'').trim().toLocaleLowerCase('ru-RU');
+  let markup=query?'':managementAnchor('management-overview','⌂ Рабочий стол','management-overview-link');
+  const visited=new Set();
+  for(const [label,ids] of MANAGEMENT_NAV_GROUPS){
+    const matches=[];
+    for(const id of ids){
+      const item=managementMeta(id);
+      if(!item||!canGroup(item[1]))continue;
+      visited.add(id);
+      if(!query || (item[2]+' '+(MANAGEMENT_SEARCH_TAGS[id]||'')).toLocaleLowerCase('ru-RU').includes(query)){
+        matches.push(managementAnchor(id,item[2]));
+      }
+    }
+    if(!matches.length)continue;
+    const expanded=!!query || ids.includes(currentManagementSection);
+    markup+='<details class="management-nav-group"'+(expanded?' open':'')+'><summary>'+esc(label)+' <span>'+matches.length+'</span></summary>'+
+      '<div class="management-nav-items">'+matches.join('')+'</div></details>';
+  }
+  // Future sections remain reachable even before they are categorized.
+  const extra=MANAGEMENT_SECTIONS.filter(item=>canGroup(item[1])&&!visited.has(item[0])&&
+    (!query||item[2].toLocaleLowerCase('ru-RU').includes(query)));
+  if(extra.length){
+    markup+='<details class="management-nav-group" open><summary>Другое <span>'+extra.length+'</span></summary>'+
+      '<div class="management-nav-items">'+extra.map(item=>managementAnchor(item[0],item[2])).join('')+'</div></details>';
+  }
+  $('management-nav').innerHTML=markup||'<p class="management-empty">Разделы не найдены.</p>';
+}
+function showManagementSection(id,{scroll=false}={}){
+  currentManagementSection=canViewManagementSection(id)?id:'management-overview';
+  $('dashboard').dataset ||= {};
+  $('dashboard').dataset.adminFocused='true';
+  const overview=$('management-overview');
+  overview.dataset ||= {};
+  overview.dataset.adminActive=currentManagementSection==='management-overview'?'true':'false';
+  for(const [section,group] of MANAGEMENT_SECTIONS){
+    const node=$(section);
+    node.dataset ||= {};
+    node.dataset.adminActive=section===currentManagementSection&&canGroup(group)?'true':'false';
+  }
+  const info=managementMeta(currentManagementSection);
+  $('management-current').textContent=currentManagementSection==='management-overview'
+    ?'Раздел: рабочий стол':'Раздел: '+info[2];
+  renderManagementNavItems();
+  if(scroll){
+    $(currentManagementSection).scrollIntoView?.({behavior:'smooth',block:'start'});
+  }
+}
 function renderManagementNav(){
   $('management-role').textContent=STAFF_LABELS[role]||'Кабинет сотрудника';
-  $('management-scope').textContent=role==='owner'?'Полный доступ к настройкам магазина и сотрудникам.':'Доступ только к назначенным разделам.';
-  const visible=[];
-  for(const [id,group,title] of MANAGEMENT_SECTIONS){
-    const allowed=canGroup(group);
-    $(id).hidden=!allowed;
-    if(allowed)visible.push('<a href="#'+id+'">'+esc(title)+'</a>');
-  }
-  $('management-nav').innerHTML=visible.join('')||'<span>Нет назначенных разделов</span>';
+  $('management-scope').textContent=role==='owner'?'Все настройки и полномочия разработчика.':'Доступ только к назначенным разделам.';
+  for(const [id,group] of MANAGEMENT_SECTIONS) $(id).hidden=!canGroup(group);
+  $('management-overview').hidden=false;
+  $('stats').hidden=!canGroup('dashboard');
   $('new-server').hidden=delegatedRole();
+  const quick=MANAGEMENT_QUICK.filter(([id])=>canViewManagementSection(id));
+  $('management-quick').innerHTML=quick.map(([id,title,description,icon])=>
+    '<a href="#'+id+'" class="management-quick-card" data-admin-target="'+id+'"><span aria-hidden="true">'+icon+'</span><strong>'+esc(title)+'</strong><small>'+esc(description)+'</small></a>'
+  ).join('')||'<p>Быстрые действия пока недоступны вашей роли.</p>';
+  showManagementSection(currentManagementSection);
 }
+// Only authorized areas are navigable. A crafted hash/link never grants access.
+$('dashboard').addEventListener('click',event=>{
+  const link=event.target?.closest?.('[data-admin-target]');
+  if(!link)return;
+  const destination=link.dataset?.adminTarget;
+  if(!canViewManagementSection(destination)){
+    event.preventDefault();
+    return;
+  }
+  event.preventDefault();
+  showManagementSection(destination,{scroll:true});
+});
+$('management-home').onclick=()=>showManagementSection('management-overview',{scroll:true});
+$('management-search').oninput=()=>renderManagementNavItems();
+
 async function refreshModeration(){
   const seq=++moderationRequest,epoch=authEpoch;
   if(!canGroup('moderation')){$('moderation-section').hidden=true;$('moderation-list').replaceChildren();return;}
@@ -414,12 +515,18 @@ function planForm(plan) {
     <label>Название<input name="name" value="${esc(plan.name)}" maxlength="80" required></label>
     <div class="plan-editor-fields">
       <label>Срок, дней<input name="days" type="number" value="${plan.days}" min="1" max="3650" step="1" required></label>
-      <label>Цена на сайте, ₽<input name="price" type="number" value="${plan.price}" min="1" max="1000000" step="1" required></label>
-      <label>Цена в Telegram, Stars<input name="stars" type="number" value="${plan.stars}" min="1" max="100000" step="1" required></label>
+      <label>Цена на сайте, ₽<input name="price" type="number" value="${plan.price}" min="0" max="1000000" step="1" required></label>
+      <label>Цена в Telegram, Stars (для бесплатного тарифа обе цены — 0)<input name="stars" type="number" value="${plan.stars}" min="0" max="100000" step="1" required></label>
+      <label>Бесплатных активаций всего (0 — без ограничения)<input name="free_activation_limit" type="number" value="${plan.free_activation_limit ?? 0}" min="0" max="1000000" step="1" required></label>
+      <label>Трафик на профиль 3x-ui, ГБ (0 — без ограничения)<input name="free_traffic_gb" type="number" value="${plan.free_traffic_gb ?? 0}" min="0" max="10000" step="1" required></label>
+      <label class="plan-enabled"><input name="free_auto_renew" type="checkbox" ${plan.free_auto_renew ? 'checked' : ''}> Автоматически продлевать бесплатный доступ</label>
+      <label>Максимум продлений (1–12, если включено)<input name="free_max_renewals" type="number" value="${plan.free_max_renewals ?? 0}" min="0" max="12" step="1" required></label>
       <label>Дополнительных профилей (0 — только основной)<input name="device_limit" type="number" value="${plan.device_limit ?? 4}" min="0" max="20" step="1" required></label>
     </div>
     <label class="plan-enabled"><input name="enabled" type="checkbox" ${plan.enabled ? 'checked' : ''}> Доступен для новых покупок</label>
-    <button type="submit" class="small">Сохранить тариф</button>
+    <div class="record-actions"><button type="submit" class="small">Сохранить тариф</button>
+    ${role==='owner' && !plan.enabled && !['month','quarter','year'].includes(plan.id)
+      ? '<button type="button" class="danger-action" data-plan-delete="'+esc(plan.id)+'">Удалить неиспользуемый тариф</button>' : ''}</div>
   </form>`;
 }
 async function refreshShopSettings(){
@@ -1055,6 +1162,25 @@ $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method
   $('list').replaceChildren(); $('stats').replaceChildren(); $('plan-editors').replaceChildren();
   $('admin-notice').textContent = ''; $('error').textContent = ''; $('dashboard').hidden = true; $('admin-login').hidden = false;
 };
+$('plan-editors').onclick = async event => {
+  const button=event.target.closest('[data-plan-delete]');
+  if(!button || role!=='owner')return;
+  const id=button.dataset.planDelete;
+  if(!id || !confirm('Удалить неиспользуемый тариф '+id+'?'))return;
+  if(prompt('Для удаления тарифа введите УДАЛИТЬ','')!=='УДАЛИТЬ')return;
+  button.disabled=true;
+  const epoch=authEpoch;
+  try{
+    await api('plans/'+encodeURIComponent(id),{method:'DELETE'});
+    if(epoch===authEpoch){
+      button.closest('[data-plan-id]')?.remove();
+      $('admin-notice').textContent='Тариф '+id+' удалён. Оплаченные заказы не затронуты.';
+    }
+  }catch(error){
+    if(epoch===authEpoch)$('admin-notice').textContent=error.message;
+    button.disabled=false;
+  }
+};
 $('plan-editors').onsubmit = async event => {
   event.preventDefault();
   const form = event.target.closest('[data-plan-id]');
@@ -1065,7 +1191,7 @@ $('plan-editors').onsubmit = async event => {
   try {
     const saved = await api('plans/' + encodeURIComponent(form.dataset.planId), {method: 'PUT', data: {
       name: values.get('name'), days: Number(values.get('days')), price: Number(values.get('price')),
-      stars: Number(values.get('stars')), device_limit:Number(values.get('device_limit') ?? 4), enabled: values.has('enabled'), version: Number(form.dataset.version),
+      stars: Number(values.get('stars')), device_limit:Number(values.get('device_limit') ?? 4), free_activation_limit:Number(values.get('free_activation_limit') ?? 0), free_traffic_gb:Number(values.get('free_traffic_gb') ?? 0), free_auto_renew:values.has('free_auto_renew'), free_max_renewals:Number(values.get('free_max_renewals') ?? 0), enabled: values.has('enabled'), version: Number(form.dataset.version),
     }});
     form.outerHTML = planForm(saved);
     $('admin-notice').textContent = 'Тариф сохранён. Новые условия действуют для новых заказов.';
@@ -1095,7 +1221,7 @@ $('create-plan-form').onsubmit = async event => {
   try {
     const saved = await api('plans', {method: 'POST', data: {
       id: values.get('id'), name: values.get('name'), days: Number(values.get('days')),
-      price: Number(values.get('price')), stars: Number(values.get('stars')), device_limit:Number(values.get('device_limit') ?? 4), enabled: values.has('enabled'),
+      price: Number(values.get('price')), stars: Number(values.get('stars')), device_limit:Number(values.get('device_limit') ?? 4), free_activation_limit:Number(values.get('free_activation_limit') ?? 0), free_traffic_gb:Number(values.get('free_traffic_gb') ?? 0), free_auto_renew:values.has('free_auto_renew'), free_max_renewals:Number(values.get('free_max_renewals') ?? 0), enabled: values.has('enabled'),
     }});
     $('plan-editors').insertAdjacentHTML('beforeend', planForm(saved));
     $('create-plan-dialog').close();
@@ -1152,10 +1278,24 @@ async function loadUser(page) {
     profilePage = data.orders_page;
     const user = data.user;
     $('user-title').textContent = 'Пользователь № ' + user.id;
-    $('user-details').innerHTML = `<p>Email: ${esc(user.email || '—')}</p><p>Telegram ID: ${esc(user.telegram_id ?? '—')}</p><p>Регистрация: ${esc(dateTime(user.created))}</p>`;
+    $('user-details').innerHTML = `<p>Email: ${esc(user.email || '—')}</p><p>Telegram ID: ${esc(user.telegram_id ?? '—')}</p><p>Регистрация: ${esc(dateTime(user.created))}</p>` + (role==='owner' ? '<div class="record-actions"><button type="button" class="secondary" data-flow-binding-check="1">Проверить привязку Flow</button></div><div class="record-note" id="flow-binding-status" role="status" aria-live="polite"></div>' : '');
     $('user-subscriptions').innerHTML = data.subscriptions.length ? data.subscriptions.map(sub => {
-      const status = sub.access_active ? 'Активна' : sub.state === 'pending' ? 'Готовится' : 'Неактивна';
-      return `<article class="subscription"><b>${esc(protocolLabel(sub.protocol))}</b><p>${status} · Срок: ${esc(dateTime(sub.expires))}</p><p>Дополнительных профилей: ${sub.device_limit ?? 4}</p></article>`;
+      const status = sub.access_active ? 'Активна' : sub.state === 'pending' ? 'Готовится'
+        : sub.state === 'revoked' ? 'Доступ отозван' : 'Неактивна';
+      const tools = role==='owner'
+        ? `<div class="record-actions">
+          ${sub.protocol==='wg' ? '<button type="button" class="secondary" data-peer-check="'+esc(sub.id)+'">Проверить пир</button>' : ''}
+          ${sub.state!=='revoked' ? '<button type="button" class="danger-action" data-subscription-revoke="'+esc(sub.id)+'">Отозвать доступ</button>' : ''}
+          ${sub.state==='revoked' && sub.can_delete ? '<button type="button" class="danger-action" data-subscription-delete="'+esc(sub.id)+'">Удалить запись</button>' : ''}
+          </div>
+          ${sub.protocol==='wg' ? '<div class="record-note" role="status" aria-live="polite" data-peer-status="'+esc(sub.id)+'"></div>' : ''}
+          ${sub.state==='revoked' && !sub.can_delete ? '<p class="record-note">'+esc(sub.delete_blocker||'Запись хранится для истории')+'</p>' : ''}
+          <p class="record-note">Сначала отзываются пиры на сервере. Оплаченные заказы и финансовая история сохраняются.</p>`
+        : '';
+      return `<article class="subscription"><b>${esc(protocolLabel(sub.protocol))}</b>
+        <p>${esc(status)} · Срок: ${esc(dateTime(sub.expires))}</p>
+        <p>Дополнительных профилей: ${sub.device_limit ?? 4}</p>
+        ${tools}</article>`;
     }).join('') : '<p>Подписок пока нет.</p>';
     $('user-orders').innerHTML = data.orders.length ? data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${order.days} дней · ${order.method==='referral'?'Бонус · '+order.days+' дней':order.amount+' '+(order.currency === 'XTR' ? '★' : '₽')}</b><p>${esc(protocolLabel(order.protocol))} · ${esc(orderStatus[order.status] || order.status)}</p><p>Заказ: ${esc(order.id)}</p>${order.promo_code?`<p>Код ${esc(order.promo_code)} · скидка ${order.discount} ${order.currency==='XTR'?'★':'₽'} от ${order.base_amount}</p>`:''}<p>${esc(dateTime(order.created))} · ${esc(order.method==='referral'?'Бонусное продление':order.method==='trial'?'Пробный доступ':order.method)}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}</article>`).join('') : '<p>Заказов пока нет.</p>';
     const pages = Math.max(1, Math.ceil(data.orders_total / data.orders_page_size));
@@ -1165,6 +1305,141 @@ async function loadUser(page) {
     $('user-error').textContent = '';
   } catch (error) { if (request === profileRequest && selectedUser === userId) $('user-error').textContent = error.message; }
 }
+// This owner-only recovery never rotates a live key, changes a subscription,
+// or exposes the secret Flow client identifier. Server controls final safety.
+$('user-details').onclick = async event => {
+  const check=event.target.closest('[data-flow-binding-check]');
+  const release=event.target.closest('[data-flow-binding-release]');
+  if ((!check && !release) || role!=='owner' || selectedUser===null) return;
+  const panel=$('flow-binding-status');
+  if (!panel) return;
+  const uid=selectedUser, epoch=authEpoch;
+  const current=()=>selectedUser===uid && authEpoch===epoch && $('user-dialog').open;
+  if (check) {
+    panel.textContent='Проверяем привязку Flow без просмотра ключей…';
+    try {
+      const state=await api('users/'+encodeURIComponent(uid)+'/flow/device');
+      if (!current()) return;
+      panel.textContent=!state.bound
+        ? 'Flow ещё не закреплял телефон за этим аккаунтом.'
+        : state.can_release
+          ? 'Привязка есть, но WG-ключ ещё не выдавался. Возможен безопасный сброс.'
+          : 'Сохранена привязка Flow. Автоматический сброс заблокирован: возможен выданный или создаваемый пир; требуется проверка и перевыпуск ключа.';
+      if (state.can_release && Number.isSafeInteger(state.binding_created)) {
+        panel.innerHTML+='<div class="record-actions"><button type="button" class="secondary" data-flow-binding-release="'+state.binding_created+'">Сбросить неиспользованную привязку</button></div>';
+      }
+    } catch (error) { if (current()) panel.textContent=error.message; }
+  } else {
+    const created=Number(release.dataset.flowBindingRelease);
+    if (!Number.isSafeInteger(created) || created<1) return;
+    if (!confirm('Снять только неиспользованную привязку Flow? При наличии выданного WireGuard-ключа Shop запретит сброс. Действие не переносит подписки и не создаёт новый пир.')) return;
+    release.disabled=true;
+    panel.textContent='Проверяем безопасность сброса на сервере…';
+    try {
+      await api('users/'+encodeURIComponent(uid)+'/flow/device/release', {
+        method:'POST', data:{binding_created:created,confirm:'RELEASE_UNUSED_FLOW_BINDING'}
+      });
+      if (current()) panel.textContent='Неиспользованная привязка освобождена. На телефоне повторите «Получить конфиг».';
+    } catch (error) { if (current()) panel.textContent=error.message; }
+  }
+};
+// Destructive actions require the developer role and explicit confirmation.
+// Server failure never removes the card or pretends the peer was revoked.
+const PEER_STATUS_LABELS = {
+  no_subscription:'У пользователя нет подписки WireGuard.',
+  server_unbound:'Подписка не закреплена за сервером. Автоматически переносить её нельзя.',
+  server_missing:'Закреплённый сервер отсутствует или протокол изменился.',
+  server_configuration_error:'Ошибка сохранённой конфигурации сервера.',
+  other_backend:'Подписка закреплена за другим адаптером, не WGDashboard.',
+  key_not_created:'Shop ещё не сохранил ключ пира для этого сервера.',
+  key_unreadable:'Ключ Shop повреждён или недоступен для расшифровки.',
+  peer_missing:'Пир с ключом Shop отсутствует на закреплённом WGDashboard.',
+  peer_restricted:'Пир существует, но ограничен на стороне WGDashboard.',
+  peer_found:'Пир существует на закреплённом WGDashboard.',
+  panel_unavailable:'WGDashboard ответил ошибкой. Проверьте настройки API и журнал Shop.',
+  panel_connection_failed:'Shop не может подключиться к адресу WGDashboard. Проверьте HTTPS и доступность узла.',
+  panel_auth_failed:'WGDashboard отклонил API-ключ Shop (401/403). Обновите ключ в карточке сервера.',
+  panel_api_missing:'API WGDashboard не найден (404/405). Проверьте адрес панели без /api.',
+  panel_timeout:'WGDashboard не ответил за время проверки. Проверьте соединение Shop → панель.'
+};
+$('user-subscriptions').onclick = async event => {
+  const check=event.target.closest('[data-peer-check]');
+  const retry=event.target.closest('[data-peer-retry]');
+  const restore=event.target.closest('[data-peer-restore]');
+  if ((check || retry || restore) && role==='owner' && selectedUser!==null) {
+    const button=check||retry||restore;
+    const sid=check?check.dataset.peerCheck:retry?retry.dataset.peerRetry:restore.dataset.peerRestore;
+    const card=button.closest('.subscription');
+    const panel=card?.querySelector('[data-peer-status]');
+    if(!panel || panel.dataset.peerStatus!==sid)return;
+    const uid=selectedUser,epoch=authEpoch;
+    if(retry && !confirm('Повторить создание пира из существующей очереди? Узел и ключ не изменятся.'))return;
+    if(restore && !confirm('Проверить и синхронизировать пир на исходном сервере с прежним ключом? Срок подписки не изменится.'))return;
+    button.disabled=true;
+    panel.textContent=retry?'Повторная выдача ставится в очередь…':restore?'Восстанавливаем пир с прежним ключом…':'Проверяем ключ и пир на закреплённом сервере…';
+    try {
+      const url='users/'+encodeURIComponent(uid)+'/wireguard/'+(retry?'retry':restore?'restore':'peer');
+      const result=await api(url,{method:retry||restore?'POST':'GET'});
+      if(uid!==selectedUser || epoch!==authEpoch || panel.isConnected===false)return;
+      panel.replaceChildren();
+      if(retry){
+        panel.textContent='Заявка поставлена в очередь. Повторная попытка выполняется фоновым обработчиком.';
+      } else if(restore){
+        panel.textContent=result.status==='already_present'
+          ? 'Пир уже существует на закреплённом сервере. Данные не менялись.'
+          : result.status==='refreshed'
+            ? 'Пир уже работал. Конфигурация обновлена с WGDashboard; обновите подписку в Flow.'
+            : 'Пир восстановлен с прежним ключом. Теперь обновите подписку в Pushok Flow.';
+      } else {
+        const state=PEER_STATUS_LABELS[result.status]||'Статус не определён.';
+        const extra=result.server_name?' Закреплённый узел: '+result.server_name+'.':'';
+        const attempts=result.grant?.state==='pending'
+          ? ' В очереди, попыток: '+result.grant.attempts+'.':'';
+        panel.textContent=state+extra+attempts;
+        if(result.can_retry || result.can_restore){
+          const action=document.createElement('button');
+          action.type='button';
+          action.className='small secondary';
+          if(result.can_retry){
+            action.dataset.peerRetry=sid;
+            action.textContent='Повторить выдачу';
+          } else {
+            action.dataset.peerRestore=sid;
+            action.textContent=result.status==='peer_found'
+              ? 'Обновить конфигурацию' : 'Восстановить отсутствующий пир';
+          }
+          panel.appendChild(action);
+        }
+      }
+    }catch(error){
+      if(uid===selectedUser && epoch===authEpoch && panel.isConnected!==false)panel.textContent=error.message;
+    }finally{button.disabled=false}
+    return;
+  }
+  const revoke=event.target.closest('[data-subscription-revoke]');
+  const erase=event.target.closest('[data-subscription-delete]');
+  const button=revoke || erase;
+  if(!button || role!=='owner' || selectedUser===null)return;
+  const sid=revoke?revoke.dataset.subscriptionRevoke:erase.dataset.subscriptionDelete;
+  if(typeof sid!=='string' || !sid)return;
+  const question=revoke
+    ? 'Отозвать подключение пользователя на сервере? История оплат сохранится.'
+    : 'Удалить запись подписки после подтверждённого отзыва пиров?';
+  if(!confirm(question))return;
+  if(erase && prompt('Для удаления записи введите УДАЛИТЬ','')!=='УДАЛИТЬ')return;
+  button.disabled=true;
+  const uid=selectedUser, epoch=authEpoch;
+  try{
+    await api('subscriptions/'+encodeURIComponent(sid)+(revoke?'/revoke':''),
+      {method:revoke?'POST':'DELETE'});
+    if(uid===selectedUser && epoch===authEpoch){
+      await loadUser(profilePage);
+      $('user-error').textContent=revoke?'Подключение отозвано.':'Запись подписки удалена.';
+    }
+  }catch(error){
+    if(uid===selectedUser && epoch===authEpoch)$('user-error').textContent=error.message;
+  }finally{button.disabled=false}
+};
 $('users-list').onclick = event => {
   const button = event.target.closest('[data-user]'); if (!button) return;
   openUser(button.dataset.user);
@@ -1215,7 +1490,14 @@ const serverState = {active:'Принимать новых', draining:'Толь�
 function serverCard(server) {
   const health = server.health === 'ok' ? 'API доступен' : server.health === 'error' ? 'Ошибка API' : 'Ещё не проверен';
   const panelExpiry = server.profile === 'wgdashboard' ? `<label><input name="schedule_expiry" type="checkbox" ${server.schedule_expiry?'checked':''}> Дублировать срок подписки заданием WGDashboard</label><label>Часовой пояс ОС панели<input name="panel_timezone" value="${esc(server.panel_timezone || 'UTC')}" maxlength="100" placeholder="Europe/Moscow" required></label><p class="muted">Панель удалит peer по расписанию, даже если Shop временно выключен. Укажите часовой пояс самого сервера WGDashboard.</p>` : '';
-  return `<form class="plan-editor" data-server="${esc(server.id)}" data-version="${server.version}"><h3>${esc(server.name)}</h3><p>${esc(protocolLabel(server.protocol))} · ${esc(serverProfileLabel[server.profile] || server.profile)} · ${health}</p><p>Проверка: ${esc(dateTime(server.checked_at))}</p><p>Занято: ${server.occupied} · Всего привязано: ${server.bound_subscriptions}</p><label>Название<input name="name" value="${esc(server.name)}" maxlength="80" required></label><label>Локация<input name="location" value="${esc(server.location)}" maxlength="80"></label><label>Лимит занятых подписок (0 — без лимита)<input name="capacity" type="number" min="0" max="1000000" value="${server.capacity}" required></label><label>Режим<select name="state">${Object.entries(serverState).map(([id,label])=>`<option value="${id}" ${server.state===id?'selected':''}>${label}</option>`).join('')}</select></label>${panelExpiry}<button type="submit" class="small">Сохранить настройки сервера</button><button type="button" class="small secondary" data-server-check="${esc(server.id)}">Проверить API</button><button type="button" class="text-link" data-server-edit="${esc(server.id)}">Профиль подключения</button><button type="button" class="text-link" data-server-credentials="${esc(server.id)}">Обновить доступ</button></form>`;
+  return `<form class="plan-editor" data-server="${esc(server.id)}" data-version="${server.version}"><h3>${esc(server.name)}</h3><p>${esc(protocolLabel(server.protocol))} · ${esc(serverProfileLabel[server.profile] || server.profile)} · ${health}</p><p>Проверка: ${esc(dateTime(server.checked_at))}</p><p class="muted">🔒 Профиль подключения сохранён в Shop. API-адрес и секреты намеренно не отображаются; это не подтверждение доступности сервера.</p><p>Занято: ${server.occupied} · Всего привязано: ${server.bound_subscriptions}</p><label>Название<input name="name" value="${esc(server.name)}" maxlength="80" required></label><label>Локация<input name="location" value="${esc(server.location)}" maxlength="80"></label><label>Лимит занятых подписок (0 — без лимита)<input name="capacity" type="number" min="0" max="1000000" value="${server.capacity}" required></label><label>Режим<select name="state">${Object.entries(serverState).map(([id,label])=>`<option value="${id}" ${server.state===id?'selected':''}>${label}</option>`).join('')}</select></label>${panelExpiry}<button type="submit" class="small">Сохранить настройки сервера</button><button type="button" class="small secondary" data-server-check="${esc(server.id)}">Проверить API</button><button type="button" class="text-link" data-server-edit="${esc(server.id)}">Профиль подключения</button><button type="button" class="text-link" data-server-credentials="${esc(server.id)}">Обновить доступ</button>
+    ${role==='owner' && server.state==='disabled' && !server.bound_subscriptions
+      ? '<button type="button" class="danger-action" data-server-delete="'+esc(server.id)+'">Удалить пустой сервер</button>' : ''}
+    </form>`;
+}
+function showServerNotice(message) {
+  const previous = String($('servers-notice').textContent || '').trim();
+  $('servers-notice').textContent = message + (previous ? ' ' + previous : '');
 }
 async function refreshServers() {
   const data = await api('servers');
@@ -1235,8 +1517,12 @@ function setServerStep(step) {
   const fields = $('server-form').elements;
   if (step === 3 && fields) {
     const name = String(fields.name.value || '').trim(), location = String(fields.location.value || '').trim();
+    const replacing = Boolean(String(fields.url?.value || '').trim());
+    const stored = editingServer && !replacing;
     $('server-review').innerHTML = '<h3>'+esc(name)+'</h3><p>'+esc(protocolLabel(fields.protocol.value))+
       (location ? ' · '+esc(location) : '')+'</p><p>Лимит подписок: '+esc(Number(fields.capacity.value) || 'без лимита')+'</p>'+
+      '<p>'+(stored ? 'Сохранённый профиль останется без изменений (секреты скрыты).' :
+      'Новый профиль будет зашифрован и сохранён только после подтверждения Shop.')+'</p>'+
       '<p>Доступ к панели будет проверен отдельной кнопкой после сохранения.</p>';
   }
 }
@@ -1315,8 +1601,13 @@ $('server-credentials-form').onsubmit = async event => {
     await api('servers/'+encodeURIComponent(server.id)+'/credentials', {method:'PATCH',data});
     if (epoch !== credentialsEpoch) return;
     $('server-credentials-dialog').close();
-    await refreshServers();
-    $('admin-notice').textContent = 'Новый доступ сохранён. Проверьте API и включите нужный режим сервера.';
+    const message = '✅ Новый API-ключ сохранён в зашифрованном виде. Проверьте API и включите нужный режим сервера.';
+    try {
+      await refreshServers();
+      showServerNotice(message);
+    } catch (refreshError) {
+      $('servers-notice').textContent = message+' Список не обновился: '+refreshError.message+'. Нажмите «Обновить».';
+    }
   } catch (error) {
     if (epoch === credentialsEpoch) $('server-credentials-error').textContent = error.message;
   } finally {
@@ -1359,6 +1650,9 @@ function openServer(server = null) {
   form.elements.wg_api.value = server?.profile === 'wgdashboard' ? 'wgdashboard' : 'agent';
   form.elements.protocol.disabled = !!server; form.elements.url.required = !server;
   $('server-title').textContent = server ? 'Профиль сервера' : 'Новый сервер';
+  $('server-profile-state').textContent = server
+    ? '✅ Профиль подключения сохранён в Shop в зашифрованном виде. Поля API и токена пустые намеренно. Оставьте их пустыми, чтобы сохранить прежние настройки, или заполните весь профиль для замены.'
+    : 'Профиль пока не сохранён. После успешного создания он появится в списке серверов; API отдельно проверяется кнопкой «Проверить API».';
   $('server-form-error').textContent = ''; showServerFields(); setServerStep(1); $('server-dialog').showModal();
 }
 $('new-server').onclick = () => openServer();
@@ -1404,9 +1698,23 @@ $('server-form').onsubmit = async event => {
     else { data.protocol=protocol; data.settings=profile; }
     await api(original ? 'servers/'+encodeURIComponent(original.id) : 'servers', {method:original?'PUT':'POST',data});
     if (epoch !== serverDialogEpoch) return;
-    $('server-dialog').close(); await refreshServers();
-    $('admin-notice').textContent = profile ? 'Профиль сохранён. Проверьте API сервера перед включением продаж.' : 'Сервер сохранён.';
-  } catch (error) { if (epoch === serverDialogEpoch) $('server-form-error').textContent=error.message; }
+    $('server-dialog').close();
+    const message = profile
+      ? '✅ Профиль подключения сохранён в Shop (зашифрован). Адрес и ключ скрыты намеренно. Проверьте API перед включением продаж.'
+      : '✅ Настройки сервера сохранены. Профиль подключения остался без изменений.';
+    // Server status belongs next to the server list, not in the tariff section.
+    try {
+      await refreshServers();
+      showServerNotice(message);
+    } catch (refreshError) {
+      $('servers-notice').textContent = message+' Список серверов не обновился: '+refreshError.message+'. Нажмите «Обновить».';
+    }
+  } catch (error) {
+    if (epoch === serverDialogEpoch) {
+      $('server-form-error').textContent = '❌ Не сохранено: '+error.message+'. Исправьте данные — введённые поля остались в форме.';
+      $('server-profile-state').textContent = 'Данные не записаны. Исправьте ошибку и повторите сохранение.';
+    }
+  }
   finally { if (epoch === serverDialogEpoch) { button.disabled=false; serverSubmitting=false; } }
 };
 $('server-list').onsubmit = async event => {
@@ -1414,25 +1722,67 @@ $('server-list').onsubmit = async event => {
   const values=new FormData(form), button=form.querySelector('button[type="submit"]'); button.disabled=true;
   try {
     await api('servers/'+encodeURIComponent(form.dataset.server), {method:'PUT',data:{name:String(values.get('name')),location:String(values.get('location') || ''),capacity:Number(values.get('capacity')),state:String(values.get('state')),version:Number(form.dataset.version),...(form.elements?.schedule_expiry ? {schedule_expiry:form.elements.schedule_expiry.checked,panel_timezone:String(values.get('panel_timezone') || 'UTC')} : {})}});
-    await refreshServers(); $('error').textContent='';
-  } catch (error) { $('error').textContent=error.message; button.disabled=false; }
+    await refreshServers();
+    showServerNotice('✅ Настройки сервера сохранены.');
+    $('error').textContent='';
+  } catch (error) {
+    $('servers-notice').textContent='❌ Не удалось сохранить настройки сервера: '+error.message;
+    button.disabled=false;
+  }
 };
 $('server-list').onclick = async event => {
+  const remove=event.target.closest('[data-server-delete]');
+  if(remove && role==='owner'){
+    const id=remove.dataset.serverDelete;
+    if(!confirm('Удалить выключенный сервер без подписок и ключей?'))return;
+    if(prompt('Для удаления сервера введите УДАЛИТЬ','')!=='УДАЛИТЬ')return;
+    remove.disabled=true;
+    try{
+      await api('servers/'+encodeURIComponent(id),{method:'DELETE'});
+      await refreshServers();
+      showServerNotice('Пустой сервер удалён.');
+    }catch(error){
+      $('servers-notice').textContent=error.message;
+      remove.disabled=false;
+    }
+    return;
+  }
   const credentials=event.target.closest('[data-server-credentials]');
   if (credentials) { openServerCredentials(serverCache.find(s=>s.id===credentials.dataset.serverCredentials)); return; }
   const edit=event.target.closest('[data-server-edit]');
   if (edit) { openServer(serverCache.find(s=>s.id===edit.dataset.serverEdit)); return; }
   const check=event.target.closest('[data-server-check]'); if (!check) return;
   check.disabled=true;
-  try { await api('servers/'+encodeURIComponent(check.dataset.serverCheck)+'/check',{method:'POST'}); await refreshServers(); }
-  catch (error) { $('error').textContent=error.message; check.disabled=false; }
+  try {
+    await api('servers/'+encodeURIComponent(check.dataset.serverCheck)+'/check',{method:'POST'});
+    await refreshServers();
+    showServerNotice('✅ API сервера проверен. Для запуска подключения отдельно проверьте выдачу WireGuard peer.');
+  } catch (error) {
+    $('servers-notice').textContent='❌ Проверка API не пройдена: '+error.message;
+    check.disabled=false;
+  }
 };
 
 async function refreshFlowAutoPolicy() {
   const epoch=authEpoch;
   const p=await api('flow/wireguard/auto');
   if(epoch!==authEpoch || !canGroup('starter'))return;
-  $('flow-auto-count').textContent='Зарезервировано: '+p.used+' из '+p.max_users+'. Осталось: '+p.remaining;
+  const diagnostic=p.diagnostics||{};
+  const statusText={
+    policy_disabled:'Автовыдача выключена.',
+    wgdashboard_not_ready:'Нет активного WGDashboard с настроенным удалением пиров по сроку.',
+    issuance_retrying:'Есть повторяющиеся ошибки создания пиров — проверьте API и очередь.',
+    issuance_pending:'Пиры ожидают создания в фоновой очереди.',
+    ready:'Автовыдача готова для пользователей, подходящих под условия.'
+  };
+  $('flow-auto-count').textContent='Зарезервировано: '+p.used+' из '+p.max_users+
+    '. Осталось: '+p.remaining+'. '+(statusText[diagnostic.state]||'')+
+    ' Ожидают: '+(diagnostic.pending??'—')+
+    ', с повторными попытками: '+(diagnostic.retrying??'—')+
+    ', выдано: '+(diagnostic.active??'—')+
+    ', существующих WG-подписок: '+(diagnostic.existing_wg_subscriptions??'—')+'.'+
+    (diagnostic.mtproxy_only?' Выдача ограничена подтверждёнными пользователями MTProxy.':'');
+
   $('flow-auto-editor').innerHTML=
     '<form class="plan-editor" data-flow-auto-version="'+p.version+'">'+
     '<label class="plan-enabled"><input name="enabled" type="checkbox" '+(p.enabled?'checked':'')+

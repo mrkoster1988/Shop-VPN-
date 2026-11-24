@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import secrets
 import io
 import json
@@ -21,7 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
-from pydantic import BaseModel, Field, field_validator, ValidationError
+from pydantic import BaseModel, Field, field_validator, ValidationError, model_validator
 from starlette.applications import Starlette
 from starlette.routing import Mount
 from . import ads_bookings as bookings, ads_finance as finance
@@ -30,13 +31,16 @@ from . import shop_settings, runtime_settings, payment_policy, shop_finance, pla
 from . import config as c, providers, service, servers, server_routing, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, pushok_identity, flow_wireguard_devices
+from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, flow_bridge_recovery, pushok_identity, flow_wireguard_devices, admin_cleanup, wg_peer_diagnostics
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
 logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('httpcore').setLevel(logging.WARNING)
 STATIC = Path(__file__).parent / 'static'
+# Content fingerprints prevent older cached CSS/JS from surviving a deployment.
+ASSET_VERSIONS = {name: hashlib.sha256((STATIC / name).read_bytes()).hexdigest()[:16]
+                  for name in ('style.css', 'admin.js', 'app.js', 'flow-links.js')}
 
 @asynccontextmanager
 async def lifespan(app):
@@ -163,7 +167,7 @@ class Purchase(BaseModel):
     receipt_email: str | None = Field(default=None, max_length=254)
     promo_code: str | None = Field(default=None,min_length=1,max_length=32)
     promo_version: int | None = Field(default=None,ge=1,strict=True)
-    quoted_amount: int | None = Field(default=None,ge=1,le=1000000,strict=True)
+    quoted_amount: int | None = Field(default=None,ge=0,le=1000000,strict=True)
     quote_currency: Literal['RUB','XTR'] | None = None
     payment_policy_version: int | None = Field(default=None,ge=0,strict=True)
 
@@ -172,10 +176,26 @@ class PlanFields(BaseModel):
     model_config = {'extra': 'forbid'}
     name: str = Field(min_length=1, max_length=80)
     days: int = Field(ge=1, le=3650, strict=True)
-    price: int = Field(ge=1, le=1000000, strict=True)
-    stars: int = Field(ge=1, le=100000, strict=True)
+    price: int = Field(ge=0, le=1000000, strict=True)
+    stars: int = Field(ge=0, le=100000, strict=True)
     enabled: bool = Field(strict=True)
     device_limit: int = Field(default=4,ge=0,le=20,strict=True)
+    free_activation_limit: int = Field(default=0,ge=0,le=1000000,strict=True)
+    free_traffic_gb: int = Field(default=0,ge=0,le=10000,strict=True)
+    free_auto_renew: bool = Field(default=False,strict=True)
+    free_max_renewals: int = Field(default=0,ge=0,le=12,strict=True)
+    @model_validator(mode='after')
+    def check_free(self):
+        if self.price != 0 and (self.free_activation_limit or self.free_traffic_gb or self.free_auto_renew or self.free_max_renewals):
+            raise ValueError('Ограничения бесплатного тарифа доступны только при цене 0')
+        if self.free_auto_renew and self.free_traffic_gb:
+            raise ValueError('Автопродление тарифа с квотой трафика недоступно до реализации сброса счётчика 3x-ui')
+        if self.free_auto_renew != (self.free_max_renewals > 0):
+            raise ValueError('Для автопродления укажите число продлений от 1 до 12')
+        if (self.price == 0) != (self.stars == 0):
+            raise ValueError('Бесплатный тариф должен стоить 0 ₽ и 0 Stars одновременно')
+        return self
+
     @field_validator('name')
     @classmethod
     def clean_name(cls, value):
@@ -249,8 +269,11 @@ async def protocol_catalog():
     return protocols.catalog()
 
 def html_page(name):
-    html = (STATIC / name).read_text().replace('__BASE_PATH__', c.BASE_PATH)
-    return HTMLResponse(html, headers={'Cache-Control': 'no-cache'})
+    html = (STATIC / name).read_text()
+    for asset, fingerprint in ASSET_VERSIONS.items():
+        marker = '__BASE_PATH__/static/' + asset + '"'
+        html = html.replace(marker, marker[:-1] + '?v=' + fingerprint + '"')
+    return HTMLResponse(html.replace('__BASE_PATH__', c.BASE_PATH), headers={'Cache-Control': 'no-cache'})
 
 @app.get('/')
 async def index():
@@ -454,7 +477,7 @@ async def catalog(request: Request):
     except HTTPException:
         customer = None
         tg = False
-    plans = [{**p, 'price': p['stars'] if tg else p['price']} for p in all_rows('SELECT id,name,days,price,stars,version,device_limit FROM plans WHERE enabled=1 ORDER BY position,id')]
+    plans = [{**p, 'price': 0 if p['is_free'] else (p['stars'] if tg else p['price']), 'stars': 0 if p['is_free'] else p['stars']} for p in all_rows('SELECT id,name,days,price,stars,is_free,version,device_limit,free_activation_limit,free_traffic_gb,free_auto_renew,free_max_renewals FROM plans WHERE enabled=1 ORDER BY position,id')]
     public_settings=shop_settings.public()
     options,sale_notice=runtime_settings.catalog_options(customer,providers.available)
     appearance=runtime_settings.get('appearance')
@@ -462,7 +485,7 @@ async def catalog(request: Request):
     return {'plans': plans, 'currency': 'XTR' if tg else 'RUB', 'protocols': options,
             'appearance':{k:v for k,v in appearance.items() if k not in ('version','updated')},
             'sale_notice':sale_notice,'pushok_id':pushok_identity.public_capabilities(),
-            'trial':trials.offer(customer), **payment, 'bot_username': c.BOT_USERNAME,
+            'trial':trials.offer(customer), **payment, 'bot_username': c.BOT_USERNAME if c.BOT_TOKEN else None,
             'support': public_settings['support'],
             'receipts': not tg and payment['payment_mode'] in ('yookassa','sbp') and os.getenv('YOOKASSA_RECEIPTS') == 'true',
             'terms': public_settings['terms']}
@@ -757,13 +780,17 @@ async def purchase(data: Purchase, user=Depends(current_user)):
     if not providers.available(data.protocol, user['id']):
         raise HTTPException(503, 'Этот способ подключения ещё не настроен')
     async with service.lock:
-        method = payment_policy.method_for(user)
-        if method == 'stars' and (not c.BOT_TOKEN or not shop_settings.terms_configured()):
+        selected = one('SELECT is_free FROM plans WHERE id=? AND enabled=1',(data.plan,))
+        # Free plans are issued without creating an invoice, even when a
+        # payment provider is not configured.
+        is_free = bool(selected and selected['is_free'])
+        method = 'free' if is_free else payment_policy.method_for(user)
+        if not is_free and method == 'stars' and (not c.BOT_TOKEN or not shop_settings.terms_configured()):
             raise HTTPException(503, 'Владелец ещё не настроил оплату и условия продажи в Telegram')
         if method == 'stars' and not data.accept_terms:
             raise HTTPException(422, 'Подтвердите согласие с условиями продажи')
         email = email_address(data.receipt_email) if data.receipt_email else user['email']
-        if method in ('yookassa', 'sbp') and os.getenv('YOOKASSA_RECEIPTS') == 'true' and not email:
+        if not is_free and method in ('yookassa', 'sbp') and os.getenv('YOOKASSA_RECEIPTS') == 'true' and not email:
             raise HTTPException(422, 'Укажите email для чека')
         order = promos.make_order(data,user,method,email)
         method = order['method']
@@ -1156,12 +1183,42 @@ async def qr(sid: str, user=Depends(current_user)):
 
 
 def admin_plan(row):
-    return {**row, 'enabled': bool(row['enabled'])}
+    return {**row, 'enabled': bool(row['enabled']), 'free_auto_renew': bool(row['free_auto_renew']), 'price': 0 if row['is_free'] else row['price'], 'stars': 0 if row['is_free'] else row['stars']}
 
 
 @app.get('/api/admin/servers', dependencies=[Depends(admin)])
 async def admin_servers():
     return {'servers':servers.list_servers(), 'unassigned_subscriptions':one('SELECT count(*) AS n FROM subscriptions WHERE server_id IS NULL')['n']}
+
+def _server_profile_error(data, fallback):
+    """Do not expose credentials or full server URLs in validation responses."""
+    settings = data.settings
+    if (isinstance(settings, dict)
+            and settings.get('api') == 'wgdashboard'):
+        raw = settings.get('url')
+        if isinstance(raw, str):
+            try:
+                from ipaddress import ip_address
+                parsed = urlsplit(raw)
+                host = parsed.hostname
+                if (parsed.scheme == 'http' and host and
+                        not (ip_address(host).is_private if _is_ip_address(host)
+                             else host == 'localhost' or ('.' not in host and ':' not in host))):
+                    return ('Для WGDashboard с публичным IP нужен HTTPS. '
+                            'Порт панели и UDP-порт WireGuard — разные адреса.')
+            except ValueError:
+                pass
+    return fallback
+
+
+def _is_ip_address(host):
+    from ipaddress import ip_address
+    try:
+        ip_address(host)
+        return True
+    except ValueError:
+        return False
+
 
 @app.post('/api/admin/servers', dependencies=[Depends(admin)])
 async def create_server(data: ServerCreate):
@@ -1169,7 +1226,7 @@ async def create_server(data: ServerCreate):
         try:
             result = servers.create(data)
         except (ValidationError, ValueError):
-            raise HTTPException(422,'Проверьте профиль подключения: API, адрес, секреты, inbound и параметры протокола.') from None
+            raise HTTPException(422,_server_profile_error(data,'Проверьте профиль подключения: API, адрес, секреты, inbound и параметры протокола.')) from None
     return JSONResponse(result, status_code=201)
 
 @app.put('/api/admin/servers/{sid}', dependencies=[Depends(admin)])
@@ -1178,7 +1235,7 @@ async def update_server(sid: str, data: ServerUpdate):
         try:
             return servers.update(sid,data)
         except (ValidationError, ValueError):
-            raise HTTPException(422,'Проверьте профиль подключения. Секреты в ответе не возвращаются.') from None
+            raise HTTPException(422,_server_profile_error(data,'Проверьте профиль подключения. Секреты в ответе не возвращаются.')) from None
 
 @app.patch('/api/admin/servers/{sid}/credentials', dependencies=[Depends(admin)])
 async def update_server_credentials(sid: str, data: ServerCredentials):
@@ -1227,8 +1284,8 @@ async def create_plan(data: PlanCreate):
             if conn.execute('SELECT 1 FROM plans WHERE id=?', (data.id,)).fetchone():
                 raise HTTPException(409, 'Тариф с таким кодом уже существует. Обновите список тарифов.')
             position = conn.execute('SELECT coalesce(max(position),-1)+1 FROM plans').fetchone()[0]
-            conn.execute('INSERT INTO plans(id,name,days,price,stars,enabled,position,updated,device_limit) VALUES (?,?,?,?,?,?,?,?,?)',
-                         (data.id, data.name, data.days, data.price, data.stars, int(data.enabled), position, int(time.time()),data.device_limit))
+            conn.execute('INSERT INTO plans(id,name,days,price,stars,is_free,enabled,position,updated,device_limit,free_activation_limit,free_traffic_gb,free_auto_renew,free_max_renewals) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                         (data.id, data.name, data.days, max(1,data.price), max(1,data.stars), int(data.price==0), int(data.enabled), position, int(time.time()),data.device_limit,data.free_activation_limit,data.free_traffic_gb,int(data.free_auto_renew),data.free_max_renewals))
             saved = dict(conn.execute('SELECT * FROM plans WHERE id=?', (data.id,)).fetchone())
             conn.execute('INSERT INTO plan_changes(plan_id,created,before_data,after_data) VALUES (?,?,?,?)',
                          (data.id, saved['updated'], 'null', json.dumps(saved, ensure_ascii=False)))
@@ -1245,10 +1302,10 @@ async def update_plan(plan_id: str, data: PlanUpdate):
             before = dict(row)
             if before['version'] != data.version:
                 raise HTTPException(409, 'Тариф уже изменён. Обновите страницу перед сохранением.')
-            if all(before[key] == value for key, value in data.model_dump(exclude={'version'},exclude_none=True).items()):
+            if all((0 if before['is_free'] else before[key]) == value for key, value in data.model_dump(exclude={'version','device_limit'},exclude_none=True).items() if key in ('price','stars')) and all(before[key] == value for key, value in data.model_dump(exclude={'version','price','stars'},exclude_none=True).items()):
                 return admin_plan(before)
-            conn.execute('UPDATE plans SET name=?,days=?,price=?,stars=?,enabled=?,device_limit=?,version=version+1,updated=? WHERE id=?',
-                         (data.name, data.days, data.price, data.stars, int(data.enabled),before['device_limit'] if data.device_limit is None else data.device_limit,int(time.time()),plan_id))
+            conn.execute('UPDATE plans SET name=?,days=?,price=?,stars=?,is_free=?,enabled=?,device_limit=?,free_activation_limit=?,free_traffic_gb=?,free_auto_renew=?,free_max_renewals=?,version=version+1,updated=? WHERE id=?',
+                         (data.name, data.days, max(1,data.price), max(1,data.stars), int(data.price==0), int(data.enabled),before['device_limit'] if data.device_limit is None else data.device_limit,data.free_activation_limit,data.free_traffic_gb,int(data.free_auto_renew),data.free_max_renewals,int(time.time()),plan_id))
             after = dict(conn.execute('SELECT * FROM plans WHERE id=?', (plan_id,)).fetchone())
             conn.execute('INSERT INTO plan_changes(plan_id,created,before_data,after_data) VALUES (?,?,?,?)',
                          (plan_id, after['updated'], json.dumps(before, ensure_ascii=False), json.dumps(after, ensure_ascii=False)))
@@ -1295,6 +1352,88 @@ async def admin_users(q: str = Query(default='', max_length=100),
             [int(time.time()), *args, page_size, (page-1)*page_size]).fetchall()
     return {'users': [dict(row) for row in rows], 'total': total, 'page': page, 'page_size': page_size}
 
+# Destructive maintenance requires the developer role regardless of
+# delegated customer/catalog/server privileges.
+def _developer_only(actor):
+    if actor.get('role') != 'owner':
+        raise HTTPException(403, 'Удаление доступно только разработчику')
+
+
+@app.post('/api/admin/subscriptions/{sid}/revoke')
+async def admin_subscription_revoke(sid: str = APIPath(min_length=1,max_length=100),
+                                    actor=Depends(admin)):
+    _developer_only(actor)
+    return await admin_cleanup.revoke_subscription(sid)
+
+
+@app.delete('/api/admin/subscriptions/{sid}')
+async def admin_subscription_delete(sid: str = APIPath(min_length=1,max_length=100),
+                                    actor=Depends(admin)):
+    _developer_only(actor)
+    async with service.lock:
+        return admin_cleanup.purge_subscription(sid)
+
+
+@app.delete('/api/admin/plans/{plan_id}')
+async def admin_plan_delete(plan_id: str = APIPath(min_length=1,max_length=32),
+                            actor=Depends(admin)):
+    _developer_only(actor)
+    async with service.lock:
+        return admin_cleanup.delete_unused_plan(plan_id)
+
+
+@app.delete('/api/admin/servers/{sid}')
+async def admin_server_delete(sid: str = APIPath(min_length=1,max_length=100),
+                              actor=Depends(admin)):
+    _developer_only(actor)
+    async with service.lock:
+        return admin_cleanup.delete_unused_server(sid)
+
+
+# Developer-only Flow phone-binding diagnostics. No private identifiers are read
+# by the admin panel, and release is restricted to never-issued WireGuard.
+@app.get('/api/admin/users/{user_id}/flow/device')
+async def admin_flow_device_binding_check(
+        user_id: int = APIPath(ge=1, le=9223372036854775807),
+        actor=Depends(admin)):
+    _developer_only(actor)
+    return flow_bridge_recovery.inspect(user_id)
+
+
+@app.post('/api/admin/users/{user_id}/flow/device/release')
+async def admin_flow_unused_device_release(
+        data: flow_bridge_recovery.ReleaseRequest,
+        user_id: int = APIPath(ge=1, le=9223372036854775807),
+        actor=Depends(admin)):
+    _developer_only(actor)
+    async with service.lock:
+        return flow_bridge_recovery.release_unused(user_id, data)
+
+
+@app.get('/api/admin/users/{user_id}/wireguard/peer')
+async def admin_wireguard_peer_check(
+        user_id: int = APIPath(ge=1, le=9223372036854775807),
+        actor=Depends(admin)):
+    _developer_only(actor)
+    return await wg_peer_diagnostics.inspect(user_id)
+
+
+@app.post('/api/admin/users/{user_id}/wireguard/restore')
+async def admin_wireguard_peer_restore(
+        user_id: int = APIPath(ge=1, le=9223372036854775807),
+        actor=Depends(admin)):
+    _developer_only(actor)
+    return await wg_peer_diagnostics.restore_primary(user_id)
+
+
+@app.post('/api/admin/users/{user_id}/wireguard/retry')
+async def admin_wireguard_peer_retry(
+        user_id: int = APIPath(ge=1, le=9223372036854775807),
+        actor=Depends(admin)):
+    _developer_only(actor)
+    return await wg_peer_diagnostics.retry_pending(user_id)
+
+
 @app.get('/api/admin/users/{user_id}', dependencies=[Depends(admin)])
 async def admin_user(user_id: int = APIPath(ge=1, le=9223372036854775807),
                      orders_page: int = Query(default=1, ge=1, le=1000000),
@@ -1305,7 +1444,12 @@ async def admin_user(user_id: int = APIPath(ge=1, le=9223372036854775807),
         if row is None:
             raise HTTPException(404, 'Пользователь не найден')
         subscriptions = [dict(sub) for sub in conn.execute(
-            'SELECT id,protocol,expires,state,device_limit FROM subscriptions WHERE user_id=? ORDER BY protocol,id', (user_id,))]
+            'SELECT id,user_id,protocol,expires,state,device_limit FROM subscriptions WHERE user_id=? ORDER BY protocol,id', (user_id,))]
+        for sub in subscriptions:
+            reason = admin_cleanup.purge_blocker(conn, sub)
+            sub['can_delete'] = reason is None
+            sub['delete_blocker'] = reason
+            sub.pop('user_id', None)
         total = conn.execute('SELECT count(*) FROM orders WHERE user_id=?', (user_id,)).fetchone()[0]
         orders = [dict(order) for order in conn.execute("""SELECT id,protocol,plan,plan_name,days,amount,
             currency,method,status,created,attempts,error,promo_code,promo_percent,base_amount,discount FROM orders WHERE user_id=?

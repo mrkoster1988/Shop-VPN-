@@ -44,6 +44,8 @@ def _policy(client, monkeypatch, *, enabled=True, days=1, max_users=3):
 
 
 def test_default_off_no_grant_after_registration_or_login(client):
+    assert auto.policy()['enabled'] is False
+    assert auto.policy()['days'] == 30
     assert client.get('/api/admin/flow/wireguard/auto').status_code == 401
     assert client.get('/api/admin/flow/wireguard/auto',
                       headers={'Authorization': 'Bearer ' + c.ADMIN_TOKEN}).json()['enabled'] is False
@@ -157,3 +159,47 @@ def test_policy_off_does_not_revoke_existing_grant(client, monkeypatch):
     assert asyncio.run(auto.process_pending()) == 0
     assert one('SELECT state FROM flow_auto_grants')['state'] == 'pending'
     assert one('SELECT state FROM subscriptions WHERE id=?', (sid,))['state'] == 'pending'
+
+
+def test_mtproxy_only_pilot_excludes_public_shop_signups(client, monkeypatch):
+    monkeypatch.setenv('FLOW_TRIAL_MTPROXY_ONLY', 'true')
+    _node()
+    assert _policy(client, monkeypatch, enabled=True, days=30, max_users=2).status_code == 200
+    register(client)
+    assert auto.enqueue(1) == 'not_mtproxy'
+    assert one('SELECT count(*) AS n FROM flow_auto_grants')['n'] == 0
+
+    # The bridge binds a verified MTProxy identity before requesting a grant.
+    from test_flow_identity_bridge import _enabled, _call
+    _enabled(monkeypatch)
+    reply = _call(client)
+    assert reply.status_code == 200, reply.text
+    assert reply.json() == {'status': 'pending', 'subscription_url': None}
+    grant = one('SELECT user_id,target_expires FROM flow_auto_grants')
+    assert grant['user_id'] == 2
+    assert grant['target_expires'] > int(time.time()) + 29 * 86400
+
+    # Another login by the original Shop email account still cannot claim it.
+    assert auto.enqueue(1) == 'not_mtproxy'
+    assert one('SELECT count(*) AS n FROM flow_auto_grants')['n'] == 1
+
+
+def test_owner_issuance_diagnostics_do_not_expose_credentials(client, monkeypatch):
+    status=client.get('/api/admin/flow/wireguard/auto',
+        headers={'Authorization':'Bearer '+c.ADMIN_TOKEN})
+    assert status.status_code==200
+    initial=status.json()['diagnostics']
+    assert initial['state']=='policy_disabled'
+    assert initial['pending']==0 and initial['active']==0
+    assert 'token' not in json.dumps(initial).lower()
+    _node()
+    assert _policy(client, monkeypatch).status_code==200
+    register(client)
+    status=client.get('/api/admin/flow/wireguard/auto',
+        headers={'Authorization':'Bearer '+c.ADMIN_TOKEN})
+    data=status.json()['diagnostics']
+    assert data['state']=='issuance_pending'
+    assert data['ready_node'] is True
+    assert data['pending']==1 and data['retrying']==0
+    assert data['existing_wg_subscriptions']==1
+    assert 'z'*40 not in json.dumps(data)

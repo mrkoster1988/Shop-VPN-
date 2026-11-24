@@ -60,3 +60,56 @@ def test_interface_cannot_change_after_subscription_is_bound(client):
                           headers={'Authorization':'Bearer '+c.ADMIN_TOKEN})
     assert response.status_code == 409
     assert servers.decode(one('SELECT * FROM servers WHERE id=?', ('test-wg',))) == profile
+
+
+def test_public_http_wgdashboard_rejected_with_actionable_message(client):
+    from app import config as c
+    payload = {'name':'New WGDashboard','location':'','protocol':'wg',
+        'capacity':0,'settings':{'api':'wgdashboard',
+          'url':'http://193.238.155.39:10086',
+          'token':'t'*40,'configuration':'wg0'}}
+    resp = client.post('/api/admin/servers',json=payload,
+        headers={'Authorization':'Bearer '+c.ADMIN_TOKEN})
+    assert resp.status_code==422,resp.text
+    assert 'HTTPS' in resp.json()['detail']
+    assert 't'*40 not in resp.text
+
+
+def test_new_server_settings_are_encrypted_and_persist_after_reinit(client):
+    from app.db import init_db
+    profile = {
+        'api': 'wgdashboard',
+        'url': 'https://wg.example/private-panel',
+        'token': 't'*40,
+        'configuration': 'wg0',
+    }
+    created = client.post('/api/admin/servers', headers={
+        'Authorization': 'Bearer ' + c.ADMIN_TOKEN,
+    }, json={
+        'name': 'New WG node', 'location': 'FI', 'protocol': 'wg',
+        'capacity': 0, 'settings': profile,
+    })
+    assert created.status_code == 201, created.text
+    item = created.json()
+    assert item['profile'] == 'wgdashboard'
+    assert item['state'] == 'disabled'
+    assert 'wg.example' not in created.text
+    assert profile['token'] not in created.text
+    row = one('SELECT * FROM servers WHERE id=?', (item['id'],))
+    assert row is not None
+    assert profile['token'] not in row['settings']
+    assert profile['url'] not in row['settings']
+    assert servers.decode(row) == {
+        **profile, 'panel_timezone': None, 'schedule_expiry': False,
+    }
+    init_db()
+    fresh = one('SELECT * FROM servers WHERE id=?', (item['id'],))
+    assert fresh is not None
+    assert servers.decode(fresh) == servers.decode(row)
+    listing = client.get('/api/admin/servers', headers={
+        'Authorization': 'Bearer ' + c.ADMIN_TOKEN,
+    })
+    assert listing.status_code == 200
+    assert any(server['id'] == item['id'] for server in listing.json()['servers'])
+    assert profile['token'] not in listing.text
+    assert profile['url'] not in listing.text

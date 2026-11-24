@@ -10,9 +10,9 @@ def public(order):
         help_needed=attempts>=3
         stage='help' if help_needed else 'retrying' if attempts else 'queued'
         title=('Выдача задерживается · нужна помощь' if help_needed else 'Выдача задерживается · повторим попытку') if attempts else (
-            'Добавляем бонусные дни' if kind=='referral' else 'Готовим пробный VPN' if kind=='trial' else 'Оплачено · готовим VPN')
+            'Добавляем бонусные дни' if kind=='referral' else 'Готовим пробный VPN' if kind=='trial' else 'Бесплатно · готовим подключение' if order.get('method')=='free' else 'Оплачено · готовим VPN')
         message='Заказ сохранён в очереди автоматической выдачи.'
-        if kind=='purchase':message+=' Повторно оплачивать не нужно.'
+        if kind=='purchase' and order.get('method')!='free':message+=' Повторно оплачивать не нужно.'
         if help_needed:message+=' Напишите в поддержку и сообщите номер заказа.'
         return {'stage':stage,'title':title,'message':message,'needs_support':help_needed}
     if status=='canceled':

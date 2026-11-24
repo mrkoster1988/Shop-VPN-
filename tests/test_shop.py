@@ -228,7 +228,7 @@ def test_shop_prefix_routes_sessions_and_login(client, monkeypatch):
             response = shop.get(page)
             assert response.status_code == 200
             assert 'content="/shop"' in response.text
-            assert 'href="/shop/static/style.css"' in response.text
+            assert 'href="/shop/static/style.css?v=' in response.text
             assert 'href="/shop/"' in response.text
             assert '__BASE_PATH__' not in response.text
         assert shop.get('/shop/static/app.js').status_code == 200
@@ -593,7 +593,11 @@ def test_admin_user_detail_contains_only_owned_records_and_no_secrets(client):
     assert [o['id'] for o in data['orders']] == ['own-order'] and data['orders_total'] == 1
     assert 'private-' not in result.text and 'secret-payment' not in result.text
     assert 'payment_id' not in result.text and 'payment_url' not in result.text and 'checkout_id' not in result.text
-    assert all(set(s) == {'id','protocol','expires','state','device_limit','access_active'} for s in data['subscriptions'])
+    assert all(set(s) == {'id','protocol','expires','state','device_limit',
+                          'access_active','can_delete','delete_blocker'}
+               for s in data['subscriptions'])
+    assert all(s['can_delete'] is False and isinstance(s['delete_blocker'],str)
+               for s in data['subscriptions'])
     summary = client.get('/api/admin/users', params={'q':'alice@'}, headers=admin_headers()).json()['users'][0]
     assert summary['active_subscriptions'] == 1 and summary['orders_count'] == 1
     execute("UPDATE subscriptions SET state='pending',expires=? WHERE id='expired'", (now+86400,))
@@ -1021,3 +1025,201 @@ def test_icon_sprite_served_at_configured_prefix(client, monkeypatch, base):
             url, symbol = use.split('#')
             assert url == base + '/static/pushok-icons.svg'
             assert symbol in ids
+
+
+def test_free_tariff_has_no_payment_and_is_not_repeatable(client, monkeypatch):
+    """A 0 RUB / 0 Stars offer uses normal provisioning, never a payment invoice."""
+    register(client)
+    assert save_plan(client, plan_edit(client, price=0, stars=0)).status_code == 200
+    catalog = client.get('/api/catalog').json()
+    selected = next(p for p in catalog['plans'] if p['id'] == 'month')
+    assert selected['price'] == 0
+    assert selected['version'] == 2
+    result = client.post('/api/orders', json={
+        'plan': 'month', 'plan_version': 2, 'protocol': 'xui',
+    })
+    assert result.status_code == 200, result.text
+    data = result.json()
+    assert data['amount'] == 0 and data['method'] == 'free'
+    assert data['status'] == 'paid' and not data['payment_url']
+    assert client.post('/api/orders', json={
+        'plan': 'month', 'plan_version': 2, 'protocol': 'xui',
+    }).status_code == 409
+    async def provision(subscription):
+        return 'vless://test-' + subscription['id']
+    monkeypatch.setattr(providers, 'provision', provision)
+    asyncio.run(service.fulfill(data['id']))
+    assert one('SELECT status FROM orders WHERE id=?', (data['id'],))['status'] == 'active'
+    assert one('SELECT expires FROM subscriptions WHERE protocol=?', ('xui',))['expires'] > time.time()
+
+
+def test_free_tariff_requires_both_zero_prices(client):
+    bad = save_plan(client, plan_edit(client, price=0, stars=10))
+    assert bad.status_code == 422
+    bad = save_plan(client, plan_edit(client, price=199, stars=0))
+    assert bad.status_code == 422
+
+
+def test_free_activation_cap_and_quota_restrictions(client, monkeypatch):
+    register(client)
+    payload=plan_edit(client, price=0, stars=0, free_activation_limit=1,
+                      free_traffic_gb=2)
+    assert save_plan(client,payload).status_code==200
+    assert client.post('/api/orders',json={
+        'plan':'month','plan_version':2,'protocol':'wg'}).status_code==409
+    first=client.post('/api/orders',json={
+        'plan':'month','plan_version':2,'protocol':'xui'})
+    assert first.status_code==200,first.text
+    assert one("SELECT free_traffic_gb FROM orders WHERE method='free'")['free_traffic_gb']==2
+    client.post('/api/auth/logout')
+    register(client,'another@example.com')
+    second=client.post('/api/orders',json={
+        'plan':'month','plan_version':2,'protocol':'xui'})
+    assert second.status_code==409
+    assert one("SELECT count(*) AS n FROM orders WHERE method='free'")['n']==1
+
+
+def test_free_renewal_is_bounded_and_automated(client, monkeypatch):
+    register(client)
+    payload=plan_edit(client, price=0, stars=0, free_auto_renew=True,
+                      free_max_renewals=1)
+    assert save_plan(client,payload).status_code==200
+    result=client.post('/api/orders',json={
+        'plan':'month','plan_version':2,'protocol':'xui'})
+    assert result.status_code==200,result.text
+    async def provision(sub):return 'vless://'+sub['id']
+    monkeypatch.setattr(providers,'provision',provision)
+    asyncio.run(service.fulfill(result.json()['id']))
+    execute("UPDATE subscriptions SET expires=?",(int(time.time())+30,))
+    service.enqueue_free_renewals(int(time.time()))
+    queued=one("SELECT id FROM orders WHERE kind='free_renewal' AND status='paid'")
+    assert queued
+    asyncio.run(service.fulfill(queued['id']))
+    sub=one("SELECT free_renewals_used,expires FROM subscriptions")
+    assert sub['free_renewals_used']==1
+    assert sub['expires']>time.time()+29*86400
+    execute("UPDATE subscriptions SET expires=?",(int(time.time())+30,))
+    service.enqueue_free_renewals(int(time.time()))
+    assert one("SELECT count(*) AS n FROM orders WHERE kind='free_renewal'")['n']==1
+
+
+def test_free_offer_cannot_replace_paid_active_access(client):
+    register(client)
+    paid=order(client)
+    assert confirm(client,paid['id']).status_code==200
+    execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state) VALUES (?,?,?,?,?)",
+            ('paid-test',1,'xui',int(time.time())+86400,'active'))
+    assert save_plan(client,plan_edit(client, price=0, stars=0)).status_code==200
+    assert client.post('/api/orders',json={
+        'plan':'month','plan_version':2,'protocol':'xui'}).status_code==409
+
+
+def test_free_renewal_with_lifetime_quota_is_rejected(client):
+    assert save_plan(client,plan_edit(client,price=0,stars=0,
+        free_auto_renew=True,free_max_renewals=1,free_traffic_gb=2)).status_code==422
+    assert save_plan(client,plan_edit(client,price=0,stars=0,
+        free_auto_renew=True,free_max_renewals=0)).status_code==422
+
+
+def test_free_plan_preserves_legacy_positive_prices_in_db(client):
+    assert save_plan(client,plan_edit(client,price=0,stars=0)).status_code==200
+    row=one("SELECT price,stars,is_free FROM plans WHERE id='month'")
+    assert row['price']>0 and row['stars']>0 and row['is_free']==1
+    admin=client.get('/api/admin/plans',headers={'Authorization':'Bearer '+c.ADMIN_TOKEN})
+    assert admin.status_code==200
+    item=next(x for x in admin.json()['plans'] if x['id']=='month')
+    assert item['price']==item['stars']==0
+
+
+def test_pending_paid_order_prevents_free_renewal(client, monkeypatch):
+    register(client)
+    assert save_plan(client,plan_edit(client,price=0,stars=0,
+        free_auto_renew=True,free_max_renewals=2)).status_code==200
+    free=client.post('/api/orders',json={
+        'plan':'month','plan_version':2,'protocol':'xui'})
+    assert free.status_code==200
+    async def provision(sub):return 'vless://'+sub['id']
+    monkeypatch.setattr(providers,'provision',provision)
+    asyncio.run(service.fulfill(free.json()['id']))
+    execute("UPDATE subscriptions SET expires=?",(int(time.time())+30,))
+    # A paid purchase is already in progress; do not grant a competing period.
+    paid_plan=client.post('/api/admin/plans',headers={
+        'Authorization':'Bearer '+c.ADMIN_TOKEN},json={
+        'id':'premium','name':'Платный','days':30,'price':299,'stars':150,
+        'enabled':True})
+    assert paid_plan.status_code==201,paid_plan.text
+    paid=client.post('/api/orders',json={'plan':'premium','plan_version':1,'protocol':'xui'})
+    assert paid.status_code==200
+    service.enqueue_free_renewals(int(time.time()))
+    assert one("SELECT count(*) AS n FROM orders WHERE kind='free_renewal'")['n']==0
+
+
+def test_free_renewal_is_idempotent_when_worker_runs_twice(client, monkeypatch):
+    register(client)
+    assert save_plan(client,plan_edit(client,price=0,stars=0,
+        free_auto_renew=True,free_max_renewals=2)).status_code==200
+    made=client.post('/api/orders',json={'plan':'month','plan_version':2,'protocol':'xui'})
+    assert made.status_code==200
+    calls=[]
+    async def provision(sub):
+        calls.append(dict(sub))
+        return 'vless://'+sub['id']
+    monkeypatch.setattr(providers,'provision',provision)
+    asyncio.run(service.fulfill(made.json()['id']))
+    execute("UPDATE subscriptions SET expires=?",(int(time.time())+30,))
+    service.enqueue_free_renewals(int(time.time()))
+    service.enqueue_free_renewals(int(time.time()))
+    queued=one("SELECT id FROM orders WHERE kind='free_renewal' AND status='paid'")
+    assert queued is not None
+    assert one("SELECT count(*) AS n FROM orders WHERE kind='free_renewal'")['n']==1
+    asyncio.run(service.fulfill(queued['id']))
+    asyncio.run(service.fulfill(queued['id']))
+    assert one("SELECT free_renewals_used FROM subscriptions")['free_renewals_used']==1
+    assert len(calls)==2
+
+
+def test_old_pending_paid_checkout_blocks_queued_free_renewal(client, monkeypatch):
+    register(client)
+    assert save_plan(client,plan_edit(client,price=0,stars=0,
+        free_auto_renew=True,free_max_renewals=2)).status_code==200
+    grant=client.post('/api/orders',json={'plan':'month',
+        'plan_version':2,'protocol':'xui'})
+    assert grant.status_code==200,grant.text
+    async def provision(sub):return 'vless://'+sub['id']
+    monkeypatch.setattr(providers,'provision',provision)
+    asyncio.run(service.fulfill(grant.json()['id']))
+    execute('UPDATE subscriptions SET expires=?',(int(time.time())+30,))
+    service.enqueue_free_renewals(int(time.time()))
+    queued=one("SELECT id,created FROM orders WHERE kind='free_renewal'")
+    assert queued
+    premium=client.post('/api/admin/plans',headers={
+        'Authorization':'Bearer '+c.ADMIN_TOKEN},json={
+        'id':'premium','name':'Платный','days':30,'price':299,
+        'stars':150,'enabled':True})
+    assert premium.status_code==201,premium.text
+    paid=client.post('/api/orders',json={'plan':'premium',
+        'plan_version':1,'protocol':'xui'})
+    assert paid.status_code==200,paid.text
+    # Pending payment may be older than an arbitrary renewal grace window.
+    execute("UPDATE orders SET created=? WHERE id=?",
+        (queued['created']+120,queued['id']))
+    asyncio.run(service.fulfill(queued['id']))
+    assert one("SELECT status FROM orders WHERE id=?",(queued['id'],))['status']=='canceled'
+    assert one('SELECT free_renewals_used FROM subscriptions')['free_renewals_used']==0
+
+
+@pytest.mark.parametrize('page,script',[('/admin','admin.js'),('/','app.js')])
+def test_rendered_assets_use_content_fingerprints(client,page,script):
+    import re
+    response=client.get(page)
+    assert response.status_code==200
+    assert response.headers['cache-control']=='no-cache'
+    for asset in ('style.css',script):
+        match=re.search(r'["\']/static/'+re.escape(asset)+r'\?v=([a-f0-9]{16})["\']',response.text)
+        assert match,asset
+        content=client.get('/static/'+asset+'?v='+match.group(1))
+        assert content.status_code==200
+        assert hashlib.sha256(content.content).hexdigest()[:16]==match.group(1)
+    if page=='/admin':
+        assert 'class="shop-admin-ui"' in response.text
+        assert 'background:#fff!important' in client.get('/static/style.css').text

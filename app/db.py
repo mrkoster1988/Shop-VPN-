@@ -190,6 +190,12 @@ def init_db():
         CREATE TABLE IF NOT EXISTS server_changes (
           id INTEGER PRIMARY KEY, server_id TEXT NOT NULL REFERENCES servers(id), created INTEGER NOT NULL,
           action TEXT NOT NULL, version INTEGER NOT NULL);
+        -- Keep a separate, non-FK record of an owner-confirmed remote revoke.
+        -- It survives permitted local cleanup and prevents accidental purge of
+        -- legacy records marked revoked without a verified panel operation.
+        CREATE TABLE IF NOT EXISTS admin_subscription_revocations (
+          subscription_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL,
+          protocol TEXT NOT NULL, server_id TEXT, revoked_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS subscriptions (
           id TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), protocol TEXT NOT NULL,
           expires INTEGER NOT NULL, state TEXT NOT NULL, secret TEXT,
@@ -258,10 +264,13 @@ def init_db():
         CREATE INDEX IF NOT EXISTS flow_bridge_nonces_expiry ON flow_bridge_nonces(expires);
         CREATE TABLE IF NOT EXISTS flow_auto_policy (
           id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL DEFAULT 0
-          CHECK(enabled IN (0,1)), days INTEGER NOT NULL DEFAULT 1 CHECK(days BETWEEN 1 AND 30),
+          CHECK(enabled IN (0,1)), days INTEGER NOT NULL DEFAULT 30 CHECK(days BETWEEN 1 AND 30),
           max_users INTEGER NOT NULL DEFAULT 100 CHECK(max_users BETWEEN 1 AND 100000),
           version INTEGER NOT NULL DEFAULT 1, updated INTEGER NOT NULL DEFAULT 0);
         INSERT OR IGNORE INTO flow_auto_policy(id) VALUES (1);
+        -- Upgrade untouched 1-day defaults only; preserve every owner-edited policy.
+        UPDATE flow_auto_policy SET days=30
+          WHERE id=1 AND enabled=0 AND days=1 AND version=1 AND updated=0;
         CREATE TABLE IF NOT EXISTS flow_auto_grants (
           user_id INTEGER PRIMARY KEY REFERENCES users(id), 
           subscription_id TEXT NOT NULL UNIQUE REFERENCES subscriptions(id),
@@ -415,6 +424,42 @@ def init_db():
             existing = {row['name'] for row in conn.execute('PRAGMA table_info('+table+')')}
             if 'device_limit' not in existing:
                 conn.execute('ALTER TABLE '+table+' ADD COLUMN device_limit INTEGER NOT NULL DEFAULT 4 CHECK(device_limit BETWEEN 0 AND 20)')
+        # Existing SQLite plans tables require positive prices. Keep their
+        # constraints and represent genuinely free offers with an explicit flag.
+        plan_columns = {row['name'] for row in conn.execute('PRAGMA table_info(plans)')}
+        if 'is_free' not in plan_columns:
+            conn.execute('ALTER TABLE plans ADD COLUMN is_free INTEGER NOT NULL DEFAULT 0 CHECK(is_free IN (0,1))')
+        # Optional free-tier limits; zero means unlimited. Old paid plans are
+        # unchanged. Columns are additive to protect deployed SQLite databases.
+        plan_columns = {row['name'] for row in conn.execute('PRAGMA table_info(plans)')}
+        for column, definition in {
+            'free_activation_limit': 'INTEGER NOT NULL DEFAULT 0 CHECK(free_activation_limit BETWEEN 0 AND 1000000)',
+            'free_traffic_gb': 'INTEGER NOT NULL DEFAULT 0 CHECK(free_traffic_gb BETWEEN 0 AND 10000)',
+            'free_auto_renew': 'INTEGER NOT NULL DEFAULT 0 CHECK(free_auto_renew IN (0,1))',
+            'free_max_renewals': 'INTEGER NOT NULL DEFAULT 0 CHECK(free_max_renewals BETWEEN 0 AND 12)',
+        }.items():
+            if column not in plan_columns:
+                conn.execute('ALTER TABLE plans ADD COLUMN ' + column + ' ' + definition)
+        order_columns = {row['name'] for row in conn.execute('PRAGMA table_info(orders)')}
+        if 'free_traffic_gb' not in order_columns:
+            conn.execute('ALTER TABLE orders ADD COLUMN free_traffic_gb INTEGER NOT NULL DEFAULT 0')
+        for column,definition in {
+            'free_auto_renew': 'INTEGER NOT NULL DEFAULT 0',
+            'free_max_renewals': 'INTEGER NOT NULL DEFAULT 0',
+        }.items():
+            if column not in order_columns:
+                conn.execute('ALTER TABLE orders ADD COLUMN ' + column + ' ' + definition)
+        subscription_columns = {row['name'] for row in conn.execute('PRAGMA table_info(subscriptions)')}
+        if 'free_traffic_gb' not in subscription_columns:
+            conn.execute('ALTER TABLE subscriptions ADD COLUMN free_traffic_gb INTEGER NOT NULL DEFAULT 0')
+        for column,definition in {
+            'free_plan_id': 'TEXT',
+            'free_auto_renew': 'INTEGER NOT NULL DEFAULT 0',
+            'free_max_renewals': 'INTEGER NOT NULL DEFAULT 0',
+            'free_renewals_used': 'INTEGER NOT NULL DEFAULT 0',
+        }.items():
+            if column not in subscription_columns:
+                conn.execute('ALTER TABLE subscriptions ADD COLUMN ' + column + ' ' + definition)
         for position, plan in enumerate(c.PLANS):
             conn.execute('INSERT OR IGNORE INTO plans(id,name,days,price,stars,position) VALUES (?,?,?,?,?,?)',
                          (plan['id'], plan['name'], plan['days'], plan['price'], plan['stars'], position))

@@ -106,6 +106,28 @@ async def fulfill(order_id):
         order = one('SELECT * FROM orders WHERE id=?', (order_id,))
         if not order or order['status'] != 'paid' or order['next_attempt'] > time.time():
             return
+        if order['kind']=='free_renewal':
+            current=one('SELECT * FROM subscriptions WHERE user_id=? AND protocol=?',
+                (order['user_id'],order['protocol']))
+            # Compare against the original free grant, not an arbitrary
+            # 60-second window: a paid checkout may remain pending for hours.
+            original_free=one("""SELECT created FROM orders
+                WHERE user_id=? AND protocol=? AND plan=? AND method='free'
+                  AND kind='purchase' AND status='active'
+                ORDER BY created,id LIMIT 1""",
+                (order['user_id'],order['protocol'],order['plan']))
+            newer_paid=one("""SELECT 1 FROM orders WHERE user_id=? AND protocol=?
+                AND method!='free' AND kind='purchase'
+                AND status IN ('pending','paid','active')
+                AND created>=? LIMIT 1""",
+                (order['user_id'],order['protocol'],original_free['created'] if original_free else 0))
+            plan=one('SELECT enabled,is_free FROM plans WHERE id=?',(order['plan'],))
+            if (newer_paid or not plan or not plan['enabled'] or not plan['is_free'] or
+                    not current or current['state'] not in ('active','expired') or
+                    current['free_plan_id']!=order['plan'] or not current['free_auto_renew'] or
+                    current['free_renewals_used']>=current['free_max_renewals']):
+                execute("UPDATE orders SET status='canceled' WHERE id=? AND status='paid'",(order_id,))
+                return
         if order['kind']=='purchase' and one("SELECT id FROM orders WHERE user_id=? AND protocol=? AND kind='trial' AND status='paid'",(order['user_id'],order['protocol'])):
             return
         try:
@@ -129,16 +151,21 @@ async def fulfill(order_id):
                 if target is None:
                     target = max(int(time.time()),sub['expires']) + order['days']*86400
                     conn.execute('UPDATE orders SET target_expires=? WHERE id=?',(target,order_id))
-            secret = await providers.provision({**sub, 'id':primary_identity(sub),'expires': target})
+            quota = sub['free_traffic_gb'] if order['kind']=='referral' else (order['free_traffic_gb'] if order['method']=='free' else 0)
+            secret = await providers.provision({**sub, 'id':primary_identity(sub),'expires': target,'free_traffic_gb':quota})
             encrypted = c.encrypt(secret)
             device_secrets = []
             for device in all_rows("SELECT * FROM devices WHERE subscription_id=? AND state='active'",(sub['id'],)):
-                value = await providers.provision({**sub,'id':device_identity(device),'expires':target})
+                value = await providers.provision({**sub,'id':device_identity(device),'expires':target,'free_traffic_gb':quota})
                 device_secrets.append((c.encrypt(value),target,device['id']))
             with db() as conn:
                 conn.executemany("UPDATE devices SET secret=?,expires=?,error=NULL WHERE id=?",device_secrets)
-                conn.execute("UPDATE subscriptions SET expires=?,state='active',secret=?,reminder=0,device_limit=?,credential_id=?,primary_key_state='active',rotation_error=NULL,access_source=? WHERE id=?",
-                             (target, encrypted,sub['device_limit'] if order['kind']=='referral' else order['device_limit'],sub.get('credential_id') or c.encrypt(sub['id']),sub['access_source'] if order['kind']=='referral' else order['kind'],sub['id']))
+                conn.execute("UPDATE subscriptions SET expires=?,state='active',secret=?,reminder=0,device_limit=?,credential_id=?,primary_key_state='active',rotation_error=NULL,access_source=?,free_traffic_gb=?,free_plan_id=?,free_auto_renew=?,free_max_renewals=?,free_renewals_used=? WHERE id=?",
+                             (target, encrypted,sub['device_limit'] if order['kind']=='referral' else order['device_limit'],sub.get('credential_id') or c.encrypt(sub['id']),sub['access_source'] if order['kind'] in ('referral','free_renewal') else order['kind'],sub['free_traffic_gb'] if order['kind']=='referral' else quota,
+                      sub['free_plan_id'] if order['kind'] in ('referral','free_renewal') else (order['plan'] if order['method']=='free' else None),
+                      sub['free_auto_renew'] if order['kind'] in ('referral','free_renewal') else (order['free_auto_renew'] if order['method']=='free' else 0),
+                      sub['free_max_renewals'] if order['kind'] in ('referral','free_renewal') else (order['free_max_renewals'] if order['method']=='free' else 0),
+                      sub['free_renewals_used']+1 if order['kind']=='free_renewal' else (sub['free_renewals_used'] if order['kind']=='referral' else 0),sub['id']))
                 conn.execute("UPDATE orders SET status='active',error=NULL WHERE id=?", (order_id,))
         except Exception as exc:
             # Do not persist remote responses, URLs, private keys or credentials in logs.
@@ -249,8 +276,54 @@ def notification_button(label):
     return {'inline_keyboard': [[{'text': label, 'web_app': {'url': url}}]]}
 
 
+def enqueue_free_renewals(now):
+    """Queue at most one renewal per expiring free subscription.
+
+    Renewal does not spend an activation slot; it is capped by the original
+    grant and never extends a subscription after switching to a paid plan.
+    """
+    with db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        rows=conn.execute("""SELECT * FROM subscriptions
+            WHERE state='active' AND free_auto_renew=1
+              AND free_max_renewals>free_renewals_used
+              AND free_plan_id IS NOT NULL AND expires<=?""",(now+60,)).fetchall()
+        for row in rows:
+            sub=dict(row)
+            plan=conn.execute('SELECT enabled,is_free FROM plans WHERE id=?',(sub['free_plan_id'],)).fetchone()
+            if not plan or not plan['enabled'] or not plan['is_free']:
+                continue
+            exists=conn.execute("""SELECT 1 FROM orders WHERE user_id=? AND protocol=?
+                AND kind='free_renewal' AND status='paid'""",
+                (sub['user_id'],sub['protocol'])).fetchone()
+            if exists:continue
+            initial=conn.execute("""SELECT * FROM orders WHERE user_id=? AND protocol=?
+                AND plan=? AND method='free' AND kind='purchase' AND status='active'
+                ORDER BY created,id LIMIT 1""",
+                (sub['user_id'],sub['protocol'],sub['free_plan_id'])).fetchone()
+            if not initial:continue
+            # A newer paid checkout takes precedence over an automatic free
+            # extension, even while that payment/provisioning is still pending.
+            paid=conn.execute("""SELECT 1 FROM orders
+                WHERE user_id=? AND protocol=? AND kind='purchase'
+                  AND method!='free' AND status IN ('pending','paid','active')
+                  AND created>=? LIMIT 1""",
+                (sub['user_id'],sub['protocol'],initial['created'])).fetchone()
+            if paid:continue
+            conn.execute("""INSERT INTO orders (
+                id,user_id,protocol,plan,days,amount,created,currency,method,
+                plan_version,plan_name,device_limit,base_amount,discount,
+                status,kind,free_traffic_gb,free_auto_renew,free_max_renewals)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (str(uuid.uuid4()),sub['user_id'],sub['protocol'],initial['plan'],
+                 initial['days'],0,now,initial['currency'],'free',
+                 initial['plan_version'],initial['plan_name'],sub['device_limit'],0,0,
+                 'paid','free_renewal',sub['free_traffic_gb'],1,sub['free_max_renewals']))
+
+
 async def tick():
     now = int(time.time())
+    enqueue_free_renewals(now)
     for order in all_rows("SELECT * FROM orders WHERE status='pending' AND method IN ('yookassa','sbp') AND payment_id IS NOT NULL AND next_attempt<=? ORDER BY next_attempt,created LIMIT 50", (now,)):
         execute('UPDATE orders SET next_attempt=? WHERE id=?', (now + 60, order['id']))
         try:

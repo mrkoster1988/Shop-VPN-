@@ -143,11 +143,21 @@ class Staging:
         finally:
             server.shutdown();server.server_close();module.update_source.fetch=original
     def compare(self,expected,*,cleared):
+        # SQLite ALTER TABLE ADD COLUMN changes SELECT * digests without
+        # changing historical business data. Re-read every row using the
+        # original column order; still reject any actual row/value changes.
         current=self.snapshot()
         old=expected.get('table_digests',{});new=current.get('table_digests',{})
-        changed=[name for name in set(old)&set(new) if old[name]!=new[name]]
+        # Unit fixtures with matching schemas can compare their complete rows.
+        # Real historical migrations provide column metadata so that additive
+        # columns do not obscure changes to pre-upgrade values.
+        historical=(self.data('snapshot_projected',
+                    {'columns':expected['table_columns']})['projected_table_digests']
+                    if 'table_columns' in expected else new)
+        changed=[name for name in set(old)&set(new)
+                 if old[name]!=historical.get(name)]
         missing=sorted(set(old)-set(new))
-        allowed_new={'admin_audit','password_reset_tokens','staff_sessions','staff_users',
+        allowed_new={'admin_audit','admin_subscription_revocations','password_reset_tokens','staff_sessions','staff_users',
                      'store_settings','support_cases','support_messages','partner_events',
                      'order_history_state','order_milestones','bot_menu_settings','wgdashboard_keys',
                      'wgdashboard_expirations','hysteria2_credentials','tuic_credentials','update_checker',
@@ -169,6 +179,9 @@ class Staging:
                   'Automatic identity bridge created users/devices during migration')
         check('flow_auto_grants' not in added or current['counts'].get('flow_auto_grants') == 0,
               'Unexpected automatic starter grants during migration')
+        check('admin_subscription_revocations' not in added or
+              current['counts'].get('admin_subscription_revocations') == 0,
+              'Unexpected owner-verified revocations during migration')
         check('flow_auto_policy' not in added or current['counts'].get('flow_auto_policy') == 1,
               'Missing safe disabled starter policy during migration')
         if 'update_checker' in added:

@@ -4,6 +4,7 @@ Disabled by default. No MTProxy read-only token, no implicit payment,
 no remote API call on an authentication request. One claim per Shop user.
 """
 import logging
+import os
 import time
 import uuid
 
@@ -25,11 +26,38 @@ class PolicyUpdate(BaseModel):
 
 
 def policy():
+    """Owner-only status, without account identities or backend API credentials."""
     with db() as conn:
         row = dict(conn.execute('SELECT * FROM flow_auto_policy WHERE id=1').fetchone())
         used = conn.execute('SELECT count(*) FROM flow_auto_grants').fetchone()[0]
-    return {**row, 'enabled': bool(row['enabled']),
-            'used': used, 'remaining': max(0, row['max_users'] - used)}
+        pending = conn.execute("SELECT count(*) FROM flow_auto_grants WHERE state='pending'").fetchone()[0]
+        retrying = conn.execute("SELECT count(*) FROM flow_auto_grants WHERE state='pending' AND attempts>0").fetchone()[0]
+        active = conn.execute("SELECT count(*) FROM flow_auto_grants WHERE state='active'").fetchone()[0]
+        existing = conn.execute("SELECT count(*) FROM subscriptions WHERE protocol='wg'").fetchone()[0]
+        ready_node = _node(conn) is not None
+    enabled = bool(row['enabled'])
+    mtproxy_only = os.getenv('FLOW_TRIAL_MTPROXY_ONLY', '').lower() == 'true'
+    if not enabled:
+        state = 'policy_disabled'
+    elif not ready_node:
+        state = 'wgdashboard_not_ready'
+    elif retrying:
+        state = 'issuance_retrying'
+    elif pending:
+        state = 'issuance_pending'
+    else:
+        state = 'ready'
+    return {**row, 'enabled': enabled,
+            'used': used, 'remaining': max(0, row['max_users'] - used),
+            'diagnostics': {
+                'state': state,
+                'ready_node': ready_node,
+                'pending': pending,
+                'retrying': retrying,
+                'active': active,
+                'existing_wg_subscriptions': existing,
+                'mtproxy_only': mtproxy_only,
+            }}
 
 
 def _node(conn):
@@ -90,6 +118,14 @@ def enqueue(user_id: int) -> str:
         setting = conn.execute('SELECT * FROM flow_auto_policy WHERE id=1').fetchone()
         if not setting or not setting['enabled']:
             return 'disabled'
+        # This installation may restrict free Flow access to verified MTProxy
+        # identities. Registration in Shop alone must not spend the pilot quota.
+        if os.getenv('FLOW_TRIAL_MTPROXY_ONLY', '').lower() == 'true':
+            linked = conn.execute(
+                'SELECT 1 FROM flow_bridge_identities WHERE shop_user_id=?',
+                (user_id,)).fetchone()
+            if linked is None:
+                return 'not_mtproxy'
         if conn.execute('SELECT count(*) FROM flow_auto_grants').fetchone()[0] >= setting['max_users']:
             return 'limit'
         node = _node(conn)

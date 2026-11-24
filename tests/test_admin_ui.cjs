@@ -102,6 +102,21 @@ test('a closed customer dialog cannot be filled by a late response', async () =>
   assert.equal(page.element('user-dialog').open, false);
 });
 
+test('only developer sees Flow binding recovery controls in the customer card', async () => {
+  for (const [roleName, expected] of [['owner', true],['administrator', false]]) {
+    const page=adminPage();
+    page.element('user-dialog').open=true;
+    const request=page.run("role='"+roleName+"'; selectedUser=1; loadUser(1)");
+    page.reply({
+      user:{id:1,email:'user@example.com',telegram_id:123,created:1},
+      subscriptions:[],orders:[],orders_total:0,orders_page:1,orders_page_size:20
+    });
+    await request;
+    assert.equal(page.element('user-details').innerHTML.includes('data-flow-binding-check'),expected);
+    assert.ok(!page.element('user-details').innerHTML.includes('client_hash'));
+  }
+});
+
 test('customer search escapes displayed email and enables correct pagination', async () => {
   const page = adminPage();
   const request = page.run('refreshUsers()');
@@ -773,7 +788,7 @@ test('credential dialog chooses token fields and sends no endpoint or stale pass
   assert.equal(page.element('server-credentials-token').value,'');
   assert.equal(page.element('server-credentials-password').value,'');
   page.replyAt(1,{servers:[]});await request;
-  assert.match(page.element('admin-notice').textContent,/Проверьте API/);
+  assert.match(page.element('servers-notice').textContent,/Проверьте API/);
 });
 
 test('legacy credential dialog preserves login when changing password only',async()=>{
@@ -1115,4 +1130,203 @@ test('Pushok ID trust configuration is developer-only and uses version checks',a
  assert.deepEqual(p.bodies[1],{version:2,enabled:true,allow_new_accounts:false});
  p.replyAt(1,{detail:'Настройки изменились'},409);await save;
  assert.equal(p.element('id-policy-save').disabled,true);
+});
+
+
+test('developer workspace focuses only the chosen authorized section',()=>{
+  const p=adminPage();
+  p.run("acceptStaffRole({role:'owner'});renderManagementNav()");
+  assert.equal(p.element('dashboard').dataset.adminFocused,'true');
+  assert.equal(p.element('management-overview').dataset.adminActive,'true');
+  assert.equal(p.element('servers-section').dataset.adminActive,'false');
+  assert.match(p.element('management-quick').innerHTML,/Подключить WGDashboard/);
+  assert.match(p.element('management-quick').innerHTML,/Flow · 30 дней/);
+  assert.match(p.element('management-nav').innerHTML,/Подключения/);
+  assert.match(p.element('management-nav').innerHTML,/Система/);
+  p.run("showManagementSection('servers-section')");
+  assert.equal(p.element('servers-section').dataset.adminActive,'true');
+  assert.equal(p.element('management-overview').dataset.adminActive,'false');
+  assert.equal(p.element('flow-auto-section').dataset.adminActive,'false');
+  assert.match(p.element('management-current').textContent,/Серверы/);
+  assert.match(p.element('management-nav').innerHTML,/aria-current="page"/);
+  p.run("showManagementSection('flow-auto-section')");
+  assert.equal(p.element('flow-auto-section').dataset.adminActive,'true');
+  assert.equal(p.element('servers-section').dataset.adminActive,'false');
+  assert.match(p.element('management-current').textContent,/Автовыдача/);
+});
+
+test('mobile admin navigation searches only role-authorized items and fails closed',()=>{
+  const p=adminPage();
+  p.run("acceptStaffRole({role:'moderator',permissions:['moderation']});renderManagementNav()");
+  assert.equal(p.element('moderation-section').hidden,false);
+  assert.equal(p.element('servers-section').hidden,true);
+  assert.equal(p.element('flow-auto-section').hidden,true);
+  assert.doesNotMatch(p.element('management-nav').innerHTML,/Серверы|Автовыдача/);
+  assert.doesNotMatch(p.element('management-quick').innerHTML,/WGDashboard|Flow · 30 дней/);
+  p.run("showManagementSection('servers-section')");
+  assert.equal(p.element('management-overview').dataset.adminActive,'true');
+  assert.equal(p.element('servers-section').dataset.adminActive,'false');
+  p.run("showManagementSection('moderation-section')");
+  assert.equal(p.element('moderation-section').dataset.adminActive,'true');
+  p.element('management-search').value='польз';
+  p.run("renderManagementNavItems()");
+  assert.doesNotMatch(p.element('management-nav').innerHTML,/Серверы|Пользователи|Модерация/);
+  p.element('management-search').value='модерац';
+  p.run("renderManagementNavItems()");
+  assert.match(p.element('management-nav').innerHTML,/Модерация/);
+  p.run("acceptStaffRole({role:'moderator',permissions:['support']});renderManagementNav()");
+  assert.equal(p.element('moderation-section').hidden,true);
+  assert.equal(p.element('moderation-section').dataset.adminActive,'false');
+  assert.equal(p.element('management-overview').dataset.adminActive,'true');
+});
+
+test('admin HTML contains optional one-time bootstrap and all original navigation targets',()=>{
+  const markup=fs.readFileSync('app/static/admin.html','utf8');
+  const source=fs.readFileSync('app/static/admin.js','utf8');
+  const stylesheet=fs.readFileSync('app/static/style.css','utf8');
+  assert.match(markup,/<details class="bootstrap-key-box">/);
+  assert.match(markup,/<input id="key" type="password"/);
+  assert.match(markup,/id="management-search"/);
+  assert.match(markup,/id="management-quick"/);
+  assert.match(stylesheet,/#dashboard\[data-admin-focused="true"\]>section\[id\]:not\(\[data-admin-active="true"\]\)/);
+  const p=adminPage();
+  p.run("acceptStaffRole({role:'owner'});renderManagementNav()");
+  for(const id of ['servers-section','flow-auto-section','users-section','orders-section','moderation-section','updates-panel']){
+    assert.ok(markup.includes('id="'+id+'"'),id+' section removed');
+    assert.ok(p.element('management-nav').innerHTML.includes('#'+id),id+' not navigable');
+  }
+  assert.ok(source.includes('canViewManagementSection'),'navigation must verify permissions');
+});
+
+
+test('saved server has explicit encrypted-profile status without revealing credentials',()=>{
+  const page=adminPage();
+  const form=page.element('server-form');form.elements={};
+  for(const name of ['name','location','capacity','protocol','api','wg_api','url'])form.elements[name]={value:''};
+  page.run("openServer({id:'wg-1',name:'WG',protocol:'wg',profile:'wgdashboard',state:'disabled',version:1})");
+  assert.match(page.element('server-profile-state').textContent,/сохранён/);
+  assert.equal(form.elements.url.value,'');
+  assert.match(page.element('server-profile-state').textContent,/пустые намеренно/);
+  const card=page.run("serverCard({id:'wg-1',name:'WG',location:'',protocol:'wg',profile:'wgdashboard',state:'disabled',capacity:0,version:1,health:'unknown',checked_at:null,occupied:0,bound_subscriptions:0})");
+  assert.match(card,/Профиль подключения сохранён/);
+  assert.match(card,/Ещё не проверен/);
+  assert.doesNotMatch(card,/private-panel|secret-token/);
+});
+
+function mockWireGuardServerForm(page){
+  const form=page.element('server-form');
+  form.elements={name:{value:'WG node'},location:{value:''},capacity:{value:0},
+    protocol:{value:'wg'},url:{value:'http://193.238.155.39:10086'}};
+  form.fields={
+    name:'WG node',location:'',capacity:'0',protocol:'wg',
+    api:'legacy',wg_api:'wgdashboard',
+    url:'http://193.238.155.39:10086',
+    token:'secret-token',configuration:'wg0',
+  };
+  form.querySelector=()=>({disabled:false});
+  page.element('server-dialog').open=true;
+  return form;
+}
+
+test('rejected WGDashboard endpoint keeps entered fields and says not saved',async()=>{
+  class Fields{constructor(form){this.fields=form.fields;}get(key){return this.fields[key];}}
+  const page=adminPage({FormData:Fields}),form=mockWireGuardServerForm(page);
+  const request=page.run("serverWizardStep=3; $('server-form').onsubmit({preventDefault(){},target:$('server-form')})");
+  assert.equal(page.requests.length,1);
+  page.replyAt(0,{detail:'Для WGDashboard с публичным IP нужен HTTPS'},422);await request;
+  assert.match(page.element('server-form-error').textContent,/Не сохранено:.*HTTPS/);
+  assert.equal(form.elements.url.value,'http://193.238.155.39:10086');
+  assert.equal(page.element('server-dialog').open,true);
+  assert.equal(page.element('admin-notice').textContent,'');
+});
+
+test('saving server succeeded even when refreshing server list fails',async()=>{
+  class Fields{constructor(form){this.fields=form.fields;}get(key){return this.fields[key];}}
+  const page=adminPage({FormData:Fields});
+  const form=mockWireGuardServerForm(page);
+  form.fields.url='https://wg.example';
+  form.elements.url.value='https://wg.example';
+  const request=page.run("serverWizardStep=3; $('server-form').onsubmit({preventDefault(){},target:$('server-form')})");
+  assert.equal(page.requests.length,1);
+  page.replyAt(0,{id:'wg-1',profile:'wgdashboard'});
+  await new Promise(setImmediate);
+  assert.equal(page.requests.length,2);
+  page.replyAt(1,{detail:'Список временно недоступен'},503);await request;
+  assert.match(page.element('servers-notice').textContent,/Профиль подключения сохранён/);
+  assert.match(page.element('servers-notice').textContent,/список серверов не обновился/i);
+  assert.equal(page.element('server-dialog').open,false);
+});
+
+
+test('successful server creation confirms persistence next to servers, not tariffs',async()=>{
+  class Fields{constructor(form){this.fields=form.fields;}get(key){return this.fields[key];}}
+  const page=adminPage({FormData:Fields});
+  const form=mockWireGuardServerForm(page);
+  form.fields.url='https://wg.example';
+  form.elements.url.value='https://wg.example';
+  const request=page.run("serverWizardStep=3; $('server-form').onsubmit({preventDefault(){},target:$('server-form')})");
+  page.replyAt(0,{id:'wg-1',profile:'wgdashboard'});
+  await new Promise(setImmediate);
+  page.replyAt(1,{servers:[{
+    id:'wg-1',name:'WG node',location:'',profile:'wgdashboard',protocol:'wg',
+    state:'disabled',capacity:0,version:1,health:'unknown',checked_at:null,
+    occupied:0,bound_subscriptions:0,
+  }],unassigned_subscriptions:0});await request;
+  assert.match(page.element('servers-notice').textContent,/Профиль подключения сохранён/);
+  assert.equal(page.element('admin-notice').textContent,'');
+  assert.match(page.element('server-list').innerHTML,/Профиль подключения сохранён в Shop/);
+});
+
+
+test('developer sees delete controls only for eligible records',()=>{
+  const page=adminPage();
+  const draft={id:'custom',name:'Черновик',days:7,price:0,stars:0,
+    enabled:false,version:1,device_limit:0};
+  const active={...draft,enabled:true};
+  const ownerDraft=page.run("role='owner';planForm("+JSON.stringify(draft)+")");
+  assert.match(ownerDraft,/data-plan-delete="custom"/);
+  const ownerActive=page.run("role='owner';planForm("+JSON.stringify(active)+")");
+  assert.doesNotMatch(ownerActive,/data-plan-delete=/);
+  const manager=page.run("role='administrator';planForm("+JSON.stringify(draft)+")");
+  assert.doesNotMatch(manager,/data-plan-delete=/);
+  const node={id:'srv',name:'Test WG',protocol:'wg',profile:'wgdashboard',
+    health:'unknown',checked_at:0,location:'',capacity:0,occupied:0,
+    bound_subscriptions:0,state:'disabled',version:1,
+    schedule_expiry:false,panel_timezone:null};
+  const server=page.run("role='owner';serverCard("+JSON.stringify(node)+")");
+  assert.match(server,/data-server-delete="srv"/);
+  const used=page.run("role='owner';serverCard("+JSON.stringify({...node,bound_subscriptions:1})+")");
+  assert.doesNotMatch(used,/data-server-delete=/);
+});
+
+test('light admin theme does not target public storefront',()=>{
+  const css=fs.readFileSync('app/static/style.css','utf8');
+  const tail=css.slice(css.lastIndexOf('/* Pushok Shop Admin — light'));
+  assert.match(tail,/body\.shop-admin-ui\s*\{/);
+  assert.match(tail,/background:#fff!important/);
+  assert.doesNotMatch(tail,/body\.shop-public-ui\s*\{/);
+});
+
+
+test('WireGuard peer diagnosis appears for developer only and contains no credentials',async()=>{
+  const user={id:1,email:'customer@example.org',telegram_id:null,created:100};
+  const subscription={id:'subscription-uuid',protocol:'wg',state:'active',
+    access_active:true,expires:2000000000,device_limit:0,
+    can_delete:false,delete_blocker:'Сначала отозвать доступ'};
+  const response={user,subscriptions:[subscription],orders:[],orders_page:1,
+    orders_page_size:20,orders_total:0};
+  const owner=adminPage();
+  owner.element('user-dialog').open=true;
+  const pending=owner.run("role='owner';selectedUser=1;loadUser(1)");
+  owner.reply(response);await pending;
+  const markup=owner.element('user-subscriptions').innerHTML;
+  assert.match(markup,/data-peer-check="subscription-uuid"/);
+  assert.match(markup,/data-peer-status="subscription-uuid"/);
+  assert.doesNotMatch(markup,/api_token|private_key|PublicKey/);
+  const admin=adminPage();
+  admin.element('user-dialog').open=true;
+  const other=admin.run("role='administrator';selectedUser=1;loadUser(1)");
+  admin.reply(response);await other;
+  assert.doesNotMatch(admin.element('user-subscriptions').innerHTML,/data-peer-check=/);
+  assert.doesNotMatch(admin.element('user-subscriptions').innerHTML,/data-peer-retry=/);
 });

@@ -104,7 +104,7 @@ function show(id) {
 function date(ts) { return new Date(ts*1000).toLocaleDateString('ru-RU'); }
 function protocolName(id) { return ({wg:'WireGuard',xui:'VLESS',vmess:'VMess',hysteria2:'Hysteria2',tuic:'TUIC v5'})[id] || id; }
 function profileAllowance(limit) { return limit===0 ? 'Только основной профиль' : 'Основной + до '+limit+' дополнительных профилей'; }
-function displayOrderStatus(order) { if(order.progress?.title)return order.progress.title; return order.kind==='referral'&&order.status==='paid'?'Добавляем бонусные дни':order.kind==='referral'&&order.status==='active'?'Бонусные дни добавлены':order.kind==='trial'&&order.status==='paid'?'Готовим пробный VPN':order.kind==='trial'&&order.status==='active'?'Пробный доступ выдан':statusLabel[order.status] || order.status; }
+function displayOrderStatus(order) { if(order.progress?.title)return order.progress.title; return order.method==='free'&&order.status==='paid'?'Бесплатный доступ готовится':order.kind==='referral'&&order.status==='paid'?'Добавляем бонусные дни':order.kind==='referral'&&order.status==='active'?'Бонусные дни добавлены':order.kind==='trial'&&order.status==='paid'?'Готовим пробный VPN':order.kind==='trial'&&order.status==='active'?'Пробный доступ выдан':statusLabel[order.status] || order.status; }
 function renderAppearance(){
  const config=catalog?.appearance;
  if(!config)return;
@@ -127,9 +127,10 @@ function renderPlans() {
   renderAppearance();
   $('protocols').innerHTML = catalog.protocols.map(p => `<button class="${p.id===protocol?'chosen':''}" data-protocol="${p.id}" aria-pressed="${p.id===protocol}">${esc(protocolName(p.id))}${p.available?'':' · скоро'}</button>`).join('');
   const selected=catalog.protocols.find(p=>p.id===protocol);
-  const available=!!selected?.available && catalog.payment_available!==false;
-  $('provider-note').textContent = available ? '' : catalog.payment_available===false ? (catalog.payment_notice||'Оплата временно недоступна.') : selected?.sales_allowed===false ? (catalog.sale_notice||'Продажи временно приостановлены.') : 'Подключение этого протокола ещё не настроено. Покупки временно недоступны.';
-  $('plan-list').innerHTML = catalog.plans.length ? catalog.plans.map((p,i) => `<article class="plan ${i===1?'featured':''}">${i===1?'<span class="badge">УДОБНЫЙ ВЫБОР</span>':''}<h3>${esc(p.name)}</h3><div class="price">${p.price.toLocaleString('ru-RU')} <small>${catalog.currency==='XTR'?'★':'₽'}</small></div><p>${p.days} дней доступа · ${esc(protocolName(protocol))}</p><ul><li>${esc(profileAllowance(p.device_limit ?? 4))}</li><li>Настройки и QR-код в кабинете</li><li>Продление с сохранением дней</li></ul><button data-plan="${p.id}" ${available?'':'disabled'}>${available?'Выбрать тариф ↗':'Скоро'}</button></article>`).join('') : '<p class="plans-empty">Тарифы временно недоступны. Пожалуйста, обратитесь в поддержку.</p>';
+  const available=!!selected?.available && selected?.sales_allowed!==false;
+  const paymentReady=catalog.payment_available!==false;
+  $('provider-note').textContent = available && (paymentReady || catalog.plans.some(p=>p.price===0)) ? '' : !paymentReady && available ? (catalog.payment_notice||'Оплата временно недоступна. Бесплатные тарифы доступны.') : selected?.sales_allowed===false ? (catalog.sale_notice||'Продажи временно приостановлены.') : 'Подключение этого протокола ещё не настроено. Покупки временно недоступны.';
+  $('plan-list').innerHTML = catalog.plans.length ? catalog.plans.map((p,i) => `<article class="plan ${i===1?'featured':''}">${i===1?'<span class="badge">УДОБНЫЙ ВЫБОР</span>':''}<h3>${esc(p.name)}</h3><div class="price">${p.price===0?'Бесплатно':p.price.toLocaleString('ru-RU')}${p.price===0?'':' <small>'+(catalog.currency==='XTR'?'★':'₽')+'</small>'}</div><p>${p.days} дней доступа · ${esc(protocolName(protocol))}</p><ul><li>${esc(profileAllowance(p.device_limit ?? 4))}</li><li>Настройки и QR-код в кабинете</li><li>${p.price===0?(p.free_auto_renew?'Автопродление: '+p.free_max_renewals+' раз(а)':'Без автоматического продления'):'Продление с сохранением дней'}</li>${p.price===0&&p.free_traffic_gb?'<li>Лимит '+p.free_traffic_gb+' ГБ на профиль 3x-ui</li>':''}${p.price===0&&p.free_activation_limit?'<li>Всего активаций: '+p.free_activation_limit+'</li>':''}</ul><button data-plan="${p.id}" ${available&&(paymentReady||p.price===0)&&!(p.price===0&&p.free_traffic_gb>0&&!['xui','vmess'].includes(protocol))?'':'disabled'}>${p.price===0&&p.free_traffic_gb>0&&!['xui','vmess'].includes(protocol)?'Только для 3x-ui':available&&(paymentReady||p.price===0)?(p.price===0?'Получить бесплатно ↗':'Выбрать тариф ↗'):'Скоро'}</button></article>`).join('') : '<p class="plans-empty">Тарифы временно недоступны. Пожалуйста, обратитесь в поддержку.</p>';
   renderTrial();
 }
 function clearConnection() {
@@ -261,14 +262,14 @@ async function beginCheckout(id) {
   if (!selectedPlan) throw new Error('Тариф больше недоступен. Выберите другой тариф.');
   if (!me) { show('auth-dialog'); return; }
   if(catalog.protocols.find(p=>p.id===protocol)?.sales_allowed===false)throw new Error(catalog.sale_notice||'Продажи временно приостановлены.');
-  if(catalog.payment_available===false)throw new Error(catalog.payment_notice||'Оплата временно недоступна.');
-  $('promo-controls').hidden=false;renderCheckoutAmount();
+  if(selectedPlan.price!==0 && catalog.payment_available===false)throw new Error(catalog.payment_notice||'Оплата временно недоступна.');
+  $('promo-controls').hidden=selectedPlan.price===0;renderCheckoutAmount();
   if(promoIntent){$('promo-code').value=promoIntent;$('promo-status').textContent='Промокод из ссылки. Нажмите «Применить», чтобы проверить скидку и итоговую цену.';}
   clearPayment(); $('checkout-form').hidden = false;
   checkoutPolicyVersion=Number.isSafeInteger(catalog.payment_policy_version)?catalog.payment_policy_version:null;
-  $('checkout-submit').textContent=catalog.payment_mode==='sbp'?'Создать счёт СБП →':'Оформить заказ →';
-  $('terms-text').textContent=catalog.terms; $('accept-terms').checked=false; $('accept-terms').required=catalog.payment_mode==='stars';
-  $('receipt-label').hidden = !catalog.receipts; $('receipt-label').querySelector('input').required = catalog.receipts;
+  $('checkout-submit').textContent=selectedPlan.price===0?'Получить бесплатно →':catalog.payment_mode==='sbp'?'Создать счёт СБП →':'Оформить заказ →';
+  $('terms-text').textContent=catalog.terms; $('accept-terms').checked=false; $('accept-terms').required=selectedPlan.price!==0 && catalog.payment_mode==='stars';
+  $('receipt-label').hidden = selectedPlan.price===0 || !catalog.receipts; $('receipt-label').querySelector('input').required = selectedPlan.price!==0 && catalog.receipts;
   $('receipt-label').querySelector('input').value = me.email || '';
   show('checkout-dialog');
 }
@@ -277,7 +278,7 @@ function paymentResult(order) {
   $('checkout-form').hidden = true;
   $('payment-result').replaceChildren();
   const paragraph = document.createElement('p');
-  paragraph.textContent = `Заказ: ${order.id}\nТариф: ${order.plan_name || protocolName(order.protocol)} · ${order.days} дней\n${profileAllowance(order.device_limit ?? 4)}\nСумма: ${order.kind==='referral'?'Бонусные дни':order.kind==='trial'?'Без оплаты':money(order.amount,order.currency)}\n${displayOrderStatus(order)}${order.promo_code?'\nПромокод: '+order.promo_code+' · скидка '+money(order.discount,order.currency)+' от '+money(order.base_amount,order.currency):''}\n\n${order.progress?.message || ''}\n${order.instructions || ''}`;
+  paragraph.textContent = `Заказ: ${order.id}\nТариф: ${order.plan_name || protocolName(order.protocol)} · ${order.days} дней\n${profileAllowance(order.device_limit ?? 4)}\nСумма: ${order.kind==='referral'?'Бонусные дни':order.kind==='trial'?'Без оплаты':order.amount===0?'Бесплатно':money(order.amount,order.currency)}\n${displayOrderStatus(order)}${order.promo_code?'\nПромокод: '+order.promo_code+' · скидка '+money(order.discount,order.currency)+' от '+money(order.base_amount,order.currency):''}\n\n${order.progress?.message || ''}\n${order.instructions || ''}`;
   $('payment-result').append(paragraph);
   if (order.payment_url && order.status === 'pending') {
     const link = document.createElement('a');
@@ -441,7 +442,7 @@ $('pushok-id-revoke').onclick=async()=>{
  }catch(e){if(epoch===sessionEpoch)toast(e.message);}finally{button.disabled=false;}
 };
 
-$('account-btn').onclick = async () => { if(logoutPending)return; try { await refreshMe(); show(me?'account-dialog':'auth-dialog'); } catch(e) { toast(e.message); } };
+$('account-btn').onclick = async () => { if(logoutPending)return; try { await refreshMe(); setShopAccountPane('subscriptions'); show(me?'account-dialog':'auth-dialog'); } catch(e) { toast(e.message); } };
 function showForgotForm(show){
  $('auth-form').hidden=show;$('auth-switch').hidden=show;$('forgot-open').hidden=show;$('forgot-form').hidden=!show;
  $('auth-title').textContent=show?'Сменить пароль.':'С возвращением.';
@@ -590,7 +591,7 @@ $('subscriptions').onclick = async event => {
 function renderCheckoutAmount() {
   if(!selectedPlan || checkoutTrial)return;
   const summary=selectedPlan.name+' / '+selectedPlan.days+' дней / '+protocolName(protocol)+' / '+profileAllowance(selectedPlan.device_limit ?? 4);
-  $('checkout-info').textContent=summary+' / '+(checkoutQuote?'Было '+money(checkoutQuote.base_amount,checkoutQuote.currency)+' · скидка '+money(checkoutQuote.discount,checkoutQuote.currency)+' · к оплате '+money(checkoutQuote.amount,checkoutQuote.currency):money(selectedPlan.price,catalog.currency));
+  $('checkout-info').textContent=summary+' / '+(checkoutQuote?'Было '+money(checkoutQuote.base_amount,checkoutQuote.currency)+' · скидка '+money(checkoutQuote.discount,checkoutQuote.currency)+' · к оплате '+money(checkoutQuote.amount,checkoutQuote.currency):selectedPlan.price===0?'Бесплатно':money(selectedPlan.price,catalog.currency));
 }
 function resetQuote(clearInput=true) {
   quoteRequest++;checkoutQuote=null;
@@ -978,13 +979,53 @@ $('ads-list').onclick=async event=>{
   finally{b.disabled=false;}
 };
 
-// Быстрые переходы внутри прокручиваемого кабинета.
+// Compact account workspace: only one panel is shown at a time. Navigation
+// changes presentation only; existing subscription/order/support APIs remain.
+const SHOP_ACCOUNT_PANES = {
+  subscriptions: 'subscriptions-pane',
+  orders: 'orders-pane',
+  'referrals-panel': 'referrals-panel',
+  'support-panel': 'support-panel',
+};
+function setShopAccountPane(name, focus = false) {
+  const chosen = Object.hasOwn(SHOP_ACCOUNT_PANES, name) ? name : 'subscriptions';
+  for (const [key, id] of Object.entries(SHOP_ACCOUNT_PANES)) {
+    const pane = $(id);
+    pane.dataset.accountActive = key === chosen ? 'true' : 'false';
+  }
+  for (const button of document.querySelectorAll('[data-account-section]')) {
+    const selected = button.dataset.accountSection === chosen;
+    button.setAttribute('aria-pressed', String(selected));
+  }
+  if (focus && $('account-dialog').open) {
+    const pane = $(SHOP_ACCOUNT_PANES[chosen]);
+    pane.setAttribute('tabindex','-1');
+    pane.focus({preventScroll:true});
+    pane.scrollIntoView({behavior:'auto',block:'nearest'});
+  }
+}
 document.querySelectorAll('[data-account-section]').forEach(button => {
-  button.addEventListener('click', () => {
-    const section = $(button.dataset.accountSection);
-    if (!section || !$('account-dialog').open) return;
-    section.setAttribute('tabindex', '-1');
-    section.scrollIntoView({block: 'start', behavior: 'instant'});
-    section.focus({preventScroll: true});
+  button.addEventListener('click', () => setShopAccountPane(button.dataset.accountSection,true));
+});
+
+// The browser has a compact mobile tab bar; Telegram keeps its existing
+// native Mini App bar and is never shown two overlapping bars.
+$('hero-account-btn').onclick = () => $('account-btn').click();
+$('shop-mobile-account').onclick = () => $('account-btn').click();
+document.querySelectorAll('[data-shop-route]').forEach(link => {
+  link.addEventListener('click', () => {
+    for (const item of document.querySelectorAll('[data-shop-route]')) {
+      if (item === link) item.setAttribute('aria-current','page');
+      else item.removeAttribute('aria-current');
+    }
+  });
+});
+window.addEventListener?.('hashchange', () => {
+  const hash = location.hash.slice(1);
+  if (!['home','plans','how','help'].includes(hash)) return;
+  const chosen = hash === 'how' ? 'plans' : hash;
+  document.querySelectorAll('[data-shop-route]').forEach(link => {
+    if (link.dataset.shopRoute === chosen) link.setAttribute('aria-current','page');
+    else link.removeAttribute('aria-current');
   });
 });
