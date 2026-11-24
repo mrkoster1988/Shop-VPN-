@@ -280,6 +280,7 @@ async def tick():
     with db() as conn:
         conn.execute('DELETE FROM sessions WHERE expires<?', (now,))
         conn.execute('DELETE FROM tickets WHERE expires<?', (now,))
+        conn.execute('DELETE FROM shop_id_requests WHERE expires<=?',(now,))
 
 
 async def notify_customers(now):

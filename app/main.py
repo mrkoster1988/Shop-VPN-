@@ -30,7 +30,7 @@ from . import shop_settings, runtime_settings, payment_policy, shop_finance, pla
 from . import config as c, providers, service, servers, server_routing, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge
+from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, pushok_identity
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -350,6 +350,14 @@ async def runtime_notifications_get():
 async def runtime_notifications_update(data:runtime_settings.NotificationsUpdate):
     return runtime_settings.update('notifications',data)
 
+@app.get('/api/admin/pushok-id',dependencies=[Depends(admin)])
+async def pushok_id_admin():
+    return pushok_identity.admin_status()
+
+@app.put('/api/admin/pushok-id',dependencies=[Depends(admin)])
+async def pushok_id_policy(data:pushok_identity.PolicyUpdate):
+    async with service.lock:return pushok_identity.update_policy(data)
+
 @app.get('/api/admin/payment-policy',dependencies=[Depends(admin)])
 async def payment_policy_get():
     return payment_policy.get()
@@ -452,7 +460,7 @@ async def catalog(request: Request):
     payment=payment_policy.catalog(customer)
     return {'plans': plans, 'currency': 'XTR' if tg else 'RUB', 'protocols': options,
             'appearance':{k:v for k,v in appearance.items() if k not in ('version','updated')},
-            'sale_notice':sale_notice,
+            'sale_notice':sale_notice,'pushok_id':pushok_identity.public_capabilities(),
             'trial':trials.offer(customer), **payment, 'bot_username': c.BOT_USERNAME,
             'support': public_settings['support'],
             'receipts': not tg and payment['payment_mode'] in ('yookassa','sbp') and os.getenv('YOOKASSA_RECEIPTS') == 'true',
@@ -665,6 +673,30 @@ async def confirm_password_reset(data: PasswordResetConfirm):
 async def reset_password_page():
     return html_page('reset-password.html')
 
+@app.post('/api/auth/pushok-id/start')
+async def pushok_id_start(data:pushok_identity.Start,request:Request):
+    return pushok_identity.start(data,request)
+
+@app.post('/api/auth/pushok-id/approve')
+async def pushok_id_approve(data:pushok_identity.Approval):
+    return pushok_identity.approve(data)
+
+@app.get('/api/auth/pushok-id/status')
+async def pushok_id_status(request:Request):
+    return pushok_identity.status(request)
+
+@app.post('/api/auth/pushok-id/finish')
+async def pushok_id_finish(data:pushok_identity.Finish,request:Request):
+    async with service.lock:return pushok_identity.finish(data,request)
+
+@app.post('/api/auth/pushok-id/cancel')
+async def pushok_id_cancel(request:Request):
+    return pushok_identity.cancel(request)
+
+@app.post('/api/auth/pushok-id/revoke')
+async def pushok_id_revoke(request:Request,user=Depends(current_user)):
+    return pushok_identity.revoke(request,user)
+
 @app.post('/api/auth/telegram')
 async def tg_login(data: TgAuth):
     tg = telegram_user(data.init_data)
@@ -691,13 +723,13 @@ async def logout(request: Request):
     execute('DELETE FROM sessions WHERE token=?', (digest(request.cookies.get('session', '')),))
     response = JSONResponse({'ok': True})
     response.delete_cookie('session', path=c.COOKIE_PATH)
-    return response
+    return pushok_identity.cancel(request,response)
 
 @app.get('/api/me')
 async def me(user=Depends(current_user)):
     subs = all_rows('SELECT s.id,s.protocol,s.expires,s.state,s.device_limit,s.primary_key_state,s.access_source,(s.rotation_error IS NOT NULL) AS primary_retrying,coalesce(l.enabled,0) AS link_enabled,coalesce(l.follow_rotation,0) AS link_follows_rotation FROM subscriptions s LEFT JOIN subscription_links l ON l.subscription_id=s.id WHERE s.user_id=?', (user['id'],))
     orders = all_rows('SELECT id,protocol,plan,plan_name,days,amount,currency,method,status,created,payment_url,attempts,device_limit,kind,base_amount,discount,promo_code,promo_percent FROM orders WHERE user_id=? ORDER BY created DESC LIMIT 50', (user['id'],))
-    return {'id': user['id'], 'email': user['email'], 'telegram_id': user['telegram_id'], 'can_change_password': bool(user['email'] and user['password']), 'subscriptions': subs, 'orders': [{**row,'progress':order_progress.public(row)} for row in orders], 'referrals':referrals.summary(user)}
+    return {'id': user['id'], 'email': user['email'], 'telegram_id': user['telegram_id'], 'can_change_password': bool(user['email'] and user['password']), 'pushok_id':pushok_identity.own_link(user['id']), 'subscriptions': subs, 'orders': [{**row,'progress':order_progress.public(row)} for row in orders], 'referrals':referrals.summary(user)}
 
 @app.post('/api/referrals/code')
 async def referral_code(user=Depends(current_user)):
