@@ -21,7 +21,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
-from pydantic import BaseModel, Field, field_validator, ValidationError
+from pydantic import BaseModel, Field, field_validator, ValidationError, model_validator
 from starlette.applications import Starlette
 from starlette.routing import Mount
 from . import ads_bookings as bookings, ads_finance as finance
@@ -163,7 +163,7 @@ class Purchase(BaseModel):
     receipt_email: str | None = Field(default=None, max_length=254)
     promo_code: str | None = Field(default=None,min_length=1,max_length=32)
     promo_version: int | None = Field(default=None,ge=1,strict=True)
-    quoted_amount: int | None = Field(default=None,ge=1,le=1000000,strict=True)
+    quoted_amount: int | None = Field(default=None,ge=0,le=1000000,strict=True)
     quote_currency: Literal['RUB','XTR'] | None = None
     payment_policy_version: int | None = Field(default=None,ge=0,strict=True)
 
@@ -172,10 +172,21 @@ class PlanFields(BaseModel):
     model_config = {'extra': 'forbid'}
     name: str = Field(min_length=1, max_length=80)
     days: int = Field(ge=1, le=3650, strict=True)
-    price: int = Field(ge=1, le=1000000, strict=True)
-    stars: int = Field(ge=1, le=100000, strict=True)
+    price: int = Field(ge=0, le=1000000, strict=True)
+    stars: int = Field(ge=0, le=100000, strict=True)
     enabled: bool = Field(strict=True)
     device_limit: int = Field(default=4,ge=0,le=20,strict=True)
+    @field_validator('stars')
+    @classmethod
+    def pass_stars(cls, value):
+        return value
+
+    @model_validator(mode='after')
+    def check_free(self):
+        if (self.price == 0) != (self.stars == 0):
+            raise ValueError('Бесплатный тариф должен стоить 0 ₽ и 0 Stars одновременно')
+        return self
+
     @field_validator('name')
     @classmethod
     def clean_name(cls, value):
@@ -454,7 +465,7 @@ async def catalog(request: Request):
     except HTTPException:
         customer = None
         tg = False
-    plans = [{**p, 'price': p['stars'] if tg else p['price']} for p in all_rows('SELECT id,name,days,price,stars,version,device_limit FROM plans WHERE enabled=1 ORDER BY position,id')]
+    plans = [{**p, 'price': 0 if p['is_free'] else (p['stars'] if tg else p['price'])} for p in all_rows('SELECT id,name,days,price,stars,is_free,version,device_limit FROM plans WHERE enabled=1 ORDER BY position,id')]
     public_settings=shop_settings.public()
     options,sale_notice=runtime_settings.catalog_options(customer,providers.available)
     appearance=runtime_settings.get('appearance')
@@ -757,13 +768,17 @@ async def purchase(data: Purchase, user=Depends(current_user)):
     if not providers.available(data.protocol, user['id']):
         raise HTTPException(503, 'Этот способ подключения ещё не настроен')
     async with service.lock:
-        method = payment_policy.method_for(user)
-        if method == 'stars' and (not c.BOT_TOKEN or not shop_settings.terms_configured()):
+        selected = one('SELECT is_free FROM plans WHERE id=? AND enabled=1',(data.plan,))
+        # Free plans are issued without creating an invoice, even when a
+        # payment provider is not configured.
+        is_free = bool(selected and selected['is_free'])
+        method = 'free' if is_free else payment_policy.method_for(user)
+        if not is_free and method == 'stars' and (not c.BOT_TOKEN or not shop_settings.terms_configured()):
             raise HTTPException(503, 'Владелец ещё не настроил оплату и условия продажи в Telegram')
         if method == 'stars' and not data.accept_terms:
             raise HTTPException(422, 'Подтвердите согласие с условиями продажи')
         email = email_address(data.receipt_email) if data.receipt_email else user['email']
-        if method in ('yookassa', 'sbp') and os.getenv('YOOKASSA_RECEIPTS') == 'true' and not email:
+        if not is_free and method in ('yookassa', 'sbp') and os.getenv('YOOKASSA_RECEIPTS') == 'true' and not email:
             raise HTTPException(422, 'Укажите email для чека')
         order = promos.make_order(data,user,method,email)
         method = order['method']
@@ -1156,7 +1171,7 @@ async def qr(sid: str, user=Depends(current_user)):
 
 
 def admin_plan(row):
-    return {**row, 'enabled': bool(row['enabled'])}
+    return {**row, 'enabled': bool(row['enabled']), 'price': 0 if row['is_free'] else row['price'], 'stars': 0 if row['is_free'] else row['stars']}
 
 
 @app.get('/api/admin/servers', dependencies=[Depends(admin)])
@@ -1227,8 +1242,8 @@ async def create_plan(data: PlanCreate):
             if conn.execute('SELECT 1 FROM plans WHERE id=?', (data.id,)).fetchone():
                 raise HTTPException(409, 'Тариф с таким кодом уже существует. Обновите список тарифов.')
             position = conn.execute('SELECT coalesce(max(position),-1)+1 FROM plans').fetchone()[0]
-            conn.execute('INSERT INTO plans(id,name,days,price,stars,enabled,position,updated,device_limit) VALUES (?,?,?,?,?,?,?,?,?)',
-                         (data.id, data.name, data.days, data.price, data.stars, int(data.enabled), position, int(time.time()),data.device_limit))
+            conn.execute('INSERT INTO plans(id,name,days,price,stars,is_free,enabled,position,updated,device_limit) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                         (data.id, data.name, data.days, max(1,data.price), max(1,data.stars), int(data.price==0), int(data.enabled), position, int(time.time()),data.device_limit))
             saved = dict(conn.execute('SELECT * FROM plans WHERE id=?', (data.id,)).fetchone())
             conn.execute('INSERT INTO plan_changes(plan_id,created,before_data,after_data) VALUES (?,?,?,?)',
                          (data.id, saved['updated'], 'null', json.dumps(saved, ensure_ascii=False)))
@@ -1245,10 +1260,10 @@ async def update_plan(plan_id: str, data: PlanUpdate):
             before = dict(row)
             if before['version'] != data.version:
                 raise HTTPException(409, 'Тариф уже изменён. Обновите страницу перед сохранением.')
-            if all(before[key] == value for key, value in data.model_dump(exclude={'version'},exclude_none=True).items()):
+            if all((0 if before['is_free'] else before[key]) == value for key, value in data.model_dump(exclude={'version','device_limit'},exclude_none=True).items() if key in ('price','stars')) and all(before[key] == value for key, value in data.model_dump(exclude={'version','price','stars'},exclude_none=True).items()):
                 return admin_plan(before)
-            conn.execute('UPDATE plans SET name=?,days=?,price=?,stars=?,enabled=?,device_limit=?,version=version+1,updated=? WHERE id=?',
-                         (data.name, data.days, data.price, data.stars, int(data.enabled),before['device_limit'] if data.device_limit is None else data.device_limit,int(time.time()),plan_id))
+            conn.execute('UPDATE plans SET name=?,days=?,price=?,stars=?,is_free=?,enabled=?,device_limit=?,version=version+1,updated=? WHERE id=?',
+                         (data.name, data.days, max(1,data.price), max(1,data.stars), int(data.price==0), int(data.enabled),before['device_limit'] if data.device_limit is None else data.device_limit,int(time.time()),plan_id))
             after = dict(conn.execute('SELECT * FROM plans WHERE id=?', (plan_id,)).fetchone())
             conn.execute('INSERT INTO plan_changes(plan_id,created,before_data,after_data) VALUES (?,?,?,?)',
                          (plan_id, after['updated'], json.dumps(before, ensure_ascii=False), json.dumps(after, ensure_ascii=False)))
