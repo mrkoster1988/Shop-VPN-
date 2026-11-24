@@ -182,3 +182,24 @@ def test_mtproxy_only_pilot_excludes_public_shop_signups(client, monkeypatch):
     # Another login by the original Shop email account still cannot claim it.
     assert auto.enqueue(1) == 'not_mtproxy'
     assert one('SELECT count(*) AS n FROM flow_auto_grants')['n'] == 1
+
+
+def test_owner_issuance_diagnostics_do_not_expose_credentials(client, monkeypatch):
+    status=client.get('/api/admin/flow/wireguard/auto',
+        headers={'Authorization':'Bearer '+c.ADMIN_TOKEN})
+    assert status.status_code==200
+    initial=status.json()['diagnostics']
+    assert initial['state']=='policy_disabled'
+    assert initial['pending']==0 and initial['active']==0
+    assert 'token' not in json.dumps(initial).lower()
+    _node()
+    assert _policy(client, monkeypatch).status_code==200
+    register(client)
+    status=client.get('/api/admin/flow/wireguard/auto',
+        headers={'Authorization':'Bearer '+c.ADMIN_TOKEN})
+    data=status.json()['diagnostics']
+    assert data['state']=='issuance_pending'
+    assert data['ready_node'] is True
+    assert data['pending']==1 and data['retrying']==0
+    assert data['existing_wg_subscriptions']==1
+    assert 'z'*40 not in json.dumps(data)
