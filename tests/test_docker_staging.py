@@ -158,3 +158,26 @@ def test_custom_update_schedule_survives_real_encrypted_backup_restore(client,tm
     b.restore(archive,'test-backup-password-long',tmp_path/'restored-schedule')
     with sqlite3.connect(tmp_path/'restored-schedule/shop.db') as conn:after=conn.execute('SELECT * FROM update_checker').fetchall()
     assert after==before and after[0][1:4]==(0,'22:30','UTC')
+
+
+
+def test_additive_sqlite_columns_do_not_hide_historical_row_changes(tmp_path):
+    import sqlite3
+    source=Path(__file__).with_name('staging_data.py')
+    helper=importlib.util.spec_from_file_location('shop_staging_data',source)
+    data=importlib.util.module_from_spec(helper)
+    helper.loader.exec_module(data)
+    database=tmp_path/'shop.db'
+    with sqlite3.connect(database) as conn:
+        conn.execute('CREATE TABLE plans(id TEXT PRIMARY KEY,price INTEGER NOT NULL)')
+        conn.execute('INSERT INTO plans(id,price) VALUES (?,?)',('legacy',199))
+    before=data.snapshot(str(database))
+    with sqlite3.connect(database) as conn:
+        conn.execute('ALTER TABLE plans ADD COLUMN is_free INTEGER NOT NULL DEFAULT 0')
+    after=data.snapshot(str(database),projected_columns=before['table_columns'])
+    assert after['table_digests']['plans']!=before['table_digests']['plans']
+    assert after['projected_table_digests']['plans']==before['table_digests']['plans']
+    with sqlite3.connect(database) as conn:
+        conn.execute('UPDATE plans SET price=? WHERE id=?',(999,'legacy'))
+    tampered=data.snapshot(str(database),projected_columns=before['table_columns'])
+    assert tampered['projected_table_digests']['plans']!=before['table_digests']['plans']
