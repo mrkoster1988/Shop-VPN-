@@ -129,16 +129,17 @@ async def fulfill(order_id):
                 if target is None:
                     target = max(int(time.time()),sub['expires']) + order['days']*86400
                     conn.execute('UPDATE orders SET target_expires=? WHERE id=?',(target,order_id))
-            secret = await providers.provision({**sub, 'id':primary_identity(sub),'expires': target})
+            quota = order['free_traffic_gb'] if order['method']=='free' else 0
+            secret = await providers.provision({**sub, 'id':primary_identity(sub),'expires': target,'free_traffic_gb':quota})
             encrypted = c.encrypt(secret)
             device_secrets = []
             for device in all_rows("SELECT * FROM devices WHERE subscription_id=? AND state='active'",(sub['id'],)):
-                value = await providers.provision({**sub,'id':device_identity(device),'expires':target})
+                value = await providers.provision({**sub,'id':device_identity(device),'expires':target,'free_traffic_gb':quota})
                 device_secrets.append((c.encrypt(value),target,device['id']))
             with db() as conn:
                 conn.executemany("UPDATE devices SET secret=?,expires=?,error=NULL WHERE id=?",device_secrets)
-                conn.execute("UPDATE subscriptions SET expires=?,state='active',secret=?,reminder=0,device_limit=?,credential_id=?,primary_key_state='active',rotation_error=NULL,access_source=? WHERE id=?",
-                             (target, encrypted,sub['device_limit'] if order['kind']=='referral' else order['device_limit'],sub.get('credential_id') or c.encrypt(sub['id']),sub['access_source'] if order['kind']=='referral' else order['kind'],sub['id']))
+                conn.execute("UPDATE subscriptions SET expires=?,state='active',secret=?,reminder=0,device_limit=?,credential_id=?,primary_key_state='active',rotation_error=NULL,access_source=?,free_traffic_gb=? WHERE id=?",
+                             (target, encrypted,sub['device_limit'] if order['kind']=='referral' else order['device_limit'],sub.get('credential_id') or c.encrypt(sub['id']),sub['access_source'] if order['kind']=='referral' else order['kind'],sub['free_traffic_gb'] if order['kind']=='referral' else quota,sub['id']))
                 conn.execute("UPDATE orders SET status='active',error=NULL WHERE id=?", (order_id,))
         except Exception as exc:
             # Do not persist remote responses, URLs, private keys or credentials in logs.
