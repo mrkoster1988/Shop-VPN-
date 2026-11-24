@@ -264,6 +264,15 @@ const MANAGEMENT_NAV_GROUPS = [
   ['Реклама', ['ads-requests-section','ads-finance-section','ads-bookings-section','ads-stop-section','ads-sites-section']],
   ['Система', ['shop-settings','appearance-section','sales-controls-section','notifications-section','updates-panel','bot-menu-panel','role-policy-section','diagnostics-section','pushok-id-settings']]
 ];
+const MANAGEMENT_SEARCH_TAGS={
+  'servers-section':'wgdashboard wireguard wg0 3x-ui сервер api ключ',
+  'server-routing-section':'узлы маршрутизация',
+  'flow-auto-section':'wireguard flow 30 дней бесплатная выдача',
+  'diagnostics-section':'состояние api здоровье',
+  'users-section':'аккаунты регистрация',
+  'updates-panel':'версия релиз обновление',
+  'bot-menu-panel':'telegram бот кнопки'
+};
 const MANAGEMENT_QUICK = [
   ['servers-section','Подключить WGDashboard','Добавить WireGuard-сервер и проверить API','⚙'],
   ['flow-auto-section','Flow · 30 дней','Настроить лимит бесплатных подключений','◈'],
@@ -293,7 +302,7 @@ function renderManagementNavItems(){
       const item=managementMeta(id);
       if(!item||!canGroup(item[1]))continue;
       visited.add(id);
-      if(!query || (label+' '+item[2]).toLocaleLowerCase('ru-RU').includes(query)){
+      if(!query || (item[2]+' '+(MANAGEMENT_SEARCH_TAGS[id]||'')).toLocaleLowerCase('ru-RU').includes(query)){
         matches.push(managementAnchor(id,item[2]));
       }
     }
