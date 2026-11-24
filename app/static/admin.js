@@ -1320,7 +1320,7 @@ const serverState = {active:'Принимать новых', draining:'Толь�
 function serverCard(server) {
   const health = server.health === 'ok' ? 'API доступен' : server.health === 'error' ? 'Ошибка API' : 'Ещё не проверен';
   const panelExpiry = server.profile === 'wgdashboard' ? `<label><input name="schedule_expiry" type="checkbox" ${server.schedule_expiry?'checked':''}> Дублировать срок подписки заданием WGDashboard</label><label>Часовой пояс ОС панели<input name="panel_timezone" value="${esc(server.panel_timezone || 'UTC')}" maxlength="100" placeholder="Europe/Moscow" required></label><p class="muted">Панель удалит peer по расписанию, даже если Shop временно выключен. Укажите часовой пояс самого сервера WGDashboard.</p>` : '';
-  return `<form class="plan-editor" data-server="${esc(server.id)}" data-version="${server.version}"><h3>${esc(server.name)}</h3><p>${esc(protocolLabel(server.protocol))} · ${esc(serverProfileLabel[server.profile] || server.profile)} · ${health}</p><p>Проверка: ${esc(dateTime(server.checked_at))}</p><p>Занято: ${server.occupied} · Всего привязано: ${server.bound_subscriptions}</p><label>Название<input name="name" value="${esc(server.name)}" maxlength="80" required></label><label>Локация<input name="location" value="${esc(server.location)}" maxlength="80"></label><label>Лимит занятых подписок (0 — без лимита)<input name="capacity" type="number" min="0" max="1000000" value="${server.capacity}" required></label><label>Режим<select name="state">${Object.entries(serverState).map(([id,label])=>`<option value="${id}" ${server.state===id?'selected':''}>${label}</option>`).join('')}</select></label>${panelExpiry}<button type="submit" class="small">Сохранить настройки сервера</button><button type="button" class="small secondary" data-server-check="${esc(server.id)}">Проверить API</button><button type="button" class="text-link" data-server-edit="${esc(server.id)}">Профиль подключения</button><button type="button" class="text-link" data-server-credentials="${esc(server.id)}">Обновить доступ</button></form>`;
+  return `<form class="plan-editor" data-server="${esc(server.id)}" data-version="${server.version}"><h3>${esc(server.name)}</h3><p>${esc(protocolLabel(server.protocol))} · ${esc(serverProfileLabel[server.profile] || server.profile)} · ${health}</p><p>Проверка: ${esc(dateTime(server.checked_at))}</p><p class="muted">🔒 Профиль подключения сохранён в Shop. API-адрес и секреты намеренно не отображаются; это не подтверждение доступности сервера.</p><p>Занято: ${server.occupied} · Всего привязано: ${server.bound_subscriptions}</p><label>Название<input name="name" value="${esc(server.name)}" maxlength="80" required></label><label>Локация<input name="location" value="${esc(server.location)}" maxlength="80"></label><label>Лимит занятых подписок (0 — без лимита)<input name="capacity" type="number" min="0" max="1000000" value="${server.capacity}" required></label><label>Режим<select name="state">${Object.entries(serverState).map(([id,label])=>`<option value="${id}" ${server.state===id?'selected':''}>${label}</option>`).join('')}</select></label>${panelExpiry}<button type="submit" class="small">Сохранить настройки сервера</button><button type="button" class="small secondary" data-server-check="${esc(server.id)}">Проверить API</button><button type="button" class="text-link" data-server-edit="${esc(server.id)}">Профиль подключения</button><button type="button" class="text-link" data-server-credentials="${esc(server.id)}">Обновить доступ</button></form>`;
 }
 async function refreshServers() {
   const data = await api('servers');
@@ -1340,8 +1340,12 @@ function setServerStep(step) {
   const fields = $('server-form').elements;
   if (step === 3 && fields) {
     const name = String(fields.name.value || '').trim(), location = String(fields.location.value || '').trim();
+    const replacing = Boolean(String(fields.url?.value || '').trim());
+    const stored = editingServer && !replacing;
     $('server-review').innerHTML = '<h3>'+esc(name)+'</h3><p>'+esc(protocolLabel(fields.protocol.value))+
       (location ? ' · '+esc(location) : '')+'</p><p>Лимит подписок: '+esc(Number(fields.capacity.value) || 'без лимита')+'</p>'+
+      '<p>'+(stored ? 'Сохранённый профиль останется без изменений (секреты скрыты).' :
+      'Новый профиль будет зашифрован и сохранён только после подтверждения Shop.')+'</p>'+
       '<p>Доступ к панели будет проверен отдельной кнопкой после сохранения.</p>';
   }
 }
@@ -1464,6 +1468,9 @@ function openServer(server = null) {
   form.elements.wg_api.value = server?.profile === 'wgdashboard' ? 'wgdashboard' : 'agent';
   form.elements.protocol.disabled = !!server; form.elements.url.required = !server;
   $('server-title').textContent = server ? 'Профиль сервера' : 'Новый сервер';
+  $('server-profile-state').textContent = server
+    ? '✅ Профиль подключения сохранён в Shop в зашифрованном виде. Поля API и токена пустые намеренно. Оставьте их пустыми, чтобы сохранить прежние настройки, или заполните весь профиль для замены.'
+    : 'Профиль пока не сохранён. После успешного создания он появится в списке серверов; API отдельно проверяется кнопкой «Проверить API».';
   $('server-form-error').textContent = ''; showServerFields(); setServerStep(1); $('server-dialog').showModal();
 }
 $('new-server').onclick = () => openServer();
@@ -1509,9 +1516,21 @@ $('server-form').onsubmit = async event => {
     else { data.protocol=protocol; data.settings=profile; }
     await api(original ? 'servers/'+encodeURIComponent(original.id) : 'servers', {method:original?'PUT':'POST',data});
     if (epoch !== serverDialogEpoch) return;
-    $('server-dialog').close(); await refreshServers();
-    $('admin-notice').textContent = profile ? 'Профиль сохранён. Проверьте API сервера перед включением продаж.' : 'Сервер сохранён.';
-  } catch (error) { if (epoch === serverDialogEpoch) $('server-form-error').textContent=error.message; }
+    $('server-dialog').close();
+    $('admin-notice').textContent = profile
+      ? '✅ Профиль подключения сохранён в Shop (зашифрован). Адрес и ключ скрыты намеренно. Проверьте API перед включением продаж.'
+      : '✅ Настройки сервера сохранены. Профиль подключения остался без изменений.';
+    // Failure to refresh the list must not be reported as a failed database save.
+    try { await refreshServers(); }
+    catch (refreshError) {
+      $('servers-notice').textContent = '✅ Сохранение подтверждено Shop, но список серверов не обновился: '+refreshError.message+'. Нажмите «Обновить».';
+    }
+  } catch (error) {
+    if (epoch === serverDialogEpoch) {
+      $('server-form-error').textContent = '❌ Не сохранено: '+error.message+'. Исправьте данные — введённые поля остались в форме.';
+      $('server-profile-state').textContent = 'Данные не записаны. Исправьте ошибку и повторите сохранение.';
+    }
+  }
   finally { if (epoch === serverDialogEpoch) { button.disabled=false; serverSubmitting=false; } }
 };
 $('server-list').onsubmit = async event => {
