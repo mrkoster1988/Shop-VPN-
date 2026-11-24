@@ -36,7 +36,7 @@ def _unfinished_rotation(conn, sid):
 def _remote_identity(sub, *, server_profile):
     """Return whether an external identity must be revoked, or fail closed."""
     if not sub.get('server_id'):
-        if sub.get('secret') or sub.get('credential_id'):
+        if sub.get('secret') or sub.get('credential_id') or sub.get('state') == 'active':
             raise HTTPException(409, 'Привязка сервера отсутствует. Удаление небезопасно.')
         return False
     if sub['protocol'] == 'wg' and server_profile.get('api') == 'wgdashboard':
@@ -50,7 +50,9 @@ def _remote_identity(sub, *, server_profile):
                 (sub['server_id'], identity),
             ).fetchone()
         if not key:
-            if sub.get('secret') or sub['state'] == 'active':
+            # Only a never-issued pending record is safe to cancel locally.
+            # An expired/revoked record might still have an unmanaged remote peer.
+            if sub.get('secret') or sub.get('credential_id') or sub['state'] != 'pending':
                 raise HTTPException(409, 'Не найден сохранённый ключ WGDashboard. '
                                     'Сначала проверьте сервер вручную.')
             return False
