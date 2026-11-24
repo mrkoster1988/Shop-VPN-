@@ -203,6 +203,17 @@ def init_db():
           protocol TEXT NOT NULL, created INTEGER NOT NULL, policy_version INTEGER NOT NULL, terms_snapshot TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS trial_policy_changes (
           id INTEGER PRIMARY KEY, created INTEGER NOT NULL, before_data TEXT NOT NULL, after_data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS flow_bridge_identities (
+          mtproxy_uuid TEXT PRIMARY KEY, telegram_id INTEGER NOT NULL UNIQUE,
+          shop_user_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
+          created INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS flow_bridge_devices (
+          shop_user_id INTEGER PRIMARY KEY REFERENCES users(id),
+          client_hash CHAR(64) NOT NULL, created INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS flow_bridge_nonces (
+          nonce_hash CHAR(64) PRIMARY KEY, expires INTEGER NOT NULL,
+          created INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS flow_bridge_nonces_expiry ON flow_bridge_nonces(expires);
         CREATE TABLE IF NOT EXISTS flow_auto_policy (
           id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL DEFAULT 0
           CHECK(enabled IN (0,1)), days INTEGER NOT NULL DEFAULT 1 CHECK(days BETWEEN 1 AND 30),
