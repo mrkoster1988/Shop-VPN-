@@ -1116,3 +1116,69 @@ test('Pushok ID trust configuration is developer-only and uses version checks',a
  p.replyAt(1,{detail:'Настройки изменились'},409);await save;
  assert.equal(p.element('id-policy-save').disabled,true);
 });
+
+
+test('developer workspace focuses only the chosen authorized section',()=>{
+  const p=adminPage();
+  p.run("acceptStaffRole({role:'owner'});renderManagementNav()");
+  assert.equal(p.element('dashboard').dataset.adminFocused,'true');
+  assert.equal(p.element('management-overview').dataset.adminActive,'true');
+  assert.equal(p.element('servers-section').dataset.adminActive,'false');
+  assert.match(p.element('management-quick').innerHTML,/Подключить WGDashboard/);
+  assert.match(p.element('management-quick').innerHTML,/Flow · 30 дней/);
+  assert.match(p.element('management-nav').innerHTML,/Подключения/);
+  assert.match(p.element('management-nav').innerHTML,/Система/);
+  p.run("showManagementSection('servers-section')");
+  assert.equal(p.element('servers-section').dataset.adminActive,'true');
+  assert.equal(p.element('management-overview').dataset.adminActive,'false');
+  assert.equal(p.element('flow-auto-section').dataset.adminActive,'false');
+  assert.match(p.element('management-current').textContent,/Серверы/);
+  assert.match(p.element('management-nav').innerHTML,/aria-current="page"/);
+  p.run("showManagementSection('flow-auto-section')");
+  assert.equal(p.element('flow-auto-section').dataset.adminActive,'true');
+  assert.equal(p.element('servers-section').dataset.adminActive,'false');
+  assert.match(p.element('management-current').textContent,/Автовыдача/);
+});
+
+test('mobile admin navigation searches only role-authorized items and fails closed',()=>{
+  const p=adminPage();
+  p.run("acceptStaffRole({role:'moderator',permissions:['moderation']});renderManagementNav()");
+  assert.equal(p.element('moderation-section').hidden,false);
+  assert.equal(p.element('servers-section').hidden,true);
+  assert.equal(p.element('flow-auto-section').hidden,true);
+  assert.doesNotMatch(p.element('management-nav').innerHTML,/Серверы|Автовыдача/);
+  assert.doesNotMatch(p.element('management-quick').innerHTML,/WGDashboard|Flow · 30 дней/);
+  p.run("showManagementSection('servers-section')");
+  assert.equal(p.element('management-overview').dataset.adminActive,'true');
+  assert.equal(p.element('servers-section').dataset.adminActive,'false');
+  p.run("showManagementSection('moderation-section')");
+  assert.equal(p.element('moderation-section').dataset.adminActive,'true');
+  p.element('management-search').value='польз';
+  p.run("renderManagementNavItems()");
+  assert.doesNotMatch(p.element('management-nav').innerHTML,/Серверы|Пользователи|Модерация/);
+  p.element('management-search').value='модерац';
+  p.run("renderManagementNavItems()");
+  assert.match(p.element('management-nav').innerHTML,/Модерация/);
+  p.run("acceptStaffRole({role:'moderator',permissions:['support']});renderManagementNav()");
+  assert.equal(p.element('moderation-section').hidden,true);
+  assert.equal(p.element('moderation-section').dataset.adminActive,'false');
+  assert.equal(p.element('management-overview').dataset.adminActive,'true');
+});
+
+test('admin HTML contains optional one-time bootstrap and all original navigation targets',()=>{
+  const markup=fs.readFileSync('app/static/admin.html','utf8');
+  const source=fs.readFileSync('app/static/admin.js','utf8');
+  const stylesheet=fs.readFileSync('app/static/style.css','utf8');
+  assert.match(markup,/<details class="bootstrap-key-box">/);
+  assert.match(markup,/<input id="key" type="password"/);
+  assert.match(markup,/id="management-search"/);
+  assert.match(markup,/id="management-quick"/);
+  assert.match(stylesheet,/#dashboard\[data-admin-focused="true"\]>section\[id\]:not\(\[data-admin-active="true"\]\)/);
+  const p=adminPage();
+  p.run("acceptStaffRole({role:'owner'});renderManagementNav()");
+  for(const id of ['servers-section','flow-auto-section','users-section','orders-section','moderation-section','updates-panel']){
+    assert.ok(markup.includes('id="'+id+'"'),id+' section removed');
+    assert.ok(p.element('management-nav').innerHTML.includes('#'+id),id+' not navigable');
+  }
+  assert.ok(source.includes('canViewManagementSection'),'navigation must verify permissions');
+});
