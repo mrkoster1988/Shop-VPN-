@@ -533,3 +533,120 @@ html[data-telegram-theme] body.shop-public-ui .miniapp-nav [aria-current=page]{
 @media(prefers-reduced-motion:reduce){
   .shop-public-ui *{scroll-behavior:auto!important;transition:none!important}
 }
+
+
+/* Pushok Shop Admin — light, quiet and compact. Scoped strictly to the admin body;
+   the public storefront and Mini App intentionally retain their own palette. */
+body.shop-admin-ui{
+  color-scheme:light;
+  --bg:#fff;--white:#fff;--ink:#1c2c3a;--muted:#627482;
+  --line:#dce4e9;--green:#0c827b;
+  background:#fff!important;color:#1c2c3a;
+  font-size:14px;line-height:1.5;
+}
+.shop-admin-ui .admin-wrap{width:min(1180px,calc(100% - 28px));padding:16px 0 56px}
+.shop-admin-ui .admin-wrap>.brand{color:#15756f}
+.shop-admin-ui .admin-page-title{font-size:clamp(24px,3.4vw,34px);margin:10px 0 8px;letter-spacing:-.035em;color:#142b3c}
+.shop-admin-ui .admin-login-intro,.shop-admin-ui .muted,
+.shop-admin-ui :is(.management-header p,.management-overview p){color:#627482}
+.shop-admin-ui #admin-login,.shop-admin-ui .management-header,
+.shop-admin-ui .management-overview,
+.shop-admin-ui #dashboard>section[id]:not(.management-overview){
+  color:#1c2c3a;background:#fff;border:1px solid #dce4e9;
+  box-shadow:none;border-radius:14px;
+}
+.shop-admin-ui .management-header{padding:18px;margin:14px 0}
+.shop-admin-ui .management-header :is(h2,.management-current){color:#142b3c!important}
+.shop-admin-ui .management-header .eyebrow{color:#147a74}
+.shop-admin-ui .management-search-label{color:#2f4958}
+.shop-admin-ui .management-nav{grid-template-columns:repeat(auto-fit,minmax(min(100%,175px),1fr));gap:7px}
+.shop-admin-ui .management-nav-group{background:#fafcfd;border:1px solid #dce4e9;border-radius:10px}
+.shop-admin-ui .management-nav-group summary{color:#233b4a;min-height:42px;padding:8px 12px}
+.shop-admin-ui .management-nav-group summary span{background:#e7f4f2;color:#0c706a}
+.shop-admin-ui .management-nav a{color:#365364;border-color:transparent;min-height:36px}
+.shop-admin-ui .management-nav>a.management-overview-link{background:#e8f5f3;color:#075f59;border:1px solid #b6d8d3}
+.shop-admin-ui .management-nav a[aria-current="page"]{background:#e5f5f2;color:#086963;border-color:#a9d8d0}
+.shop-admin-ui .management-nav a:hover{background:#edf4f6;border-color:#c6dadd;color:#123d4a}
+.shop-admin-ui .management-nav :is(a,summary):focus-visible,
+.shop-admin-ui :is(a,button,input,textarea,select,summary):focus-visible{
+  outline:3px solid #4caea7;outline-offset:2px;
+}
+.shop-admin-ui .management-overview{padding:20px}
+.shop-admin-ui .management-overview h2,.shop-admin-ui #dashboard>section h2{color:#1a3546}
+.shop-admin-ui .management-quick{gap:9px}
+.shop-admin-ui .management-quick-card{
+  min-height:90px;border:1px solid #dce4e9;background:#f7fbfb;
+  padding:13px;border-radius:12px;transform:none;transition:border-color .15s;
+}
+.shop-admin-ui .management-quick-card:hover{background:#f1f9f7;border-color:#9dcbc6;transform:none}
+.shop-admin-ui .management-quick-card>span{color:#17837a}
+.shop-admin-ui .management-quick-card strong{color:#213948}
+.shop-admin-ui .management-quick-card small{color:#647b86}
+.shop-admin-ui #dashboard>section[id]:not(.management-overview){padding:18px}
+.shop-admin-ui .stats>div,.shop-admin-ui .admin-order,.shop-admin-ui .plan-editor,
+.shop-admin-ui .admin-user,.shop-admin-ui .updates-panel,
+.shop-admin-ui .updates-versions>div,.shop-admin-ui .setup-review,
+.shop-admin-ui .store-announcement,.shop-admin-ui .shop-finance-summary article,
+.shop-admin-ui .updates-notes,.shop-admin-ui .bootstrap-key-box{
+  background:#fafcfd;color:#213847;border:1px solid #dce4e9;
+  box-shadow:none;border-radius:12px;
+}
+.shop-admin-ui .stats strong{color:#08786f}
+.shop-admin-ui dialog{
+  background:#fff;color:#1c2c3a;border:1px solid #d2dfe5;
+  box-shadow:0 18px 60px #19354825;border-radius:16px;
+  max-height:calc(100dvh - 26px);max-width:min(95vw,760px);
+  overflow:auto;
+}
+.shop-admin-ui dialog::backdrop{background:#2438457a}
+.shop-admin-ui .shop-finance-summary article,
+.shop-admin-ui .updates-panel,.shop-admin-ui .updates-notes{color:#213847;background:#f8fbfc}
+.shop-admin-ui input:not([type=checkbox]):not([type=radio]),
+.shop-admin-ui textarea,.shop-admin-ui select,
+.shop-admin-ui #server-list select,.shop-admin-ui #server-dialog select,
+.shop-admin-ui .orders-search select,.shop-admin-ui #coupons-list select,
+.shop-admin-ui #coupon-create select{
+  background:#fff;color:#1c3444;border:1px solid #cbd9e0;
+  border-radius:10px;min-height:40px;
+}
+.shop-admin-ui input::placeholder,.shop-admin-ui textarea::placeholder{color:#748897}
+.shop-admin-ui button:not(.text-link):not(.close){
+  background:#0b7c73;border:1px solid #0b7c73;color:#fff;
+  border-radius:10px;box-shadow:none;min-height:40px;
+}
+.shop-admin-ui button:not(:disabled):not(.text-link):not(.close):hover{
+  background:#076a63;border-color:#076a63;transform:none;box-shadow:none;
+}
+.shop-admin-ui button.secondary:not(.text-link),
+.shop-admin-ui .secondary{background:#fff;color:#284959;border:1px solid #cbd9e0}
+.shop-admin-ui button.secondary:not(:disabled):hover{background:#f0f6f8;color:#1a4050;border-color:#9cb4c0}
+.shop-admin-ui .text-link{background:transparent;color:#096f70;border:0}
+.shop-admin-ui .status.pending{color:#855c16;background:#fff5da}
+.shop-admin-ui :is(.setup-steps li,.setup-step legend){color:#294353}
+.shop-admin-ui .admin-user,.shop-admin-ui .admin-order,.shop-admin-ui .plan-editor{padding:14px}
+.shop-admin-ui .admin-user p,.shop-admin-ui .admin-order p{margin:6px 0}
+.shop-admin-ui .plan-editors{gap:12px}
+.shop-admin-ui .danger-action{background:#fff!important;color:#b32638!important;border:1px solid #e5b2bb!important}
+.shop-admin-ui .danger-action:hover:not(:disabled){background:#fff0f1!important;border-color:#c76f81!important}
+.shop-admin-ui .danger-action:disabled{opacity:.5}
+.shop-admin-ui .record-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:12px}
+.shop-admin-ui .record-actions button{min-height:38px;padding:8px 12px}
+.shop-admin-ui .record-note{color:#596f7e;font-size:12px;line-height:1.45}
+.shop-admin-ui [role=status]{overflow-wrap:anywhere}
+@media(max-width:640px){
+  .shop-admin-ui .admin-wrap{width:calc(100% - 20px);padding:12px 0 36px}
+  .shop-admin-ui .admin-page-title{font-size:26px}
+  .shop-admin-ui .management-header,.shop-admin-ui .management-overview,
+  .shop-admin-ui #dashboard>section[id]:not(.management-overview){padding:12px;border-radius:12px}
+  .shop-admin-ui .management-nav{grid-template-columns:1fr}
+  .shop-admin-ui .management-tools{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .shop-admin-ui .management-quick{grid-template-columns:1fr}
+  .shop-admin-ui .management-quick-card{min-height:75px}
+  .shop-admin-ui .stats{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .shop-admin-ui dialog{padding:18px 14px;width:calc(100vw - 18px)}
+  .shop-admin-ui .record-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .shop-admin-ui .record-actions button{width:100%;min-width:0;font-size:12px}
+}
+@media(prefers-reduced-motion:reduce){
+ .shop-admin-ui .management-quick-card{transition:none}
+}
