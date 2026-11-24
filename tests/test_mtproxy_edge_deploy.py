@@ -30,6 +30,6 @@ def test_isolated_compose_has_no_ports_or_host_network():
     assert "\n    ports:" not in manifest
     assert "mtproxy-pushok_edge" in manifest
     assert "pushok-shop:8000" in manifest
-    assert '"0.0.0.0"' not in manifest or "0.0.0.0" in manifest
+    assert "      - 0.0.0.0" in manifest
     assert "no-access-log" in manifest
     assert "shop_data:/app/data" in manifest
