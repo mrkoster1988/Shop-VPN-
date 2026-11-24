@@ -49,14 +49,33 @@ python3 scripts/prepare_flow_bridge.py --apply
 ## 2а. Применение исправления PostgreSQL MTProxy
 
 Перед перезапуском MTProxy API требуется миграция категории лимитера `shop`
-(поправка MTProxy PR #204). После появления этой миграции в `main`:
+(поправка MTProxy PR #204). Миграция уже включена в `main`, но **не должна запускаться с другой ветки**,
+пока `database/076_flow_shop_rate_window.sql` не появился в текущем checkout
+`/opt/mtproxy-pushok`. Для сервера с автообновлением `release/stable`
+выпуск должен быть опубликован в стабильную ветку отдельно. Перед командами
+проверьте `git branch --show-current` и отсутствие незакоммиченных изменений.
+Выполнить резервное копирование и миграцию можно только после получения
+исправленной стабильной версии:
 
 ```bash
-cd /opt/mtproxy-pushok
-git pull --ff-only
-python3 scripts/installer_runtime.py backup
-mapfile -t migrations < <(find database -maxdepth 1 -type f -name '[0-9][0-9][0-9]_*.sql' ! -name '001_*' | sort)
-python3 scripts/installer_runtime.py migrate "${migrations[@]}"
+# Подоболочка: ошибка прервёт только этот блок, не вашу SSH-сессию.
+(
+  set -euo pipefail
+  cd /opt/mtproxy-pushok
+  git branch --show-current
+  if [[ -n "$(git status --porcelain)" ]]; then
+    echo "BLOCKED: local modifications, inspect status first"
+    exit 1
+  fi
+  git pull --ff-only
+  if [[ ! -s database/076_flow_shop_rate_window.sql ]]; then
+    echo "BLOCKED: migration 076 missing in current release"
+    exit 1
+  fi
+  python3 scripts/installer_runtime.py backup
+  mapfile -t migrations < <(find database -maxdepth 1 -type f -name '[0-9][0-9][0-9]_*.sql' ! -name '001_*' | sort)
+  python3 scripts/installer_runtime.py migrate "${migrations[@]}"
+)
 ```
 
 Штатный мигратор сверяет контрольные суммы, использует транзакцию PostgreSQL
@@ -72,14 +91,16 @@ MTProxy API использует прежний образ — там меняе
 
 ```bash
 cd /opt/pushok-shop
-docker compose -f compose.mtproxy-edge.yaml -p pushok-shop config --quiet
+# Обязательно оставляем локальное закрепление wg.pushok.shop -> 45.90.56.23.
+# compose.wg-ip.yaml — приватный локальный override, не заменяем и не теряем.
+docker compose -f compose.mtproxy-edge.yaml -f compose.wg-ip.yaml -p pushok-shop config --quiet
 
 cd /opt/mtproxy-pushok
 docker compose config --quiet
 
 # Только Shop; сохраняет именованный том pushok_shop_data:
 cd /opt/pushok-shop
-docker compose -f compose.mtproxy-edge.yaml -p pushok-shop up -d --no-deps --build --force-recreate shop
+docker compose -f compose.mtproxy-edge.yaml -f compose.wg-ip.yaml -p pushok-shop up -d --no-deps --build --force-recreate shop
 
 # Только API MTProxy; не затрагивает его bot, worker, Caddy и БД:
 cd /opt/mtproxy-pushok
@@ -96,6 +117,40 @@ python3 /opt/pushok-shop/scripts/flow_public_preflight.py
 
 Не публикуйте полное содержимое `.env` и вывод `docker inspect` с
 `Config.Env`; там секреты. `DRY RUN` и булевы статусы безопасны.
+
+## 4а. Проверка текущего VPS без изменения данных
+
+В Shop репозитории есть безопасный анализатор текущей инфраструктуры:
+
+```bash
+cd /opt/pushok-shop
+python3 scripts/flow_pilot_runtime_check.py
+```
+
+Он проверяет совпадение закрытых ключей MTProxy/Shop (без их печати),
+`FLOW_TRIAL_MTPROXY_ONLY=true`, локальный Compose-override с IP
+`45.90.56.23`, отсутствие host-портов, существующий том
+`pushok_shop_data`, HTTPS/TLS WGDashboard из контейнера Shop,
+`database/076_flow_shop_rate_window.sql` и присутствие секрета в
+действующем MTProxy API. Если какой-либо пункт показывает `BLOCK`, автоматическая
+выдача пока не допускается. До обновления MTProxy API последний пункт может
+показывать `BLOCK` — это ожидаемо.
+
+**Сохранить HTTPS:** если `wg.pushok.shop` не разрешается
+публичным DNS из-за рассинхронизации авторитетных NS, Shop использует
+локальный `compose.wg-ip.yaml` со строкой
+`wg.pushok.shop=45.90.56.23`. В профиле панели сохраняется
+`https://wg.pushok.shop`, а не голый IP — TLS продолжает
+проверять сертификат по имени. Для публичных Android-клиентов UDP endpoint
+должен быть `45.90.56.23:51820` до восстановления DNS.
+Если VPS WGDashboard сменит IP, override и endpoint нужно осознанно
+обновить. Отдельно решить проблему DNS у провайдера.
+
+**Важно:** `PASS` этого скрипта и кнопки «Проверить API» означают
+только готовность чтения и связи. Они не доказывают право создания peer,
+удаление по расписанию или работу Android-клиента. API WGDashboard 4.3.4
+нужно отдельно проверить на реальном тестовом peer, включая `PeerScheduleJob`
+и прекращение доступа по сроку.
 
 ## 5. Реальный WGDashboard — отдельная приёмка
 
