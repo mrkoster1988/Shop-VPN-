@@ -451,8 +451,9 @@ html[data-telegram-theme] body.shop-public-ui .miniapp-nav [aria-current=page]{
   .shop-public-ui .nav .brand{font-size:17px}
   .shop-public-ui .nav nav>a{display:none}
   .shop-public-ui .nav nav{margin-left:auto}
-  .shop-public-ui #account-btn{font-size:12px;padding:8px 10px;min-height:41px}
-  .shop-public-ui #account-btn .pushok-icon{width:17px;height:17px}
+  .shop-public-ui #account-btn{font-size:12px;padding:8px 10px;min-height:41px;min-width:41px}
+  .shop-public-ui #account-label{display:none}
+  .shop-public-ui #account-btn .pushok-icon{width:20px;height:20px}
   .shop-public-ui .hero{display:block;padding:18px 0 15px}
   .shop-public-ui .hero .eyebrow{font-size:9px}
   .shop-public-ui h1{font-size:clamp(34px,9vw,44px);letter-spacing:-.04em;
