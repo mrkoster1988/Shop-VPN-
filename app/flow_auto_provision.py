@@ -33,27 +33,16 @@ def policy():
 
 
 def _node(conn):
-    """An eligible node must revoke exported configs on its own expiry timer."""
-    rows = conn.execute("""
-        SELECT s.*,
-          (SELECT count(*) FROM subscriptions sub
-            WHERE sub.server_id=s.id AND (sub.state='pending'
-              OR (sub.state='active' AND sub.expires>?))) AS occupied
-        FROM servers s WHERE s.protocol='wg' AND s.state='active'
-          AND s.health!='error'
-        ORDER BY occupied,s.created,s.id
-    """, (int(time.time()),)).fetchall()
-    for row in rows:
-        if row['capacity'] > 0 and row['occupied'] >= row['capacity']:
-            continue
+    """Общий выбор новых узлов плюс обязательный защищённый срок WGDashboard."""
+    from . import server_routing
+    for row in server_routing.candidates(conn,'wg'):
         try:
-            profile = servers.decode(dict(row))
+            profile=servers.decode(row)
         except Exception:
             continue
-        if (profile.get('api') == 'wgdashboard'
-                and profile.get('schedule_expiry') is True
+        if (profile.get('api')=='wgdashboard' and profile.get('schedule_expiry') is True
                 and bool(profile.get('panel_timezone'))):
-            return dict(row)
+            return row
     return None
 
 

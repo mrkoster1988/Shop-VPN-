@@ -254,14 +254,9 @@ def list_servers():
 
 
 def select(conn, protocol):
-    row = conn.execute("""SELECT v.*,
-        (SELECT count(*) FROM subscriptions s WHERE s.server_id=v.id AND (s.state='pending' OR (s.state='active' AND s.expires>?))) AS occupied
-        FROM servers v WHERE v.protocol=? AND v.state='active' AND v.health!='error'
-        ORDER BY occupied,v.created,v.id""", (int(time.time()), protocol)).fetchall()
-    for candidate in row:
-        if candidate['capacity'] == 0 or candidate['occupied'] < candidate['capacity']:
-            return dict(candidate)
-    return None
+    from . import server_routing
+    candidates=server_routing.candidates(conn,protocol)
+    return candidates[0] if candidates else None
 
 
 def available(protocol, user_id=None):

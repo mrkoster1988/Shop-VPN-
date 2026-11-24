@@ -27,7 +27,7 @@ from starlette.routing import Mount
 from . import ads_bookings as bookings, ads_finance as finance
 from . import support as support_cases
 from . import shop_settings, runtime_settings, payment_policy, shop_finance, platforms, protocols, bot_menu as menu_editor, payment_events
-from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
+from . import config as c, providers, service, servers, server_routing, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
 from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge
@@ -58,6 +58,7 @@ async def lifespan(app):
     if os.getenv('BACKGROUND_TASKS', 'true') == 'true' and os.getenv('MAINTENANCE_MODE')!='true':
         tasks.append(asyncio.create_task(service.worker()))
         tasks.append(asyncio.create_task(updates.worker()))
+        tasks.append(asyncio.create_task(server_routing.worker()))
         if c.BOT_TOKEN:
             tasks.append(asyncio.create_task(service.bot_loop()))
     yield
@@ -1130,20 +1131,29 @@ async def update_server_credentials(sid: str, data: ServerCredentials):
 
 @app.post('/api/admin/servers/{sid}/check', dependencies=[Depends(admin)])
 async def check_server(sid: str):
-    row = one('SELECT * FROM servers WHERE id=?',(sid,))
-    if not row:
-        raise HTTPException(404,'Сервер не найден')
-    try:
-        await providers.probe_server(row)
-        health, error = 'ok', None
-    except Exception:
-        health, error = 'error', 'ProviderCheckFailed'
-    with db() as conn:
-        changed = conn.execute('UPDATE servers SET health=?,checked_at=?,error_code=? WHERE id=? AND version=?',
-            (health,int(time.time()),error,sid,row['version'])).rowcount
-    if not changed:
-        raise HTTPException(409,'Настройки изменились во время проверки. Запустите проверку заново.')
+    await server_routing.probe(sid)
     return next(item for item in servers.list_servers() if item['id']==sid)
+
+
+@app.get('/api/admin/server-routing',dependencies=[Depends(admin)])
+async def routing_report():
+    return server_routing.report()
+
+
+@app.put('/api/admin/server-routing/policy',dependencies=[Depends(admin)])
+async def routing_policy(data:server_routing.PolicyUpdate):
+    return server_routing.update_policy(data)
+
+
+@app.put('/api/admin/server-routing/nodes/{sid}',dependencies=[Depends(admin)])
+async def routing_node(sid:str,data:server_routing.NodeUpdate):
+    return server_routing.update_node(sid,data)
+
+
+@app.get('/api/admin/server-routing/history/{sid}',dependencies=[Depends(admin)])
+async def routing_history(sid:str):
+    return server_routing.history(sid)
+
 
 @app.get('/api/admin/plans', dependencies=[Depends(admin)])
 async def admin_plans():
