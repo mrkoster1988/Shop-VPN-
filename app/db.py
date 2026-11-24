@@ -429,15 +429,31 @@ def init_db():
         for column, definition in {
             'free_activation_limit': 'INTEGER NOT NULL DEFAULT 0 CHECK(free_activation_limit BETWEEN 0 AND 1000000)',
             'free_traffic_gb': 'INTEGER NOT NULL DEFAULT 0 CHECK(free_traffic_gb BETWEEN 0 AND 10000)',
+            'free_auto_renew': 'INTEGER NOT NULL DEFAULT 0 CHECK(free_auto_renew IN (0,1))',
+            'free_max_renewals': 'INTEGER NOT NULL DEFAULT 0 CHECK(free_max_renewals BETWEEN 0 AND 12)',
         }.items():
             if column not in plan_columns:
                 conn.execute('ALTER TABLE plans ADD COLUMN ' + column + ' ' + definition)
         order_columns = {row['name'] for row in conn.execute('PRAGMA table_info(orders)')}
         if 'free_traffic_gb' not in order_columns:
             conn.execute('ALTER TABLE orders ADD COLUMN free_traffic_gb INTEGER NOT NULL DEFAULT 0')
+        for column,definition in {
+            'free_auto_renew': 'INTEGER NOT NULL DEFAULT 0',
+            'free_max_renewals': 'INTEGER NOT NULL DEFAULT 0',
+        }.items():
+            if column not in order_columns:
+                conn.execute('ALTER TABLE orders ADD COLUMN ' + column + ' ' + definition)
         subscription_columns = {row['name'] for row in conn.execute('PRAGMA table_info(subscriptions)')}
         if 'free_traffic_gb' not in subscription_columns:
             conn.execute('ALTER TABLE subscriptions ADD COLUMN free_traffic_gb INTEGER NOT NULL DEFAULT 0')
+        for column,definition in {
+            'free_plan_id': 'TEXT',
+            'free_auto_renew': 'INTEGER NOT NULL DEFAULT 0',
+            'free_max_renewals': 'INTEGER NOT NULL DEFAULT 0',
+            'free_renewals_used': 'INTEGER NOT NULL DEFAULT 0',
+        }.items():
+            if column not in subscription_columns:
+                conn.execute('ALTER TABLE subscriptions ADD COLUMN ' + column + ' ' + definition)
         for position, plan in enumerate(c.PLANS):
             conn.execute('INSERT OR IGNORE INTO plans(id,name,days,price,stars,position) VALUES (?,?,?,?,?,?)',
                          (plan['id'], plan['name'], plan['days'], plan['price'], plan['stars'], position))
