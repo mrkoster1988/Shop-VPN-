@@ -145,6 +145,25 @@ def init_db():
           server_id TEXT NOT NULL REFERENCES servers(id), credential_id TEXT NOT NULL,
           job_id TEXT NOT NULL, target_expires INTEGER NOT NULL, updated INTEGER NOT NULL,
           PRIMARY KEY(server_id,credential_id), UNIQUE(server_id,job_id));
+        CREATE TABLE IF NOT EXISTS server_routing_policy (
+          id INTEGER PRIMARY KEY CHECK(id=1),strategy TEXT NOT NULL CHECK(strategy IN ('least_count','utilization')),
+          reserve_enabled INTEGER NOT NULL CHECK(reserve_enabled IN (0,1)),
+          require_recent INTEGER NOT NULL CHECK(require_recent IN (0,1)),max_age_minutes INTEGER NOT NULL CHECK(max_age_minutes BETWEEN 1 AND 1440),
+          monitor_enabled INTEGER NOT NULL CHECK(monitor_enabled IN (0,1)),
+          monitor_interval_minutes INTEGER NOT NULL CHECK(monitor_interval_minutes BETWEEN 1 AND 1440),
+          monitor_batch INTEGER NOT NULL CHECK(monitor_batch BETWEEN 1 AND 4),
+          version INTEGER NOT NULL CHECK(version>0),updated INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS server_routing_nodes (
+          server_id TEXT PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
+          priority INTEGER NOT NULL CHECK(priority BETWEEN 0 AND 1000),
+          reserve INTEGER NOT NULL CHECK(reserve IN (0,1)),accept_new INTEGER NOT NULL CHECK(accept_new IN (0,1)),
+          version INTEGER NOT NULL CHECK(version>0),updated INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS server_probe_history (
+          id INTEGER PRIMARY KEY,server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+          server_version INTEGER NOT NULL,checked_at INTEGER NOT NULL,status TEXT NOT NULL CHECK(status IN ('ok','error')),
+          duration_ms INTEGER NOT NULL CHECK(duration_ms BETWEEN 0 AND 30000),
+          source TEXT NOT NULL CHECK(source IN ('manual','automatic')));
+        CREATE INDEX IF NOT EXISTS server_probe_history_node ON server_probe_history(server_id,id);
         CREATE TABLE IF NOT EXISTS server_changes (
           id INTEGER PRIMARY KEY, server_id TEXT NOT NULL REFERENCES servers(id), created INTEGER NOT NULL,
           action TEXT NOT NULL, version INTEGER NOT NULL);

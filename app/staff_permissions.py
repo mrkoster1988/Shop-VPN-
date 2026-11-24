@@ -20,6 +20,7 @@ LABELS={
     'promotions':'Промокоды, бонусы и пробный доступ',
     'starter':'Настройки автовыдачи WireGuard',
     'servers_read':'Состояние серверов и протоколы (просмотр)',
+    'server_routing':'Управление распределением и мониторингом узлов',
     'moderation':'Модерация заявок рекламы',
     'support':'Обращения и поддержка',
     'store_settings':'Настройки магазина, условия и оформление',
@@ -34,7 +35,7 @@ ALLOWED={
     'moderator':frozenset(('moderation','support')),
 }
 DEFAULTS={
-    'administrator':frozenset(LABELS)-{'payments','bot_menu','sales_controls','notifications','payment_settings','finance_read','finance_write'},
+    'administrator':frozenset(LABELS)-{'payments','bot_menu','sales_controls','notifications','payment_settings','finance_read','finance_write','server_routing'},
     'moderator':frozenset(('moderation',)),
 }
 # Права разработчика на сотрудников, секреты, установку и обновление
@@ -52,7 +53,8 @@ RULES={
                    ('PUT',r'/(?:referrals|trial|coupons/[^/]+)')],
     'starter': [('GET',r'/flow/wireguard/auto(?:/batch)?'),('PUT',r'/flow/wireguard/auto'),
                 ('POST',r'/flow/wireguard/auto/batch')],
-    'servers_read': [('GET',r'/(?:servers|protocols)')],
+    'servers_read': [('GET',r'/(?:servers|protocols|server-routing)'),('GET',r'/server-routing/history/[^/]+')],
+    'server_routing': [('PUT',r'/server-routing/policy'),('PUT',r'/server-routing/nodes/[^/]+')],
     'moderation': [('GET',r'/moderation/requests'),('PUT',r'/moderation/requests/[^/]+')],
     'support': [('GET',r'/support/tickets(?:/[^/]+)?'),('POST',r'/support/tickets/[^/]+/messages'),
                 ('PATCH',r'/support/tickets/[^/]+')],
@@ -102,6 +104,8 @@ def update(role,data):
         raise HTTPException(422,'Для подтверждения оплаты включите доступ к заказам')
     if 'finance_write' in values and 'finance_read' not in values:
         raise HTTPException(422,'Для учёта операций разрешите просмотр финансового журнала')
+    if 'server_routing' in values and 'servers_read' not in values:
+        raise HTTPException(422,'Для управления распределением разрешите просмотр серверов')
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
         old=policy(conn,role)
@@ -150,6 +154,7 @@ def effective_permissions(conn,role,staff_id):
     if values is not None:allowed.intersection_update(values)
     if 'orders' not in allowed:allowed.discard('payments')
     if 'finance_read' not in allowed:allowed.discard('finance_write')
+    if 'servers_read' not in allowed:allowed.discard('server_routing')
     return sorted(allowed)
 
 
@@ -185,6 +190,8 @@ def individual_update(staff_id,data):
             raise HTTPException(422,'Для подтверждения оплаты разрешите просмотр заказов')
         if 'finance_write' in values and 'finance_read' not in values:
             raise HTTPException(422,'Для учёта операций разрешите просмотр финансового журнала')
+        if 'server_routing' in values and 'servers_read' not in values:
+            raise HTTPException(422,'Для управления распределением разрешите просмотр серверов')
         encoded=None if data.inherit else json.dumps(sorted(values),separators=(',',':'))
         conn.execute("""INSERT INTO staff_permission_limits(staff_id,permissions,version,updated)
             VALUES (?,?,?,?) ON CONFLICT(staff_id) DO UPDATE SET permissions=excluded.permissions,

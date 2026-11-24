@@ -1065,3 +1065,38 @@ test('finance view-only role cannot record and late responses cannot restore jou
  const pending=p.run('refreshShopFinance()');p.run("$('exit').onclick()");p.replyAt(1,report);await pending;
  assert.equal(p.element('shop-finance-list').innerHTML,'');
 });
+
+
+function routingFixture(overrides={}){
+ return {policy:{version:2,strategy:'least_count',reserve_enabled:true,require_recent:false,max_age_minutes:60,monitor_enabled:false,monitor_interval_minutes:5,monitor_batch:2},nodes:[{id:'node-a',name:'<img> WG',location:'EU',protocol:'wg',state:'active',health:'ok',capacity:10,occupied:2,priority:100,routing_version:1,version:3,reserve:false,accept_new:true,blocked_reason:null,last_probe:{duration_ms:12,source:'manual'}}],next_assignment:{wg:'node-a'},...overrides};
+}
+test('server routing read-only users see occupancy but not mutation controls',async()=>{
+ const p=adminPage(),load=p.run("acceptStaffRole({role:'administrator',permissions:['servers_read']});refreshRouting()");
+ assert.equal(p.requests[0],'/shop/api/admin/server-routing');
+ p.reply(routingFixture());await load;
+ assert.equal(p.element('server-routing-policy').hidden,true);
+ assert.match(p.element('routing-nodes').innerHTML,/&lt;img&gt; WG/);
+ assert.match(p.element('routing-nodes').innerHTML,/20%/);
+ assert.doesNotMatch(p.element('routing-nodes').innerHTML,/<img|data-routing-node/);
+ assert.match(p.element('routing-summary').textContent,/Автомониторинг выключен/);
+});
+test('routing updates send the exact policy version and refuse stale state',async()=>{
+ const p=adminPage(),load=p.run("role='owner';refreshRouting()");
+ p.reply(routingFixture());await load;
+ p.element('routing-monitor-enabled').checked=true;
+ const save=p.element('server-routing-policy').onsubmit({preventDefault(){}});
+ assert.deepEqual(p.bodies[1],{version:2,strategy:'least_count',reserve_enabled:true,require_recent:false,max_age_minutes:60,monitor_enabled:true,monitor_interval_minutes:5,monitor_batch:2});
+ p.replyAt(1,{detail:'Правила изменились'},409);await save;
+ assert.equal(p.element('routing-policy-save').disabled,true);
+ assert.match(p.element('routing-status').textContent,/Обновите/);
+});
+test('server history and routing replies cannot restore data after logout',async()=>{
+ const p=adminPage(),load=p.run("role='owner';refreshRouting()");
+ p.reply(routingFixture());await load;
+ const history=p.run("openRoutingHistory('node-a')");
+ p.run("$('exit').onclick()");
+ p.replyAt(1,{checks:[{checked_at:1,status:'ok',duration_ms:10,source:'manual',server_version:3}]});await history;
+ assert.equal(p.element('routing-history-panel').hidden,true);
+ assert.equal(p.element('routing-history-list').innerHTML,'');
+ assert.equal(p.element('routing-nodes').innerHTML,'');
+});

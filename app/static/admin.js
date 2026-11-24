@@ -247,7 +247,7 @@ const MANAGEMENT_SECTIONS=[
   ['role-policy-section','developer','Полномочия'],['moderation-section','moderation','Модерация'],
   ['support-admin','support','Поддержка'],['commerce-analytics','analytics','Аналитика'],
   ['plans-section','catalog','Тарифы'],['users-section','customers','Пользователи'],
-  ['orders-section','orders','Заказы'],['servers-section','servers_read','Серверы'],
+  ['orders-section','orders','Заказы'],['servers-section','servers_read','Серверы'],['server-routing-section','servers_read','Распределение'],
   ['protocols-panel','servers_read','Протоколы'],['flow-auto-section','starter','Автовыдача'],
   ['coupons-section','promotions','Промокоды'],['referrals-section','promotions','Бонусы'],
   ['trial-section','promotions','Пробный доступ'],['ads-requests-section','advertising','Реклама MTProxy'],
@@ -332,7 +332,7 @@ async function refreshDelegated({plans=true}={}){
   if(canGroup('catalog')&&plans)tasks.push(api('plans').then(data=>{if(epoch===authEpoch)$('plan-editors').innerHTML=data.plans.map(planForm).join('');}));
   if(canGroup('orders'))tasks.push(refreshOrders());
   if(canGroup('customers'))tasks.push(refreshUsers());
-  if(canGroup('servers_read'))tasks.push(refreshServers(),refreshProtocols());
+  if(canGroup('servers_read'))tasks.push(refreshServers(),refreshProtocols(),refreshRouting());else clearRouting();
   if(canGroup('promotions'))tasks.push(refreshTrialPolicy(),refreshCoupons(),refreshReferralPolicy());
   if(canGroup('starter'))tasks.push(refreshFlowAutoPolicy());
   if(canGroup('moderation'))tasks.push(refreshModeration());
@@ -644,6 +644,89 @@ $('shop-finance-list').onsubmit=async event=>{
  finally{if(epoch===authEpoch)shopFinanceBusy=false;}
 };
 
+// Распределение и наблюдение не редактируют секреты или привязки действующих подписок.
+let routingSeq=0,routingState=null,routingBusy=false,routingHistorySeq=0;
+const routingReasons={not_active:'Узел не активен',new_assignments_paused:'Новые назначения приостановлены',api_error:'Ошибка API',capacity:'Лимит заполнен',stale_check:'Нет свежей успешной проверки',reserve_disabled:'Резерв отключён политикой'};
+function clearRoutingHistory(){
+ routingHistorySeq++;$('routing-history-panel').hidden=true;
+ $('routing-history-list').replaceChildren();$('routing-history-title').textContent='История проверок';
+}
+function clearRouting(){
+ routingSeq++;routingState=null;routingBusy=false;clearRoutingHistory();
+ $('routing-summary').textContent='';$('routing-status').textContent='';$('routing-nodes').replaceChildren();
+ for(const id of ['routing-strategy','routing-max-age','routing-monitor-interval','routing-monitor-batch'])$(id).value='';
+ for(const id of ['routing-reserve-enabled','routing-require-recent','routing-monitor-enabled'])$(id).checked=false;
+ $('server-routing-policy').hidden=true;$('routing-policy-save').disabled=true;
+}
+function renderRouting(data){
+ const p=data.policy;
+ if(!Number.isSafeInteger(p?.version)||!Array.isArray(data.nodes)||!data.next_assignment)throw new Error('Не удалось прочитать правила');
+ routingState=data;const edit=canGroup('server_routing');
+ $('server-routing-policy').hidden=!edit;
+ $('routing-strategy').value=p.strategy;$('routing-reserve-enabled').checked=p.reserve_enabled===true;
+ $('routing-require-recent').checked=p.require_recent===true;$('routing-max-age').value=String(p.max_age_minutes);
+ $('routing-monitor-enabled').checked=p.monitor_enabled===true;$('routing-monitor-interval').value=String(p.monitor_interval_minutes);
+ $('routing-monitor-batch').value=String(p.monitor_batch);$('routing-policy-save').disabled=!edit;
+ const names=new Map(data.nodes.map(n=>[n.id,n.name]));
+ const choice=Object.entries(data.next_assignment).map(([proto,id])=>protocolLabel(proto)+': '+(id?names.get(id)||'Узел':'нет свободного узла')).join(' · ');
+ $('routing-summary').textContent=(p.monitor_enabled?'Автомониторинг включён':'Автомониторинг выключен')+'. Следующее назначение по текущему снимку: '+choice+'.';
+ $('routing-nodes').innerHTML=data.nodes.map(n=>{
+  const load=n.capacity>0?Math.min(100,Math.round(n.occupied*100/n.capacity)):null;
+  const last=n.last_probe?' · '+esc(n.last_probe.duration_ms)+' мс (API, '+(n.last_probe.source==='automatic'?'авто':'вручную')+')':'';
+  const status=n.blocked_reason?routingReasons[n.blocked_reason]||n.blocked_reason:'Подходит для нового назначения';
+  const settings=edit?'<form data-routing-node="'+esc(n.id)+'"><label>Приоритет (0–1000, выше — раньше)<input name="priority" type="number" min="0" max="1000" step="1" required value="'+esc(n.priority)+'"></label><label class="permission-choice"><input name="reserve" type="checkbox" '+(n.reserve?'checked':'')+'> Резервный узел</label><label class="permission-choice"><input name="accept_new" type="checkbox" '+(n.accept_new?'checked':'')+'> Разрешать новые привязки</label><button type="submit" class="small">Сохранить распределение</button></form>':'';
+  return '<article class="admin-order"><h3>'+esc(n.name)+'</h3><p>'+esc(protocolLabel(n.protocol))+' · '+esc(n.location||'')+' · '+(n.reserve?'Резерв':'Основной')+'</p><p>Приоритет: '+esc(n.priority)+' · '+esc(status)+'</p><p>Слоты: '+esc(n.occupied)+' / '+esc(n.capacity||'без лимита')+(load===null?'':' · '+load+'%')+'</p>'+(load===null?'':'<progress max="100" value="'+load+'" aria-label="Занятость подписок"></progress>')+'<p>API: '+esc(n.health)+' · '+esc(dateTime(n.checked_at))+last+'</p>'+settings+'<button type="button" class="small secondary" data-routing-history="'+esc(n.id)+'">История API</button></article>';
+ }).join('')||'<p>Серверы ещё не добавлены.</p>';
+}
+async function refreshRouting(){
+ if(!canGroup('servers_read')){clearRouting();return;}
+ const seq=++routingSeq,epoch=authEpoch;
+ routingState=null;$('routing-policy-save').disabled=true;$('routing-nodes').replaceChildren();
+ try{const data=await api('server-routing');if(seq===routingSeq&&epoch===authEpoch&&canGroup('servers_read')){renderRouting(data);$('routing-status').textContent='';}}
+ catch(e){if(seq===routingSeq&&epoch===authEpoch){$('routing-summary').textContent='';$('routing-status').textContent=e.message;}}
+}
+$('routing-refresh').onclick=()=>{if(!routingBusy)return refreshRouting();};
+async function changeRouting(path,data){
+ if(routingBusy||!routingState||!canGroup('server_routing'))return;
+ const epoch=authEpoch,seq=routingSeq;routingBusy=true;$('routing-policy-save').disabled=true;
+ try{
+  await api(path,{method:'PUT',data});
+  if(epoch!==authEpoch||seq!==routingSeq||!canGroup('servers_read'))return;
+  await refreshRouting();if(epoch===authEpoch&&canGroup('servers_read')&&routingState)$('routing-status').textContent='Правила сохранены.';
+ }catch(e){if(epoch===authEpoch&&seq===routingSeq){routingState=null;$('routing-nodes').replaceChildren();$('routing-status').textContent=e.message+' Обновите список перед повтором.';}}
+ finally{if(epoch===authEpoch)routingBusy=false;}
+}
+$('server-routing-policy').onsubmit=event=>{
+ event.preventDefault();if(!routingState)return;
+ return changeRouting('server-routing/policy',{version:routingState.policy.version,strategy:$('routing-strategy').value,
+ reserve_enabled:$('routing-reserve-enabled').checked,require_recent:$('routing-require-recent').checked,
+ max_age_minutes:Number($('routing-max-age').value),monitor_enabled:$('routing-monitor-enabled').checked,
+ monitor_interval_minutes:Number($('routing-monitor-interval').value),monitor_batch:Number($('routing-monitor-batch').value)});
+};
+$('routing-nodes').onsubmit=event=>{
+ event.preventDefault();if(!routingState||!canGroup('server_routing')||routingBusy)return;
+ const form=event.target.closest('[data-routing-node]');if(!form)return;
+ const row=routingState.nodes.find(n=>n.id===form.dataset.routingNode);if(!row)return;
+ const values=new FormData(form);
+ return changeRouting('server-routing/nodes/'+encodeURIComponent(row.id),{version:row.routing_version,
+ server_version:row.version,priority:Number(values.get('priority')),reserve:values.has('reserve'),accept_new:values.has('accept_new')});
+};
+async function openRoutingHistory(id){
+ if(!routingState||!canGroup('servers_read'))return;
+ const node=routingState.nodes.find(n=>n.id===id);if(!node)return;
+ clearRoutingHistory();const seq=routingHistorySeq,epoch=authEpoch;
+ $('routing-history-panel').hidden=false;$('routing-history-title').textContent='История API · '+node.name;
+ try{
+  const data=await api('server-routing/history/'+encodeURIComponent(id));
+  if(seq!==routingHistorySeq||epoch!==authEpoch||!canGroup('servers_read'))return;
+  $('routing-history-list').innerHTML=data.checks.map(r=>'<p>'+esc(dateTime(r.checked_at))+' · '+(r.status==='ok'?'Доступен':'Ошибка')+' · '+esc(r.duration_ms)+' мс · '+(r.source==='automatic'?'Авто':'Вручную')+' · конфигурация v'+esc(r.server_version)+'</p>').join('')||'<p>Проверок пока нет.</p>';
+ }catch(e){if(seq===routingHistorySeq&&epoch===authEpoch)$('routing-history-list').textContent=e.message;}
+}
+$('routing-nodes').onclick=event=>{
+ const button=event.target.closest('[data-routing-history]');if(button)return openRoutingHistory(button.dataset.routingHistory);
+};
+$('routing-history-close').onclick=clearRoutingHistory;
+
 // Настройки меню бот получает из базы при отправке очередного /start.
 let botMenuVersion=0,botMenuButtons=[],botMenuRequest=0;
 function menuFields(){
@@ -874,9 +957,9 @@ async function refresh({plans = role==='owner' || canGroup('catalog')} = {}) {
   if(role==='owner') await Promise.all([refreshAdsAdmin(),refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers(),refreshTrialPolicy(),refreshFlowAutoPolicy(),refreshCoupons(),refreshReferralPolicy(),refreshCommerceAnalytics()]);
   else if(role==='mtproxy_manager') await refreshAdsAdmin();
   else if(role==='finance') await Promise.all([refreshAdsAdmin(),refreshOrders(),refreshCommerceAnalytics()]);
-  else if(role==='panel_operator') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers()]);
+  else if(role==='panel_operator') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers(),refreshRouting()]);
   else if(role==='support') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshSupportAdmin()]);
-  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates(),refreshRolePolicies(),refreshModeration(),refreshRuntime('appearance'),refreshRuntime('sales'),refreshRuntime('notifications'),refreshPaymentPolicy(),refreshShopFinance()]);}
+  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates(),refreshRolePolicies(),refreshModeration(),refreshRuntime('appearance'),refreshRuntime('sales'),refreshRuntime('notifications'),refreshPaymentPolicy(),refreshShopFinance(),refreshRouting()]);}
   renderManagementNav();
 }
 $('admin-login').onsubmit = async event => {
@@ -897,7 +980,7 @@ $('admin-login').onsubmit = async event => {
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{}); role='';
-  clearUpdates(); clearManagement(); clearRuntime(); clearStaffIndividual(); clearPaymentPolicy(); clearShopFinance();
+  clearUpdates(); clearManagement(); clearRuntime(); clearStaffIndividual(); clearPaymentPolicy(); clearShopFinance(); clearRouting();
   protocolsRequest++; protocolCache = []; $('protocols-list').replaceChildren();
   $('protocols-status').textContent = ''; $('protocols-filter').value = 'all';
   $('protocols-panel').hidden = true; $('protocols-refresh').disabled = false;
