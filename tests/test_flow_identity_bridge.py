@@ -71,7 +71,7 @@ def test_existing_shop_telegram_user_no_free_grant_default_and_replay(client, mo
     assert first.json()=={'status':'disabled','subscription_url':None}
     assert first.headers['cache-control']=='no-store'
     assert _call(client,request).status_code==409
-    assert one('SELECT count(*) AS n FROM flow_bridge_devices')['n']==1
+    # No WG peer was ever issued; do not prematurely bind the first phone.\n    assert one('SELECT count(*) AS n FROM flow_bridge_devices')['n']==0
     assert one('SELECT count(*) AS n FROM flow_auto_grants')['n']==0
     assert one('SELECT count(*) AS n FROM flow_bridge_identities')['n']==1
 
