@@ -1336,7 +1336,7 @@ $('user-subscriptions').onclick = async event => {
     if(!panel || panel.dataset.peerStatus!==sid)return;
     const uid=selectedUser,epoch=authEpoch;
     if(retry && !confirm('Повторить создание пира из существующей очереди? Узел и ключ не изменятся.'))return;
-    if(restore && !confirm('Восстановить отсутствующий пир только на исходном сервере и с прежним ключом? Срок подписки не изменится.'))return;
+    if(restore && !confirm('Проверить и синхронизировать пир на исходном сервере с прежним ключом? Срок подписки не изменится.'))return;
     button.disabled=true;
     panel.textContent=retry?'Повторная выдача ставится в очередь…':restore?'Восстанавливаем пир с прежним ключом…':'Проверяем ключ и пир на закреплённом сервере…';
     try {
@@ -1349,7 +1349,9 @@ $('user-subscriptions').onclick = async event => {
       } else if(restore){
         panel.textContent=result.status==='already_present'
           ? 'Пир уже существует на закреплённом сервере. Данные не менялись.'
-          : 'Пир восстановлен с прежним ключом. Теперь обновите подписку в Pushok Flow.';
+          : result.status==='refreshed'
+            ? 'Пир уже работал. Конфигурация обновлена с WGDashboard; обновите подписку в Flow.'
+            : 'Пир восстановлен с прежним ключом. Теперь обновите подписку в Pushok Flow.';
       } else {
         const state=PEER_STATUS_LABELS[result.status]||'Статус не определён.';
         const extra=result.server_name?' Закреплённый узел: '+result.server_name+'.':'';
@@ -1365,7 +1367,8 @@ $('user-subscriptions').onclick = async event => {
             action.textContent='Повторить выдачу';
           } else {
             action.dataset.peerRestore=sid;
-            action.textContent='Восстановить отсутствующий пир';
+            action.textContent=result.status==='peer_found'
+              ? 'Обновить конфигурацию' : 'Восстановить отсутствующий пир';
           }
           panel.appendChild(action);
         }
