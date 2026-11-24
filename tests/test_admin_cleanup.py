@@ -25,6 +25,8 @@ def test_admin_revoke_and_delete_retains_financial_order(client, monkeypatch):
     sid=subscription(client)
     execute("INSERT INTO orders(id,user_id,protocol,plan,days,amount,created,status) "
             "VALUES ('financial1',1,'wg','month',30,199,1,'active')")
+    profile=client.get('/api/admin/users/1',headers=headers()).json()
+    assert profile['subscriptions'][0]['can_delete'] is False
     called=[]
     async def revoke(remote):
         called.append(remote['id'])
@@ -33,6 +35,9 @@ def test_admin_revoke_and_delete_retains_financial_order(client, monkeypatch):
     revoked=client.post('/api/admin/subscriptions/'+sid+'/revoke',headers=headers())
     assert revoked.status_code==200,revoked.text
     assert revoked.json()['status']=='revoked'
+    visible=client.get('/api/admin/users/1',headers=headers()).json()
+    assert visible['subscriptions'][0]['can_delete'] is True
+    assert visible['subscriptions'][0]['delete_blocker'] is None
     assert called==[sid]
     saved=one('SELECT state,secret FROM subscriptions WHERE id=?',(sid,))
     assert saved['state']=='revoked' and saved['secret'] is None
