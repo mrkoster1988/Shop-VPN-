@@ -147,6 +147,10 @@ def make_order(data,user,method,email):
             if previous:return dict(previous)
         runtime_settings.require_sale(conn,user,data.protocol)
         if method=='free':
+            active=conn.execute("SELECT 1 FROM subscriptions WHERE user_id=? AND protocol=? AND state='active' AND expires>?",
+                (user['id'],data.protocol,int(time.time()))).fetchone()
+            if active:
+                raise HTTPException(409,'У вас уже есть действующая подписка этого протокола.')
             if result['free_traffic_gb'] and data.protocol not in ('xui','vmess'):
                 raise HTTPException(409,'Лимит трафика бесплатного тарифа поддерживается только для 3x-ui.')
             free_plan=conn.execute('SELECT free_activation_limit FROM plans WHERE id=?',(data.plan,)).fetchone()
