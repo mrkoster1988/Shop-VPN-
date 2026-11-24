@@ -993,3 +993,42 @@ test('delegated administrator sees server status without credentials or server m
   assert.match(p.element('server-list').innerHTML,/WG node/);
   assert.doesNotMatch(p.element('server-list').innerHTML,/<form|data-server-credentials|data-server-edit/);
 });
+
+
+function salesSettings(overrides={}){
+ return {new_sales:true,renewals:true,web_sales:true,telegram_sales:true,enabled_protocols:['xui','wg'],closed_notice:'На паузе',version:2,updated:0,...overrides};
+}
+test('sales settings use explicit full versioned payload and stop on stale version',async()=>{
+ const p=adminPage(),load=p.run("role='owner';refreshRuntime('sales')");
+ p.reply(salesSettings());await load;
+ assert.equal(p.element('runtime-new_sales').checked,true);
+ assert.equal(p.element('runtime-protocol-wg').checked,true);
+ p.element('runtime-new_sales').checked=false;
+ const saved=p.run("saveRuntime('sales')");
+ assert.deepEqual(p.bodies[1],{version:2,new_sales:false,renewals:true,web_sales:true,telegram_sales:true,enabled_protocols:['xui','wg'],closed_notice:'На паузе'});
+ p.replyAt(1,{detail:'Версия изменилась'},409);await saved;
+ assert.equal(p.element('runtime-sales-save').disabled,true);
+ assert.match(p.element('runtime-sales-status').textContent,/Обновите/);
+ const n=p.requests.length;await p.run("saveRuntime('sales')");assert.equal(p.requests.length,n);
+});
+test('runtime settings are hidden from unauthorized staff and late loads cannot reappear',async()=>{
+ const p=adminPage();
+ p.run("acceptStaffRole({role:'moderator',permissions:['moderation']});renderManagementNav()");
+ assert.equal(p.element('sales-controls-section').hidden,true);
+ await p.run("refreshRuntime('sales')");assert.equal(p.requests.length,0);
+ const pending=p.run("role='owner';refreshRuntime('sales')");
+ p.run("$('exit').onclick()");p.replyAt(0,salesSettings());await pending;
+ assert.equal(p.element('runtime-sales-save').disabled,true);
+ assert.equal(p.element('runtime-closed_notice').value,'');
+});
+test('individual permission form is scoped to selected employee and rejects late response',async()=>{
+ const p=adminPage(),pending=p.run("role='owner';openStaffIndividual(7)");
+ assert.equal(p.requests[0],'/shop/api/admin/staff/7/permissions');
+ const card={staff_id:7,role:'moderator',version:1,role_version:2,inherit:false,allowed:['moderation','support'],permissions:['moderation'],effective:['moderation'],labels:{moderation:'Модерация',support:'Поддержка'}};
+ p.reply(card);await pending;
+ assert.match(p.element('staff-individual-form').innerHTML,/Сотрудник № 7/);
+ assert.match(p.element('staff-individual-form').innerHTML,/Действующие права: Модерация/);
+ const later=p.run('openStaffIndividual(8)');p.run("clearStaffIndividual()");p.replyAt(1,{...card,staff_id:8});await later;
+ assert.equal(p.element('staff-individual-editor').hidden,true);
+ assert.equal(p.element('staff-individual-form').innerHTML,'');
+});

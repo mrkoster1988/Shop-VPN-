@@ -81,7 +81,9 @@ def read(conn,group):
     if not row:
         return model().model_dump() | {'version':0,'updated':0}
     try:
-        values=model.model_validate_json(row['content']).model_dump()
+        parsed=model.model_validate_json(row['content'])
+        if parsed.model_fields_set!=set(model.model_fields):raise ValueError('Incomplete settings')
+        values=parsed.model_dump()
     except (ValidationError,ValueError):
         # Не возвращаем расширенные настройки продаж при повреждении сохранённой политики.
         raise HTTPException(503,'Настройки раздела временно недоступны') from None
@@ -94,6 +96,8 @@ def get(group):
 
 def update(group,data):
     model=MODELS[group]
+    if data.model_fields_set!=set(model.model_fields)|{'version'}:
+        raise HTTPException(422,'Передайте все поля раздела, чтобы не сбросить настройки случайно')
     values=model.model_validate(data.model_dump(exclude={'version'})).model_dump()
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')

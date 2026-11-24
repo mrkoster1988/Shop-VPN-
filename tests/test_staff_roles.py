@@ -147,3 +147,61 @@ def test_role_editor_does_not_echo_invalid_staff_password(client):
     response=client.post(ROOT+'staff',json={'email':'wrong@example.com','password':'short-key','role':'moderator'})
     assert response.status_code==422 and 'short-key' not in response.text
     assert one('SELECT id FROM staff_users WHERE email=?',('wrong@example.com',)) is None
+
+
+def test_individual_ceiling_only_limits_selected_employee_and_updates_live(client):
+    owner=bootstrap(client);aid=add_role(client,'administrator')
+    other=client.post(ROOT+'staff',json={'email':'other-admin@example.com','password':PASSWORD,'role':'administrator'}).json()
+    admin_session=login(client,'administrator')
+    assert client.get(ROOT+'plans').status_code==200
+    url=ROOT+'staff/'+str(aid)+'/permissions'
+    assert client.get(url).status_code==403
+    use(client,owner)
+    card=client.get(url).json()
+    assert card['inherit'] is True and card['role_version']==0
+    body={'version':card['version'],'role_version':card['role_version'],'role':'administrator','inherit':False,'permissions':['customers']}
+    assert client.put(url,json={**body,'permissions':['payments']}).status_code==422
+    changed=client.put(url,json=body)
+    assert changed.status_code==200 and changed.json()['effective']==['customers']
+    assert client.put(url,json=body).status_code==409
+    assert client.get(ROOT+'staff/'+str(other['id'])+'/permissions').json()['inherit'] is True
+    use(client,admin_session)
+    assert client.get(ROOT+'plans').status_code==403
+    assert client.get(ROOT+'users').status_code==200
+    assert client.get(ROOT+'auth/me').json()['permissions']==['customers']
+    use(client,owner)
+    assert client.put(ROOT+'role-policies/administrator',json={'version':0,'permissions':['catalog']}).status_code==200
+    assert client.put(url,json={**body,'version':1,'inherit':True,'permissions':[]}).status_code==409
+    use(client,admin_session)
+    assert client.get(ROOT+'users').status_code==403
+    assert client.get(ROOT+'auth/me').json()['permissions']==[]
+    use(client,owner)
+    fresh=client.get(url).json()
+    assert client.put(url,json={'version':fresh['version'],'role_version':fresh['role_version'],'role':'administrator','inherit':True,'permissions':[]}).status_code==200
+    use(client,admin_session)
+    assert client.get(ROOT+'plans').status_code==200
+
+
+def test_role_specific_settings_access_and_individual_restrictions(client):
+    owner=bootstrap(client);aid=add_role(client,'administrator');add_role(client,'moderator')
+    admin_session=login(client,'administrator')
+    assert client.get(ROOT+'runtime/appearance').status_code==200
+    assert client.get(ROOT+'runtime/sales').status_code==403
+    assert client.get(ROOT+'runtime/notifications').status_code==403
+    use(client,owner)
+    policy={'version':0,'permissions':['store_settings','sales_controls','notifications']}
+    assert client.put(ROOT+'role-policies/administrator',json=policy).status_code==200
+    use(client,admin_session)
+    assert client.get(ROOT+'runtime/sales').status_code==200
+    data=client.get(ROOT+'runtime/sales').json();data.pop('updated');data['new_sales']=False
+    assert client.put(ROOT+'runtime/sales',json=data).status_code==200
+    use(client,owner)
+    url=ROOT+'staff/'+str(aid)+'/permissions'
+    limits={'version':0,'role_version':1,'role':'administrator','inherit':False,'permissions':['notifications']}
+    assert client.put(url,json=limits).status_code==200
+    use(client,admin_session)
+    assert client.get(ROOT+'runtime/sales').status_code==403
+    assert client.get(ROOT+'runtime/notifications').status_code==200
+    login(client,'moderator')
+    assert client.get(ROOT+'runtime/appearance').status_code==403
+    assert client.put(ROOT+'runtime/sales',json=data).status_code==403

@@ -239,3 +239,21 @@ def test_older_backups_without_optional_flow_tables_still_validate(source,tmp_pa
         conn.execute('DROP TABLE flow_wireguard_links')
         conn.execute('DROP TABLE wgdashboard_keys')
     assert b.validate(older,env)['encrypted_values']>=4
+
+
+def test_runtime_configuration_and_role_limits_survive_encrypted_backup(source,tmp_path):
+    from app import runtime_settings,staff_permissions
+    runtime_settings.update('appearance',runtime_settings.AppearanceUpdate(version=0,brand_name='Backup Shop',
+        headline='',description='',announcement='Fixture',theme='graphite'))
+    staff_id=execute("INSERT INTO staff_users(email,password,role,enabled,created,updated) VALUES (?,?,'support',0,1,1)",
+                     ('restricted@example.com','fixture-hash'))
+    execute("INSERT INTO staff_role_assignments VALUES (?,'moderator',1)",(staff_id,))
+    staff_permissions.individual_update(staff_id,staff_permissions.IndividualUpdate(
+        version=0,role_version=0,role='moderator',inherit=False,permissions=[]))
+    create(source);target=tmp_path/'runtime-restored'
+    b.restore(source[2],PASSWORD,target)
+    with sqlite3.connect(target/'shop.db') as conn:
+        content,version=conn.execute("SELECT content,version FROM shop_runtime_settings WHERE section='appearance'").fetchone()
+        assert json.loads(content)['brand_name']=='Backup Shop' and version==1
+        assert conn.execute('SELECT permissions,version FROM staff_permission_limits WHERE staff_id=?',(staff_id,)).fetchone()==('[]',1)
+        assert conn.execute('PRAGMA foreign_key_check').fetchall()==[]

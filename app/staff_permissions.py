@@ -113,6 +113,7 @@ def permissions(conn,role):
 class IndividualUpdate(BaseModel):
     model_config={'extra':'forbid'}
     version:int=Field(ge=0,strict=True)
+    role_version:int=Field(ge=0,strict=True)
     role:Literal['administrator','moderator']
     inherit:bool=Field(strict=True)
     permissions:list[StrictStr]=Field(max_length=len(LABELS))
@@ -149,8 +150,9 @@ def individual(conn,staff_id):
     if not row or row['role'] not in ALLOWED:
         raise HTTPException(404,'Настройки сотрудника недоступны для этой роли')
     role=row['role'];saved=_individual_row(conn,staff_id);values=_limit_values(saved)
-    allowed=permissions(conn,role)
-    return {'staff_id':staff_id,'role':role,'version':saved['version'] if saved else 0,
+    role_policy=policy(conn,role)
+    allowed=role_policy['permissions']
+    return {'staff_id':staff_id,'role':role,'version':saved['version'] if saved else 0,'role_version':role_policy['version'],
             'inherit':values is None,'allowed':allowed,'permissions':values or [],
             'effective':effective_permissions(conn,role,staff_id),'labels':LABELS}
 
@@ -165,7 +167,7 @@ def individual_update(staff_id,data):
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
         old=individual(conn,staff_id)
-        if old['role']!=data.role or old['version']!=data.version:
+        if old['role']!=data.role or old['version']!=data.version or old['role_version']!=data.role_version:
             raise HTTPException(409,'Роль или полномочия изменились. Обновите карточку.')
         values=set(data.permissions)
         if len(values)!=len(data.permissions) or not values<=set(old['allowed']) or (data.inherit and values):

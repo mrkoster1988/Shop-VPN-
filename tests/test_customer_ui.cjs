@@ -795,3 +795,21 @@ test('WireGuard trial access offers a link for Flow with no VLESS rotation optio
   assert.equal(new URLSearchParams(new URL(target).hash.slice(1)).get('url'),
     'https://wg.example/flow/wireguard/private-token');
 });
+
+
+test('storefront applies customer-facing text safely and sales pause independently of trial',async()=>{
+ const p=await customerPage();
+ p.state.catalog.appearance={brand_name:'Shop <img>',headline:'<script>headline</script>',description:'Описание',announcement:'<b>Объявление</b>',theme:'ocean'};
+ Object.assign(p.state.catalog.protocols[0],{available:false,sales_allowed:false,trial_available:true});
+ p.state.catalog.sale_notice='Продажи временно закрыты';
+ p.state.catalog.trial={enabled:true,eligible:true,days:1,version:1,claim:null};
+ await p.run('refreshMe()');
+ assert.equal(p.element('shop-headline-custom').textContent,'<script>headline</script>');
+ assert.equal(p.element('shop-headline-custom').innerHTML,'');
+ assert.equal(p.element('shop-headline-default').hidden,true);
+ assert.equal(p.element('shop-announcement').textContent,'<b>Объявление</b>');
+ assert.equal(p.element('provider-note').textContent,'Продажи временно закрыты');
+ assert.match(p.element('plan-list').innerHTML,/disabled/);
+ assert.equal(p.element('trial-start').disabled,false);
+ await assert.rejects(p.run("beginCheckout('month')"),/Продажи временно закрыты/);
+});

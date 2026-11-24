@@ -624,7 +624,7 @@ function clearStaffIndividual(){
  $('staff-individual-editor').hidden=true;$('staff-individual-form').replaceChildren();$('staff-individual-status').textContent='';
 }
 function renderStaffIndividual(data){
- if(!DELEGATED_ROLES.includes(data.role)||!Number.isInteger(data.version)||!Array.isArray(data.allowed))throw new Error('Не удалось прочитать полномочия');
+ if(!DELEGATED_ROLES.includes(data.role)||!Number.isInteger(data.version)||!Number.isInteger(data.role_version)||!Array.isArray(data.allowed)||!Array.isArray(data.permissions)||!Array.isArray(data.effective))throw new Error('Не удалось прочитать полномочия');
  individualState=data;
  $('staff-individual-editor').hidden=false;
  const selected=data.inherit?data.allowed:data.permissions;
@@ -648,7 +648,7 @@ $('staff-individual-form').onsubmit=async event=>{
  const form=event.target.closest('#individual-policy-form');if(!form)return;
  const before=individualState,seq=individualSeq,epoch=authEpoch;
  const inherit=$('individual-inherit').checked,values=new FormData(form);
- const data={version:before.version,role:before.role,inherit,permissions:inherit?[]:values.getAll('permissions')};
+ const data={version:before.version,role_version:before.role_version,role:before.role,inherit,permissions:inherit?[]:values.getAll('permissions')};
  individualBusy=true;const button=form.querySelector('button');button.disabled=true;
  try{
   const result=await api('staff/'+before.staff_id+'/permissions',{method:'PUT',data});
