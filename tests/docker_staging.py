@@ -185,6 +185,8 @@ class Staging:
               'Application data changed across snapshot/upgrade: changed='+','.join(sorted(changed))+
               '; missing='+','.join(missing)+'; added='+','.join(added))
         check(current['counts']['sessions']==(0 if cleared else 1) and current['counts']['tickets']==(0 if cleared else 1),'Session cleanup mismatch')
+        for table in ('shop_id_requests','shop_id_sessions'):
+            check(current['counts'].get(table,0)==(0 if cleared else expected['counts'].get(table,0)),'Unexpected SSO session or request during migration')
         if cleared:check(current['db_uid']==10001 and current['db_gid']==10001 and current['db_mode']==0o600 and current['directory_mode']==0o700,'Restored file permissions mismatch')
         return current
     def start_proxy(self,port,certificate,key):
@@ -292,6 +294,8 @@ class Staging:
         check(not changed and not missing and set(added)<=allowed_new and restored['counts']['sessions']==0,
               'Backup restore mismatch: changed='+','.join(sorted(changed))+
               '; missing='+','.join(missing)+'; added='+','.join(added))
+        for table in ('shop_id_requests','shop_id_sessions'):
+            check(restored['counts'].get(table,0)==0,'Restored a transient Pushok ID session')
         restored_settings=self.data('settings',database='/tmp/final-restore/shop.db')
         check(restored_settings=={'support_text':'Disposable CI fixture','terms_configured':False},
               'Store settings were not preserved by backup restore')

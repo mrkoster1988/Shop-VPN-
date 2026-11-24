@@ -157,7 +157,7 @@ function clearAds() {
   $('ads-list').replaceChildren();$('ads-form').hidden=true;$('ads-submit').disabled=false;
 }
 function clearPrivate(clearPromoIntent=true) {
-  if(clearPromoIntent){$('pushok-id-dialog').close();clearPushokIdentity();}
+  if(clearPromoIntent){$('pushok-id-dialog').close();clearPushokIdentity();$('pushok-id-account').hidden=true;$('pushok-id-link-state').textContent='';}
   $('ads-dialog').close();clearAds();
   if(clearPromoIntent)promoIntent='';
   clearPayment();
