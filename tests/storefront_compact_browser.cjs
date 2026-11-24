@@ -87,7 +87,7 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
     if(telegram)await page.locator('#miniapp-account').click();
     else if(width<=680)await page.locator('#shop-mobile-account').click();
     else await page.locator('#hero-account-btn').click();
-    assert.equal(await page.locator(authenticated?'#account-dialog':'#auth-dialog').isVisible(),true);
+    await page.locator(authenticated?'#account-dialog':'#auth-dialog').waitFor({state:'visible',timeout:10000});
     if(authenticated){
      const nav=page.locator('#account-dialog .account-shortcuts');
      assert.equal(await page.locator('#subscriptions-pane').isVisible(),true);
@@ -103,7 +103,7 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
     }else{
      await page.locator('#auth-dialog [data-close="auth-dialog"]').click();
      await page.locator('#plan-list [data-plan="month"]').click();
-     assert.equal(await page.locator('#auth-dialog').isVisible(),true);
+     await page.locator('#auth-dialog').waitFor({state:'visible',timeout:10000});
      await page.locator('#auth-dialog [data-close="auth-dialog"]').click();
     }
     await page.screenshot({path:path.join(output,'shop-'+width+'-'+(telegram?'telegram':'browser')+'-'+(authenticated?'customer':'guest')+'.png'),fullPage:true});
