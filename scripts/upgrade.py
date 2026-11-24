@@ -335,7 +335,7 @@ def prepare(root,source,secret):
         save(root,s,'verifying_backup')
         run(backup+['verify','/tmp/saved.pvb'],env=secure_env)
         # The live source has been stopped and this exact snapshot verified.
-        # Old backup versions ignore the new env flag; future managed upgrades retain device URLs.
+        # The legacy env flag retains primary and device WG URLs in a verified stopped-source upgrade.
         restore_backup=backup[:5]+['-e','PUSHOK_BACKUP_PRESERVE_DEVICE_LINKS=1']+backup[5:]
         run(restore_backup+['restore','/tmp/saved.pvb','--target','/upgrade-data/restored'],env=secure_env)
         save(root,s,'backed_up')

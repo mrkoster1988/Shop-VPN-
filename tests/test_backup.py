@@ -333,3 +333,30 @@ def test_id_restore_preserves_identity_but_clears_all_transient_approvals_and_se
         for table in ('sessions','shop_id_requests','shop_id_sessions'):
             assert conn.execute('SELECT count(*) FROM '+table).fetchone()==(0,)
         assert conn.execute('PRAGMA foreign_key_check').fetchall()==[]
+
+
+def test_primary_and_device_wireguard_urls_do_not_resurrect_after_restore(source,tmp_path):
+    database,env,output,sid=source
+    did=str(uuid.uuid4())
+    execute("INSERT INTO devices(id,subscription_id,request_id,name,created) VALUES (?,?,?,?,0)",
+            (did,sid,str(uuid.uuid4()),'Fixture device'))
+    execute("INSERT INTO flow_wireguard_links VALUES (?,?,?,1,3)",(sid,'primary-fixture',c.encrypt('old-primary')))
+    execute("INSERT INTO flow_wireguard_device_links VALUES (?,?,?,1,5)",(did,'device-fixture',c.encrypt('old-device')))
+    execute("INSERT INTO flow_wireguard_versions VALUES (?,?,?)",(sid,'primary-revision',7))
+    execute("INSERT INTO flow_wireguard_device_versions VALUES (?,?,?)",(did,'device-revision',9))
+    create(source)
+    recovered=tmp_path/'wireguard-recovered'
+    b.restore(output,PASSWORD,recovered)
+    with sqlite3.connect(recovered/'shop.db') as conn:
+        assert conn.execute('SELECT enabled,version FROM flow_wireguard_links').fetchone()==(0,4)
+        assert conn.execute('SELECT enabled,version,token_hash,token_secret FROM flow_wireguard_device_links').fetchone()==(0,6,None,None)
+        assert conn.execute('SELECT revision FROM flow_wireguard_versions').fetchone()==(7,)
+        assert conn.execute('SELECT revision FROM flow_wireguard_device_versions').fetchone()==(9,)
+        assert conn.execute('PRAGMA foreign_key_check').fetchall()==[]
+    managed=tmp_path/'wireguard-managed'
+    b.restore(output,PASSWORD,managed,preserve_device_links=True)
+    with sqlite3.connect(managed/'shop.db') as conn:
+        assert conn.execute('SELECT enabled,version FROM flow_wireguard_links').fetchone()==(1,3)
+        assert conn.execute('SELECT enabled,version FROM flow_wireguard_device_links').fetchone()==(1,5)
+    assert one('SELECT enabled,version FROM flow_wireguard_links')=={'enabled':1,'version':3}
+    assert one('SELECT enabled,version FROM flow_wireguard_device_links')=={'enabled':1,'version':5}
