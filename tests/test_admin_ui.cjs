@@ -1291,3 +1291,27 @@ test('light admin theme does not target public storefront',()=>{
   assert.match(tail,/background:#fff!important/);
   assert.doesNotMatch(tail,/body\.shop-public-ui\s*\{/);
 });
+
+
+test('WireGuard peer diagnosis appears for developer only and contains no credentials',async()=>{
+  const user={id:1,email:'customer@example.org',telegram_id:null,created:100};
+  const subscription={id:'subscription-uuid',protocol:'wg',state:'active',
+    access_active:true,expires:2000000000,device_limit:0,
+    can_delete:false,delete_blocker:'Сначала отозвать доступ'};
+  const response={user,subscriptions:[subscription],orders:[],orders_page:1,
+    orders_page_size:20,orders_total:0};
+  const owner=adminPage();
+  owner.element('user-dialog').open=true;
+  const pending=owner.run("role='owner';selectedUser=1;loadUser(1)");
+  owner.reply(response);await pending;
+  const markup=owner.element('user-subscriptions').innerHTML;
+  assert.match(markup,/data-peer-check="subscription-uuid"/);
+  assert.match(markup,/data-peer-status="subscription-uuid"/);
+  assert.doesNotMatch(markup,/api_token|private_key|PublicKey/);
+  const admin=adminPage();
+  admin.element('user-dialog').open=true;
+  const other=admin.run("role='administrator';selectedUser=1;loadUser(1)");
+  admin.reply(response);await other;
+  assert.doesNotMatch(admin.element('user-subscriptions').innerHTML,/data-peer-check=/);
+  assert.doesNotMatch(admin.element('user-subscriptions').innerHTML,/data-peer-retry=/);
+});
