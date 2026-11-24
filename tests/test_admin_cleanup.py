@@ -126,3 +126,97 @@ def test_administrator_cannot_revoke_or_delete_even_with_customer_access(client)
     assert client.delete('/api/admin/subscriptions/unknown').status_code==403
     assert client.delete('/api/admin/plans/month').status_code==403
     assert client.delete('/api/admin/servers/test-wg').status_code==403
+
+
+def _wgdashboard_peer_test_fixture(monkeypatch, subscription_id, device_id=None,
+                                   *, confirm_deletion=True):
+    """Use the real provider+WGDashboard adapter against a stateful fake panel.
+
+    This exercises the HTTP methods, public-key matching, post-write readback,
+    and Shop's transactional local revoke. No network or real peers are used.
+    """
+    import httpx
+    import json
+    from app import wgdashboard
+    profile = {
+        'api': 'wgdashboard', 'url': 'https://wg.example',
+        'token': 't' * 40, 'configuration': 'wg0',
+    }
+    execute('UPDATE servers SET settings=? WHERE id=?',
+            (c.encrypt(json.dumps(profile)), 'test-wg'))
+    identities = [subscription_id] + ([device_id] if device_id else [])
+    keys = {
+        wgdashboard.WGDashboard.identity(
+            wgdashboard.stored_private_key('test-wg', sid)): sid
+        for sid in identities
+    }
+    present = set(keys)
+    writes = []
+    client_class = httpx.AsyncClient
+
+    def handle(request):
+        assert request.url.host == 'wg.example'
+        assert request.headers.get('wg-dashboard-apikey') == profile['token']
+        endpoint = request.url.path.removeprefix('/api/')
+        info = {'Name': 'wg0', 'Protocol': 'wg', 'Status': True}
+        if request.method == 'GET' and endpoint == 'getWireguardConfigurations':
+            data = [info]
+        elif request.method == 'GET' and endpoint == 'getWireguardConfigurationInfo':
+            data = {
+                'configurationInfo': info,
+                'configurationPeers': [{'id': key} for key in sorted(present)],
+                'configurationRestrictedPeers': [],
+            }
+        elif request.method == 'POST' and endpoint == 'deletePeers/wg0':
+            body = json.loads(request.content)
+            assert body.keys() == {'peers'} and len(body['peers']) == 1
+            key = body['peers'][0]
+            assert key in keys
+            writes.append(keys[key])
+            if confirm_deletion:
+                present.discard(key)
+            data = None
+        else:
+            raise AssertionError('Unexpected panel operation: ' + request.method + ' ' + endpoint)
+        return httpx.Response(200, json={'status': True, 'data': data})
+
+    monkeypatch.setattr(
+        providers.httpx, 'AsyncClient',
+        lambda **kwargs: client_class(transport=httpx.MockTransport(handle), **kwargs),
+    )
+    return present, writes
+
+
+def test_real_wgdashboard_adapter_revokes_primary_and_device_before_purge(client, monkeypatch):
+    sid = subscription(client)
+    did = '6b300651-e466-466b-9140-eac2296b6b63'
+    execute("INSERT INTO devices(id,subscription_id,request_id,name,state,created,"
+            "expires,secret) VALUES (?,?,?,'Phone','active',?,?,?)",
+            (did, sid, 'test-request', int(time.time()), int(time.time()) + 86400,
+             c.encrypt('device-conf')))
+    peers, writes = _wgdashboard_peer_test_fixture(monkeypatch, sid, did)
+    assert len(peers) == 2
+    result = client.post('/api/admin/subscriptions/' + sid + '/revoke', headers=headers())
+    assert result.status_code == 200, result.text
+    assert writes == [sid, did]
+    assert not peers
+    assert one('SELECT state,secret FROM devices WHERE id=?', (did,))['state'] == 'revoked'
+    assert one('SELECT state FROM subscriptions WHERE id=?', (sid,))['state'] == 'revoked'
+    assert client.delete('/api/admin/subscriptions/' + sid, headers=headers()).status_code == 200
+    assert one('SELECT id FROM subscriptions WHERE id=?', (sid,)) is None
+    assert one('SELECT id FROM devices WHERE id=?', (did,)) is None
+    assert one('SELECT credential_id FROM wgdashboard_keys WHERE credential_id=?',
+               (sid,)) is None
+
+
+def test_wgdashboard_unconfirmed_peer_deletion_cannot_be_marked_successful(client, monkeypatch):
+    sid = subscription(client)
+    peers, writes = _wgdashboard_peer_test_fixture(
+        monkeypatch, sid, confirm_deletion=False)
+    result = client.post('/api/admin/subscriptions/' + sid + '/revoke', headers=headers())
+    assert result.status_code == 502, result.text
+    assert sid in writes and len(peers) == 1
+    assert one('SELECT state FROM subscriptions WHERE id=?', (sid,))['state'] == 'active'
+    assert one('SELECT subscription_id FROM admin_subscription_revocations '
+               'WHERE subscription_id=?', (sid,)) is None
+    assert client.delete('/api/admin/subscriptions/' + sid, headers=headers()).status_code == 409
