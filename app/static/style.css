@@ -145,3 +145,5 @@ html[data-telegram-theme="dark"] #miniapp-nav [aria-current="page"]{background:#
 #shop-finance-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin:14px 0}#shop-finance-summary article{overflow-wrap:anywhere}#shop-finance-list article{overflow-wrap:anywhere}#shop-finance-coverage,#shop-finance-methods{color:var(--muted)}
 
 #routing-nodes progress{width:100%;height:12px;accent-color:var(--ink);margin:4px 0 10px}#routing-nodes article{overflow-wrap:anywhere}#routing-summary{white-space:normal;color:var(--muted)}
+
+.ai-card{overflow-wrap:anywhere}.ai-card.ai-critical{border-inline-start:4px solid #b02f3c}.ai-card.ai-warning{border-inline-start:4px solid #a86512}.ai-meta{color:var(--muted);font-weight:600}.ai-evidence{display:flex;flex-wrap:wrap;gap:8px 14px;font-size:.92rem}.ai-evidence span{overflow-wrap:anywhere}#ai-summary{color:var(--muted)}

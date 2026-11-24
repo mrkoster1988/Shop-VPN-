@@ -186,7 +186,7 @@ def current_run(conn):
 
 def due(run,p,now,automatic):
     last=run['last_scan']
-    return last is None or now-last >= (p['interval_minutes']*60 if automatic else MANUAL_COOLDOWN) or now<last
+    return last is None or now-last >= (p['interval_minutes']*60 if automatic else MANUAL_COOLDOWN)
 
 
 def event(conn,code,action,now,version,actor=None,reason=None,operation=None,fingerprint=None):
@@ -205,7 +205,7 @@ def scan(worker,*,automatic=False,now=None):
             raise HTTPException(409,'Pushok ИИ выключен')
         if not due(run,p,now,automatic):
             if automatic:return False
-            raise HTTPException(429,'Повторите анализ через 30 секунд')
+            raise HTTPException(429,'Анализ недавно завершён. Повторите позже.')
     # Никаких внешних запросов и изменений бизнес-таблиц.
     found=collect(p,worker,now)
     by_code={f['code']:f for f in found}
