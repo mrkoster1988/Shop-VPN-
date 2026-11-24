@@ -228,7 +228,7 @@ def test_shop_prefix_routes_sessions_and_login(client, monkeypatch):
             response = shop.get(page)
             assert response.status_code == 200
             assert 'content="/shop"' in response.text
-            assert 'href="/shop/static/style.css"' in response.text
+            assert 'href="/shop/static/style.css?v=' in response.text
             assert 'href="/shop/"' in response.text
             assert '__BASE_PATH__' not in response.text
         assert shop.get('/shop/static/app.js').status_code == 200
@@ -1206,3 +1206,20 @@ def test_old_pending_paid_checkout_blocks_queued_free_renewal(client, monkeypatc
     asyncio.run(service.fulfill(queued['id']))
     assert one("SELECT status FROM orders WHERE id=?",(queued['id'],))['status']=='canceled'
     assert one('SELECT free_renewals_used FROM subscriptions')['free_renewals_used']==0
+
+
+@pytest.mark.parametrize('page,script',[('/admin','admin.js'),('/','app.js')])
+def test_rendered_assets_use_content_fingerprints(client,page,script):
+    import re
+    response=client.get(page)
+    assert response.status_code==200
+    assert response.headers['cache-control']=='no-cache'
+    for asset in ('style.css',script):
+        match=re.search(r'["\']/static/'+re.escape(asset)+r'\?v=([a-f0-9]{16})["\']',response.text)
+        assert match,asset
+        content=client.get('/static/'+asset+'?v='+match.group(1))
+        assert content.status_code==200
+        assert hashlib.sha256(content.content).hexdigest()[:16]==match.group(1)
+    if page=='/admin':
+        assert 'class="shop-admin-ui"' in response.text
+        assert 'background:#fff!important' in client.get('/static/style.css').text

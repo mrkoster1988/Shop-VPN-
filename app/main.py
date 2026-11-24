@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import secrets
 import io
 import json
@@ -37,6 +38,9 @@ logging.basicConfig(level=logging.INFO)
 logging.getLogger('httpx').setLevel(logging.WARNING)
 logging.getLogger('httpcore').setLevel(logging.WARNING)
 STATIC = Path(__file__).parent / 'static'
+# Content fingerprints prevent older cached CSS/JS from surviving a deployment.
+ASSET_VERSIONS = {name: hashlib.sha256((STATIC / name).read_bytes()).hexdigest()[:16]
+                  for name in ('style.css', 'admin.js', 'app.js', 'flow-links.js')}
 
 @asynccontextmanager
 async def lifespan(app):
@@ -265,8 +269,11 @@ async def protocol_catalog():
     return protocols.catalog()
 
 def html_page(name):
-    html = (STATIC / name).read_text().replace('__BASE_PATH__', c.BASE_PATH)
-    return HTMLResponse(html, headers={'Cache-Control': 'no-cache'})
+    html = (STATIC / name).read_text()
+    for asset, fingerprint in ASSET_VERSIONS.items():
+        marker = '__BASE_PATH__/static/' + asset + '"'
+        html = html.replace(marker, marker[:-1] + '?v=' + fingerprint + '"')
+    return HTMLResponse(html.replace('__BASE_PATH__', c.BASE_PATH), headers={'Cache-Control': 'no-cache'})
 
 @app.get('/')
 async def index():
