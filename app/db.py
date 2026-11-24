@@ -423,6 +423,21 @@ def init_db():
         plan_columns = {row['name'] for row in conn.execute('PRAGMA table_info(plans)')}
         if 'is_free' not in plan_columns:
             conn.execute('ALTER TABLE plans ADD COLUMN is_free INTEGER NOT NULL DEFAULT 0 CHECK(is_free IN (0,1))')
+        # Optional free-tier limits; zero means unlimited. Old paid plans are
+        # unchanged. Columns are additive to protect deployed SQLite databases.
+        plan_columns = {row['name'] for row in conn.execute('PRAGMA table_info(plans)')}
+        for column, definition in {
+            'free_activation_limit': 'INTEGER NOT NULL DEFAULT 0 CHECK(free_activation_limit BETWEEN 0 AND 1000000)',
+            'free_traffic_gb': 'INTEGER NOT NULL DEFAULT 0 CHECK(free_traffic_gb BETWEEN 0 AND 10000)',
+        }.items():
+            if column not in plan_columns:
+                conn.execute('ALTER TABLE plans ADD COLUMN ' + column + ' ' + definition)
+        order_columns = {row['name'] for row in conn.execute('PRAGMA table_info(orders)')}
+        if 'free_traffic_gb' not in order_columns:
+            conn.execute('ALTER TABLE orders ADD COLUMN free_traffic_gb INTEGER NOT NULL DEFAULT 0')
+        subscription_columns = {row['name'] for row in conn.execute('PRAGMA table_info(subscriptions)')}
+        if 'free_traffic_gb' not in subscription_columns:
+            conn.execute('ALTER TABLE subscriptions ADD COLUMN free_traffic_gb INTEGER NOT NULL DEFAULT 0')
         for position, plan in enumerate(c.PLANS):
             conn.execute('INSERT OR IGNORE INTO plans(id,name,days,price,stars,position) VALUES (?,?,?,?,?,?)',
                          (plan['id'], plan['name'], plan['days'], plan['price'], plan['stars'], position))
