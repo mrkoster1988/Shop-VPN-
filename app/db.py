@@ -289,6 +289,23 @@ def init_db():
         CREATE INDEX IF NOT EXISTS admin_audit_created ON admin_audit(created,id);
         CREATE TABLE IF NOT EXISTS audit (
           id INTEGER PRIMARY KEY, created INTEGER NOT NULL, action TEXT NOT NULL, order_id TEXT);
+        CREATE TABLE IF NOT EXISTS shop_payment_policy (
+          id INTEGER PRIMARY KEY CHECK(id=1),web_mode TEXT NOT NULL CHECK(web_mode IN ('inherit','manual','yookassa','sbp')),
+          web_enabled INTEGER NOT NULL CHECK(web_enabled IN (0,1)),stars_enabled INTEGER NOT NULL CHECK(stars_enabled IN (0,1)),
+          manual_text TEXT NOT NULL,version INTEGER NOT NULL CHECK(version>0),updated INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS shop_finance_entries (
+          id TEXT PRIMARY KEY,kind TEXT NOT NULL CHECK(kind IN ('expense','fee','refund')),
+          category TEXT NOT NULL,currency TEXT NOT NULL CHECK(currency IN ('RUB','XTR')),
+          amount_minor INTEGER NOT NULL CHECK(amount_minor>0),occurred_at INTEGER NOT NULL,
+          order_id TEXT REFERENCES orders(id),reference TEXT NOT NULL,note TEXT NOT NULL,
+          state TEXT NOT NULL CHECK(state IN ('recorded','void')),version INTEGER NOT NULL CHECK(version>0),
+          created INTEGER NOT NULL,staff_id INTEGER,UNIQUE(currency,reference));
+        CREATE INDEX IF NOT EXISTS shop_finance_period ON shop_finance_entries(occurred_at,id);
+        CREATE INDEX IF NOT EXISTS shop_finance_order ON shop_finance_entries(order_id,kind,state);
+        CREATE TABLE IF NOT EXISTS shop_finance_actions (
+          operation_id TEXT PRIMARY KEY,entry_id TEXT NOT NULL REFERENCES shop_finance_entries(id),
+          action TEXT NOT NULL CHECK(action IN ('record','void')),fingerprint TEXT NOT NULL,
+          note TEXT NOT NULL,created INTEGER NOT NULL,staff_id INTEGER,UNIQUE(entry_id,action));
         CREATE TABLE IF NOT EXISTS shop_runtime_settings (
           section TEXT PRIMARY KEY CHECK(section IN ('appearance','sales','notifications')),
           content TEXT NOT NULL, version INTEGER NOT NULL CHECK(version>0), updated INTEGER NOT NULL);

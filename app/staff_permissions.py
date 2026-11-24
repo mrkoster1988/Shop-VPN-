@@ -13,6 +13,9 @@ LABELS={
     'customers':'Пользователи и подписки',
     'orders':'Заказы и повтор выдачи',
     'payments':'Ручное подтверждение и отмена оплаты',
+    'payment_settings':'Настройки способов оплаты',
+    'finance_read':'Финансовый журнал (просмотр)',
+    'finance_write':'Учёт расходов, комиссий и подтверждённых возвратов',
     'catalog':'Тарифы и лимиты устройств',
     'promotions':'Промокоды, бонусы и пробный доступ',
     'starter':'Настройки автовыдачи WireGuard',
@@ -31,7 +34,7 @@ ALLOWED={
     'moderator':frozenset(('moderation','support')),
 }
 DEFAULTS={
-    'administrator':frozenset(LABELS)-{'payments','bot_menu','sales_controls','notifications'},
+    'administrator':frozenset(LABELS)-{'payments','bot_menu','sales_controls','notifications','payment_settings','finance_read','finance_write'},
     'moderator':frozenset(('moderation',)),
 }
 # Права разработчика на сотрудников, секреты, установку и обновление
@@ -41,6 +44,9 @@ RULES={
     'customers': [('GET',r'/users(?:/[0-9]+)?')],
     'orders': [('GET',r'/orders'),('POST',r'/orders/[^/]+/retry')],
     'payments': [('POST',r'/orders/[^/]+/(?:confirm|reject)')],
+    'payment_settings': [('GET',r'/payment-policy'),('PUT',r'/payment-policy')],
+    'finance_read': [('GET',r'/shop-finance')],
+    'finance_write': [('POST',r'/shop-finance/entries'),('POST',r'/shop-finance/entries/[^/]+/void')],
     'catalog': [('GET',r'/plans'),('POST',r'/plans'),('PUT',r'/plans/[^/]+')],
     'promotions': [('GET',r'/(?:coupons|referrals|trial)'),('POST',r'/coupons'),
                    ('PUT',r'/(?:referrals|trial|coupons/[^/]+)')],
@@ -94,6 +100,8 @@ def update(role,data):
         raise HTTPException(422,'Недопустимое полномочие для этой роли')
     if 'payments' in values and 'orders' not in values:
         raise HTTPException(422,'Для подтверждения оплаты включите доступ к заказам')
+    if 'finance_write' in values and 'finance_read' not in values:
+        raise HTTPException(422,'Для учёта операций разрешите просмотр финансового журнала')
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
         old=policy(conn,role)
@@ -141,6 +149,7 @@ def effective_permissions(conn,role,staff_id):
     values=_limit_values(_individual_row(conn,staff_id))
     if values is not None:allowed.intersection_update(values)
     if 'orders' not in allowed:allowed.discard('payments')
+    if 'finance_read' not in allowed:allowed.discard('finance_write')
     return sorted(allowed)
 
 
@@ -174,6 +183,8 @@ def individual_update(staff_id,data):
             raise HTTPException(422,'Индивидуальные права могут только ограничивать текущую роль')
         if 'payments' in values and 'orders' not in values:
             raise HTTPException(422,'Для подтверждения оплаты разрешите просмотр заказов')
+        if 'finance_write' in values and 'finance_read' not in values:
+            raise HTTPException(422,'Для учёта операций разрешите просмотр финансового журнала')
         encoded=None if data.inherit else json.dumps(sorted(values),separators=(',',':'))
         conn.execute("""INSERT INTO staff_permission_limits(staff_id,permissions,version,updated)
             VALUES (?,?,?,?) ON CONFLICT(staff_id) DO UPDATE SET permissions=excluded.permissions,
