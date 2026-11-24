@@ -3,7 +3,7 @@ import os
 import time
 import sqlite3
 from contextlib import closing
-from . import config as c, shop_settings, payment_policy, protocols as protocol_catalog
+from . import config as c, shop_settings, payment_policy, server_routing, protocols as protocol_catalog
 
 VERSION='v0.058'
 QUEUE_SPECS={
@@ -46,16 +46,15 @@ def report(worker):
         if expiration[0] and now-expiration[1]>=600:warn('expiry_wait_over_10m')
         if not enabled and (any(q['pending'] for q in queues.values()) or expiration[0]):warn('queues_paused')
         protocols={}
+        conn.row_factory=sqlite3.Row
+        routing_policy=server_routing.policy(conn)
         for protocol in protocol_catalog.supported_drivers():
-            rows=conn.execute("""SELECT state,health,checked_at,capacity,
-                (SELECT count(*) FROM subscriptions s WHERE s.server_id=v.id AND
-                 (s.state='pending' OR (s.state='active' AND s.expires>?))) AS occupied
-                FROM servers v WHERE protocol=?""",(now,protocol)).fetchall()
-            enabled_rows=[r for r in rows if r[0] in ('active','draining')]
-            assignable=[r for r in rows if r[0]=='active' and r[1]!='error' and (r[3]==0 or r[4]<r[3])]
-            recent=[r for r in enabled_rows if r[1]=='ok' and r[2] is not None and 0<=now-r[2]<=86400]
+            rows=server_routing.rows(conn,protocol,now)
+            enabled_rows=[r for r in rows if r['state'] in ('active','draining')]
+            assignable=[r for r in rows if server_routing.blocked_reason(r,routing_policy,now) is None]
+            recent=[r for r in enabled_rows if r['health']=='ok' and r['checked_at'] is not None and 0<=now-r['checked_at']<=86400]
             protocols[protocol]={'registered':len(rows),'enabled':len(enabled_rows),'assignable':len(assignable),
-                'cached_api_ok_24h':len(recent),'cached_api_error':sum(r[1]=='error' for r in enabled_rows)}
+                'cached_api_ok_24h':len(recent),'cached_api_error':sum(r['health']=='error' for r in enabled_rows)}
             if enabled_rows and len(recent)<len(enabled_rows):warn('server_probe_not_recent_ok')
             if enabled_rows and not assignable:warn('no_new_assignments_'+protocol)
         plans=conn.execute('SELECT count(*) FROM plans WHERE enabled=1').fetchone()[0]

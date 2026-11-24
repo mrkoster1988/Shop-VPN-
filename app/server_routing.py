@@ -168,7 +168,12 @@ async def probe(sid,*,automatic=False,expected_policy_version=None):
     try:
         row=one('SELECT * FROM servers WHERE id=?',(sid,))
         if not row:raise HTTPException(404,'Сервер не найден')
-        if automatic and row['state'] not in ('active','draining'):return False
+        if automatic:
+            with db() as conn:
+                p=policy(conn)
+            if not p['monitor_enabled'] or p['version']!=expected_policy_version or row['state'] not in ('active','draining'):return False
+            now=int(time.time())
+            if row['checked_at'] is not None and 0<=now-row['checked_at']<p['monitor_interval_minutes']*60:return False
         started=time.monotonic()
         try:
             await asyncio.wait_for(providers.probe_server(row),timeout=30)
