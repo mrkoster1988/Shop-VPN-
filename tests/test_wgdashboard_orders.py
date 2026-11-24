@@ -60,3 +60,16 @@ def test_interface_cannot_change_after_subscription_is_bound(client):
                           headers={'Authorization':'Bearer '+c.ADMIN_TOKEN})
     assert response.status_code == 409
     assert servers.decode(one('SELECT * FROM servers WHERE id=?', ('test-wg',))) == profile
+
+
+def test_public_http_wgdashboard_rejected_with_actionable_message(client):
+    from app import config as c
+    payload = {'name':'New WGDashboard','location':'','protocol':'wg',
+        'capacity':0,'settings':{'api':'wgdashboard',
+          'url':'http://193.238.155.39:10086',
+          'token':'t'*40,'configuration':'wg0'}}
+    resp = client.post('/api/admin/servers',json=payload,
+        headers={'Authorization':'Bearer '+c.ADMIN_TOKEN})
+    assert resp.status_code==422,resp.text
+    assert 'HTTPS' in resp.json()['detail']
+    assert 't'*40 not in resp.text
