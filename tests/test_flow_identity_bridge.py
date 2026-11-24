@@ -155,3 +155,37 @@ def test_failed_token_cannot_pollute_global_binds_and_no_login_cookie_needed(cli
     ok=_call(client,wrong)
     assert ok.status_code==200
     assert one('SELECT count(*) AS n FROM flow_bridge_nonces')['n']==1
+
+
+def test_bridge_prefers_active_entitlement_over_older_expired_row(client, monkeypatch):
+    _enabled(monkeypatch)
+    from app import service
+    service.telegram_account(98455677)
+    with db() as conn:
+        conn.execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state,secret,access_source) "
+                     "VALUES ('a_expired',1,'wg',1,'expired',?,'purchase')", (c.encrypt(_VALID),))
+        conn.execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state,secret,access_source) "
+                     "VALUES ('z_active',1,'wg',?,'active',?,'purchase')",
+                     (int(time.time()) + 86400, c.encrypt(_VALID)))
+    response = _call(client)
+    assert response.status_code == 200, response.text
+    assert response.json()['status'] == 'active'
+    token = response.json()['subscription_url'].rsplit('/', 1)[-1]
+    feed = client.get('/flow/wireguard/' + token)
+    assert feed.status_code == 200
+    assert feed.json()['state'] == 'active'
+    assert feed.json()['profiles'][0]['config'] == _VALID
+
+
+def test_bridge_returns_pending_if_no_active_entitlement(client, monkeypatch):
+    _enabled(monkeypatch)
+    from app import service
+    service.telegram_account(98455677)
+    with db() as conn:
+        conn.execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state,access_source) "
+                     "VALUES ('a_expired',1,'wg',1,'expired','trial')")
+        conn.execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state,access_source) "
+                     "VALUES ('z_pending',1,'wg',0,'pending','trial')")
+    response = _call(client)
+    assert response.status_code == 200, response.text
+    assert response.json() == {'status': 'pending', 'subscription_url': None}
