@@ -1186,7 +1186,7 @@ async def admin_servers():
 def _server_profile_error(data, fallback):
     """Do not expose credentials or full server URLs in validation responses."""
     settings = data.settings
-    if (data.protocol == 'wg' and isinstance(settings, dict)
+    if (isinstance(settings, dict)
             and settings.get('api') == 'wgdashboard'):
         raw = settings.get('url')
         if isinstance(raw, str):
