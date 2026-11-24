@@ -125,7 +125,7 @@ async def inspect(user_id):
         # No raw server error, HTTP body, URL, API token or keys in admin JSON.
         return {**base, 'status': 'panel_unavailable', 'can_retry': False}
     base['can_restore'] = bool(
-        status == 'peer_missing' and local_ready and
+        status in ('peer_missing','peer_found') and local_ready and
         server['state'] in ('active', 'draining') and server['health'] != 'error')
     return {**base, 'status': status}
 
