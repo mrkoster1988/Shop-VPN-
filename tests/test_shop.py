@@ -1108,3 +1108,20 @@ def test_free_offer_cannot_replace_paid_active_access(client):
     assert save_plan(client,plan_edit(client, price=0, stars=0)).status_code==200
     assert client.post('/api/orders',json={
         'plan':'month','plan_version':2,'protocol':'xui'}).status_code==409
+
+
+def test_free_renewal_with_lifetime_quota_is_rejected(client):
+    assert save_plan(client,plan_edit(client,price=0,stars=0,
+        free_auto_renew=True,free_max_renewals=1,free_traffic_gb=2)).status_code==422
+    assert save_plan(client,plan_edit(client,price=0,stars=0,
+        free_auto_renew=True,free_max_renewals=0)).status_code==422
+
+
+def test_free_plan_preserves_legacy_positive_prices_in_db(client):
+    assert save_plan(client,plan_edit(client,price=0,stars=0)).status_code==200
+    row=one("SELECT price,stars,is_free FROM plans WHERE id='month'")
+    assert row['price']>0 and row['stars']>0 and row['is_free']==1
+    admin=client.get('/api/admin/plans',headers={'Authorization':'Bearer '+c.ADMIN_TOKEN})
+    assert admin.status_code==200
+    item=next(x for x in admin.json()['plans'] if x['id']=='month')
+    assert item['price']==item['stars']==0
