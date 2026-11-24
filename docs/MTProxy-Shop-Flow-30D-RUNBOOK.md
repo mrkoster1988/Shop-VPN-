@@ -58,14 +58,24 @@ python3 scripts/prepare_flow_bridge.py --apply
 исправленной стабильной версии:
 
 ```bash
-cd /opt/mtproxy-pushok
-git status --short
-git branch --show-current
-git pull --ff-only
-test -s database/076_flow_shop_rate_window.sql || { echo "BLOCKED: 076 migration missing. Stop before DB changes."; false; }
-python3 scripts/installer_runtime.py backup
-mapfile -t migrations < <(find database -maxdepth 1 -type f -name '[0-9][0-9][0-9]_*.sql' ! -name '001_*' | sort)
-python3 scripts/installer_runtime.py migrate "${migrations[@]}"
+# Подоболочка: ошибка прервёт только этот блок, не вашу SSH-сессию.
+(
+  set -euo pipefail
+  cd /opt/mtproxy-pushok
+  git branch --show-current
+  if [[ -n "$(git status --porcelain)" ]]; then
+    echo "BLOCKED: local modifications, inspect status first"
+    exit 1
+  fi
+  git pull --ff-only
+  if [[ ! -s database/076_flow_shop_rate_window.sql ]]; then
+    echo "BLOCKED: migration 076 missing in current release"
+    exit 1
+  fi
+  python3 scripts/installer_runtime.py backup
+  mapfile -t migrations < <(find database -maxdepth 1 -type f -name '[0-9][0-9][0-9]_*.sql' ! -name '001_*' | sort)
+  python3 scripts/installer_runtime.py migrate "${migrations[@]}"
+)
 ```
 
 Штатный мигратор сверяет контрольные суммы, использует транзакцию PostgreSQL
