@@ -1318,7 +1318,11 @@ const PEER_STATUS_LABELS = {
   peer_missing:'Пир с ключом Shop отсутствует на закреплённом WGDashboard.',
   peer_restricted:'Пир существует, но ограничен на стороне WGDashboard.',
   peer_found:'Пир существует на закреплённом WGDashboard.',
-  panel_unavailable:'WGDashboard не ответил на проверку. Данные подписки не изменены.'
+  panel_unavailable:'WGDashboard ответил ошибкой. Проверьте настройки API и журнал Shop.',
+  panel_connection_failed:'Shop не может подключиться к адресу WGDashboard. Проверьте HTTPS и доступность узла.',
+  panel_auth_failed:'WGDashboard отклонил API-ключ Shop (401/403). Обновите ключ в карточке сервера.',
+  panel_api_missing:'API WGDashboard не найден (404/405). Проверьте адрес панели без /api.',
+  panel_timeout:'WGDashboard не ответил за время проверки. Проверьте соединение Shop → панель.'
 };
 $('user-subscriptions').onclick = async event => {
   const check=event.target.closest('[data-peer-check]');
