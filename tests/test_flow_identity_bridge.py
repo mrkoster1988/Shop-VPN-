@@ -69,7 +69,7 @@ def test_existing_shop_telegram_user_no_free_grant_default_and_replay(client, mo
     first=_call(client,request)
     assert first.status_code==200,first.text
     assert first.json()=={'status':'disabled','subscription_url':None}
-    assert first.headers['cache-control']=='private, no-store'
+    assert first.headers['cache-control']=='no-store'
     assert _call(client,request).status_code==409
     assert one('SELECT count(*) AS n FROM flow_bridge_devices')['n']==1
     assert one('SELECT count(*) AS n FROM flow_auto_grants')['n']==0
