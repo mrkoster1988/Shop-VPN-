@@ -101,6 +101,11 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
+      - name: Reproduce a root-only application checkout (umask 077)
+        run: |
+          chmod -R go-rwx app scripts
+          test "$(stat -c '%a' app/main.py)" = 600
+          test "$(stat -c '%a' app)" = 700
       - name: Real WireGuard purchase and data-plane acceptance
         run: |
           sudo python3 tests/wireguard_staging.py --disposable --source "$GITHUB_WORKSPACE" --report "$RUNNER_TEMP/shop-wireguard-staging.json"

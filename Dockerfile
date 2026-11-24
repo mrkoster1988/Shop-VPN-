@@ -8,7 +8,10 @@ COPY scripts/backup.py ./scripts/backup.py
 COPY scripts/status.py ./scripts/status.py
 COPY scripts/panel_check.py ./scripts/panel_check.py
 COPY scripts/mail_check.py ./scripts/mail_check.py
-RUN mkdir /app/data && chown shop:shop /app/data
+# Git checkouts under umask 077 can produce 0600 files and 0700 directories.
+# Normalize only copied application code; keep secrets and the persistent volume private.
+RUN chmod -R u=rwX,go=rX /app/app /app/scripts \
+    && mkdir /app/data && chown shop:shop /app/data
 USER shop
 EXPOSE 8000
 CMD ["python","-m","uvicorn","app.main:app","--host","127.0.0.1","--port","8000","--workers","1","--no-access-log"]
