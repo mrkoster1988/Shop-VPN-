@@ -146,10 +146,14 @@ class Staging:
         # SQLite ALTER TABLE ADD COLUMN changes SELECT * digests without
         # changing historical business data. Re-read every row using the
         # original column order; still reject any actual row/value changes.
-        current=self.data('snapshot_projected',
-                          {'columns':expected['table_columns']})
+        current=self.snapshot()
         old=expected.get('table_digests',{});new=current.get('table_digests',{})
-        historical=current['projected_table_digests']
+        # Unit fixtures with matching schemas can compare their complete rows.
+        # Real historical migrations provide column metadata so that additive
+        # columns do not obscure changes to pre-upgrade values.
+        historical=(self.data('snapshot_projected',
+                    {'columns':expected['table_columns']})['projected_table_digests']
+                    if 'table_columns' in expected else new)
         changed=[name for name in set(old)&set(new)
                  if old[name]!=historical.get(name)]
         missing=sorted(set(old)-set(new))
