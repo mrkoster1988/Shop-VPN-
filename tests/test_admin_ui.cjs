@@ -1261,3 +1261,33 @@ test('successful server creation confirms persistence next to servers, not tarif
   assert.equal(page.element('admin-notice').textContent,'');
   assert.match(page.element('server-list').innerHTML,/Профиль подключения сохранён в Shop/);
 });
+
+
+test('developer sees delete controls only for eligible records',()=>{
+  const page=adminPage();
+  const draft={id:'custom',name:'Черновик',days:7,price:0,stars:0,
+    enabled:false,version:1,device_limit:0};
+  const active={...draft,enabled:true};
+  const ownerDraft=page.run("role='owner';planForm("+JSON.stringify(draft)+")");
+  assert.match(ownerDraft,/data-plan-delete="custom"/);
+  const ownerActive=page.run("role='owner';planForm("+JSON.stringify(active)+")");
+  assert.doesNotMatch(ownerActive,/data-plan-delete=/);
+  const manager=page.run("role='administrator';planForm("+JSON.stringify(draft)+")");
+  assert.doesNotMatch(manager,/data-plan-delete=/);
+  const node={id:'srv',name:'Test WG',protocol:'wg',profile:'wgdashboard',
+    health:'unknown',checked_at:0,location:'',capacity:0,occupied:0,
+    bound_subscriptions:0,state:'disabled',version:1,
+    schedule_expiry:false,panel_timezone:null};
+  const server=page.run("role='owner';serverCard("+JSON.stringify(node)+")");
+  assert.match(server,/data-server-delete="srv"/);
+  const used=page.run("role='owner';serverCard("+JSON.stringify({...node,bound_subscriptions:1})+")");
+  assert.doesNotMatch(used,/data-server-delete=/);
+});
+
+test('light admin theme does not target public storefront',()=>{
+  const css=fs.readFileSync('app/static/style.css','utf8');
+  const tail=css.slice(css.lastIndexOf('/* Pushok Shop Admin — light'));
+  assert.match(tail,/body\.shop-admin-ui\s*\{/);
+  assert.match(tail,/background:#fff!important/);
+  assert.doesNotMatch(tail,/body\.shop-public-ui\s*\{/);
+});
