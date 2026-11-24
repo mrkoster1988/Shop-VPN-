@@ -148,7 +148,7 @@ def period(start,end):
     return start,end
 
 
-def report(start=None,end=None,page=1):
+def report(start=None,end=None,page=1,*,include_entries=True):
     start,end=period(start,end)
     with db() as conn:
         conn.execute('BEGIN')
@@ -171,7 +171,7 @@ def report(start=None,end=None,page=1):
             AND NOT EXISTS (SELECT 1 FROM order_milestones m WHERE m.order_id=o.id AND m.event='paid')""").fetchone()[0]
         since=conn.execute('SELECT recorded_since FROM order_history_state WHERE id=1').fetchone()
         count=conn.execute('SELECT count(*) FROM shop_finance_entries WHERE occurred_at>=? AND occurred_at<?',(start,end)).fetchone()[0]
-        rows=conn.execute('SELECT id FROM shop_finance_entries WHERE occurred_at>=? AND occurred_at<? ORDER BY occurred_at DESC,id DESC LIMIT 25 OFFSET ?',(start,end,(page-1)*25)).fetchall()
+        rows=conn.execute('SELECT id FROM shop_finance_entries WHERE occurred_at>=? AND occurred_at<? ORDER BY occurred_at DESC,id DESC LIMIT 25 OFFSET ?',(start,end,(page-1)*25)).fetchall() if include_entries else []
         return {'period':{'start':start,'end':end},'unit':{'RUB':'kopecks','XTR':'stars'},
                 'source':'first_observed_paid_and_verified_manual_entries','totals':totals,
                 'receipts_by_method':[dict(r) for r in income],'missing_payment_timestamp':missing,

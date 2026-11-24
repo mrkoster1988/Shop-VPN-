@@ -29,13 +29,16 @@ LABELS={
     'bot_menu':'Редактор меню Telegram',
     'analytics':'Финансовая аналитика',
     'diagnostics':'Диагностика',
+    'ai_read':'Pushok ИИ: рекомендации в разрешённых разделах',
+    'ai_scan':'Pushok ИИ: запуск локального анализа',
+    'ai_review':'Pushok ИИ: решения по рекомендациям',
 }
 ALLOWED={
     'administrator':frozenset(LABELS),
     'moderator':frozenset(('moderation','support')),
 }
 DEFAULTS={
-    'administrator':frozenset(LABELS)-{'payments','bot_menu','sales_controls','notifications','payment_settings','finance_read','finance_write','server_routing'},
+    'administrator':frozenset(LABELS)-{'payments','bot_menu','sales_controls','notifications','payment_settings','finance_read','finance_write','server_routing','ai_read','ai_scan','ai_review'},
     'moderator':frozenset(('moderation',)),
 }
 # Права разработчика на сотрудников, секреты, установку и обновление
@@ -65,6 +68,9 @@ RULES={
     'bot_menu': [('GET',r'/bot-menu'),('PUT',r'/bot-menu')],
     'analytics': [('GET',r'/commerce-analytics')],
     'diagnostics': [('GET',r'/diagnostics')],
+    'ai_read': [('GET',r'/pushok-ai'),('GET',r'/pushok-ai/history')],
+    'ai_scan': [('POST',r'/pushok-ai/scan')],
+    'ai_review': [('POST',r'/pushok-ai/findings/[^/]+/review')],
 }
 
 class PolicyUpdate(BaseModel):
@@ -106,6 +112,8 @@ def update(role,data):
         raise HTTPException(422,'Для учёта операций разрешите просмотр финансового журнала')
     if 'server_routing' in values and 'servers_read' not in values:
         raise HTTPException(422,'Для управления распределением разрешите просмотр серверов')
+    if {'ai_scan','ai_review'} & values and 'ai_read' not in values:
+        raise HTTPException(422,'Для работы с рекомендациями разрешите просмотр Pushok ИИ')
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
         old=policy(conn,role)
@@ -155,6 +163,7 @@ def effective_permissions(conn,role,staff_id):
     if 'orders' not in allowed:allowed.discard('payments')
     if 'finance_read' not in allowed:allowed.discard('finance_write')
     if 'servers_read' not in allowed:allowed.discard('server_routing')
+    if 'ai_read' not in allowed:allowed.difference_update(('ai_scan','ai_review'))
     return sorted(allowed)
 
 
@@ -192,6 +201,8 @@ def individual_update(staff_id,data):
             raise HTTPException(422,'Для учёта операций разрешите просмотр финансового журнала')
         if 'server_routing' in values and 'servers_read' not in values:
             raise HTTPException(422,'Для управления распределением разрешите просмотр серверов')
+        if {'ai_scan','ai_review'} & values and 'ai_read' not in values:
+            raise HTTPException(422,'Для работы с рекомендациями разрешите просмотр Pushok ИИ')
         encoded=None if data.inherit else json.dumps(sorted(values),separators=(',',':'))
         conn.execute("""INSERT INTO staff_permission_limits(staff_id,permissions,version,updated)
             VALUES (?,?,?,?) ON CONFLICT(staff_id) DO UPDATE SET permissions=excluded.permissions,

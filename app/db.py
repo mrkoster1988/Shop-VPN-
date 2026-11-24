@@ -348,6 +348,24 @@ def init_db():
           operation_id TEXT PRIMARY KEY,entry_id TEXT NOT NULL REFERENCES shop_finance_entries(id),
           action TEXT NOT NULL CHECK(action IN ('record','void')),fingerprint TEXT NOT NULL,
           note TEXT NOT NULL,created INTEGER NOT NULL,staff_id INTEGER,UNIQUE(entry_id,action));
+        CREATE TABLE IF NOT EXISTS shop_ai_policy (
+          id INTEGER PRIMARY KEY CHECK(id=1),content TEXT NOT NULL,version INTEGER NOT NULL CHECK(version>0),updated INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS shop_ai_state (
+          id INTEGER PRIMARY KEY CHECK(id=1),last_scan INTEGER NOT NULL,policy_version INTEGER NOT NULL,
+          source TEXT NOT NULL CHECK(source IN ('manual','automatic')),scan_count INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS shop_ai_findings (
+          code TEXT PRIMARY KEY,category TEXT NOT NULL CHECK(category IN ('diagnostics','servers','commerce','finance')),
+          severity TEXT NOT NULL CHECK(severity IN ('info','warning','critical')),
+          title TEXT NOT NULL,recommendation TEXT NOT NULL,evidence TEXT NOT NULL,
+          state TEXT NOT NULL CHECK(state IN ('open','acknowledged','dismissed','resolved')),
+          version INTEGER NOT NULL CHECK(version>0),first_seen INTEGER NOT NULL,last_seen INTEGER NOT NULL,
+          occurrences INTEGER NOT NULL CHECK(occurrences>0));
+        CREATE TABLE IF NOT EXISTS shop_ai_events (
+          id INTEGER PRIMARY KEY,code TEXT NOT NULL REFERENCES shop_ai_findings(code),
+          action TEXT NOT NULL CHECK(action IN ('detected','recurrence','resolved','acknowledge','dismiss','reopen')),
+          created INTEGER NOT NULL,version INTEGER NOT NULL,staff_id INTEGER,actor_role TEXT NOT NULL,
+          reason TEXT,operation_id TEXT UNIQUE,fingerprint TEXT);
+        CREATE INDEX IF NOT EXISTS shop_ai_events_code ON shop_ai_events(code,id);
         CREATE TABLE IF NOT EXISTS shop_runtime_settings (
           section TEXT PRIMARY KEY CHECK(section IN ('appearance','sales','notifications')),
           content TEXT NOT NULL, version INTEGER NOT NULL CHECK(version>0), updated INTEGER NOT NULL);
