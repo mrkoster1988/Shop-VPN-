@@ -137,7 +137,7 @@ async def fulfill(order_id):
                 if target is None:
                     target = max(int(time.time()),sub['expires']) + order['days']*86400
                     conn.execute('UPDATE orders SET target_expires=? WHERE id=?',(target,order_id))
-            quota = order['free_traffic_gb'] if order['method']=='free' else 0
+            quota = sub['free_traffic_gb'] if order['kind']=='referral' else (order['free_traffic_gb'] if order['method']=='free' else 0)
             secret = await providers.provision({**sub, 'id':primary_identity(sub),'expires': target,'free_traffic_gb':quota})
             encrypted = c.encrypt(secret)
             device_secrets = []
