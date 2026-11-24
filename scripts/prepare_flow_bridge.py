@@ -61,10 +61,11 @@ def _replace(source: str, match, value: str) -> str:
 def _pilot_guard(source: str):
     # A missing flag becomes true for this MTProxy Flow deployment.
     # Preserve an explicit owner override (true/false).
-    matches = [
-        line.strip() for line in source.splitlines()
-        if re.match(r"^[ \\t]*(?:export[ \\t]+)?FLOW_TRIAL_MTPROXY_ONLY[ \\t]*=", line)
-    ]
+    matches = []
+    for line in source.splitlines():
+        compact = line.strip().replace(' ', '').replace('\\t', '')
+        if compact.startswith(PILOT + '=') or compact.startswith('export' + PILOT + '='):
+            matches.append(line.strip())
     if len(matches) > 1:
         raise BridgeSetupError("Duplicate MTProxy trial eligibility setting")
     if matches:
