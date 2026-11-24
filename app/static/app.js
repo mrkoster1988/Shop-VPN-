@@ -441,7 +441,7 @@ $('pushok-id-revoke').onclick=async()=>{
  }catch(e){if(epoch===sessionEpoch)toast(e.message);}finally{button.disabled=false;}
 };
 
-$('account-btn').onclick = async () => { if(logoutPending)return; try { await refreshMe(); show(me?'account-dialog':'auth-dialog'); } catch(e) { toast(e.message); } };
+$('account-btn').onclick = async () => { if(logoutPending)return; try { await refreshMe(); setShopAccountPane('subscriptions'); show(me?'account-dialog':'auth-dialog'); } catch(e) { toast(e.message); } };
 function showForgotForm(show){
  $('auth-form').hidden=show;$('auth-switch').hidden=show;$('forgot-open').hidden=show;$('forgot-form').hidden=!show;
  $('auth-title').textContent=show?'Сменить пароль.':'С возвращением.';
@@ -978,13 +978,53 @@ $('ads-list').onclick=async event=>{
   finally{b.disabled=false;}
 };
 
-// Быстрые переходы внутри прокручиваемого кабинета.
+// Compact account workspace: only one panel is shown at a time. Navigation
+// changes presentation only; existing subscription/order/support APIs remain.
+const SHOP_ACCOUNT_PANES = {
+  subscriptions: 'subscriptions-pane',
+  orders: 'orders-pane',
+  'referrals-panel': 'referrals-panel',
+  'support-panel': 'support-panel',
+};
+function setShopAccountPane(name, focus = false) {
+  const chosen = Object.hasOwn(SHOP_ACCOUNT_PANES, name) ? name : 'subscriptions';
+  for (const [key, id] of Object.entries(SHOP_ACCOUNT_PANES)) {
+    const pane = $(id);
+    pane.dataset.accountActive = key === chosen ? 'true' : 'false';
+  }
+  for (const button of document.querySelectorAll('[data-account-section]')) {
+    const selected = button.dataset.accountSection === chosen;
+    button.setAttribute('aria-pressed', String(selected));
+  }
+  if (focus && $('account-dialog').open) {
+    const pane = $(SHOP_ACCOUNT_PANES[chosen]);
+    pane.setAttribute('tabindex','-1');
+    pane.focus({preventScroll:true});
+    pane.scrollIntoView({behavior:'auto',block:'nearest'});
+  }
+}
 document.querySelectorAll('[data-account-section]').forEach(button => {
-  button.addEventListener('click', () => {
-    const section = $(button.dataset.accountSection);
-    if (!section || !$('account-dialog').open) return;
-    section.setAttribute('tabindex', '-1');
-    section.scrollIntoView({block: 'start', behavior: 'instant'});
-    section.focus({preventScroll: true});
+  button.addEventListener('click', () => setShopAccountPane(button.dataset.accountSection,true));
+});
+
+// The browser has a compact mobile tab bar; Telegram keeps its existing
+// native Mini App bar and is never shown two overlapping bars.
+$('hero-account-btn').onclick = () => $('account-btn').click();
+$('shop-mobile-account').onclick = () => $('account-btn').click();
+document.querySelectorAll('[data-shop-route]').forEach(link => {
+  link.addEventListener('click', () => {
+    for (const item of document.querySelectorAll('[data-shop-route]')) {
+      if (item === link) item.setAttribute('aria-current','page');
+      else item.removeAttribute('aria-current');
+    }
+  });
+});
+window.addEventListener?.('hashchange', () => {
+  const hash = location.hash.slice(1);
+  if (!['home','plans','how','help'].includes(hash)) return;
+  const chosen = hash === 'how' ? 'plans' : hash;
+  document.querySelectorAll('[data-shop-route]').forEach(link => {
+    if (link.dataset.shopRoute === chosen) link.setAttribute('aria-current','page');
+    else link.removeAttribute('aria-current');
   });
 });
