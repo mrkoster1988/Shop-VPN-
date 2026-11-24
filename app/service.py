@@ -109,7 +109,9 @@ async def fulfill(order_id):
         if order['kind']=='free_renewal':
             current=one('SELECT * FROM subscriptions WHERE user_id=? AND protocol=?',
                 (order['user_id'],order['protocol']))
-            if (not current or current['state'] not in ('active','expired') or
+            plan=one('SELECT enabled,is_free FROM plans WHERE id=?',(order['plan'],))
+            if (not plan or not plan['enabled'] or not plan['is_free'] or
+                    not current or current['state'] not in ('active','expired') or
                     current['free_plan_id']!=order['plan'] or not current['free_auto_renew'] or
                     current['free_renewals_used']>=current['free_max_renewals']):
                 execute("UPDATE orders SET status='canceled' WHERE id=? AND status='paid'",(order_id,))
