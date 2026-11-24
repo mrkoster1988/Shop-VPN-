@@ -267,12 +267,12 @@ html[data-shop-theme="graphite"] body.shop-public-ui{--shop-accent:#a9dbe4}
 .shop-public-ui .nav nav{gap:clamp(9px,2.3vw,22px);white-space:nowrap}
 .shop-public-ui .nav nav>a{font-size:13px;font-weight:700;color:#c7dde9}
 .shop-public-ui .nav nav>a:hover{color:var(--shop-accent)}
-.shop-public-ui button:not(.text-link):not(.close),.shop-public-ui .button{
+body.shop-public-ui :where(button:not(.text-link):not(.close),.button){
   background:var(--shop-accent);color:#072839;border:1px solid transparent;
   border-radius:12px;font-size:13px;font-weight:800;min-height:44px;gap:9px;
   padding:10px 17px;transition:background-color .15s ease,box-shadow .15s ease;
 }
-.shop-public-ui button:hover:not(:disabled):not(.text-link):not(.close),.shop-public-ui .button:hover{
+body.shop-public-ui :where(button:hover:not(:disabled):not(.text-link):not(.close),.button:hover){
   background:#80f3e4;box-shadow:0 0 0 2px #4bdbd329;transform:none}
 .shop-public-ui button:disabled{background:#3d6773!important;color:#bdd5df!important;opacity:.75;box-shadow:none}
 .shop-public-ui button.secondary,.shop-public-ui .secondary{
