@@ -144,6 +144,6 @@ def test_existing_developer_and_staff_sessions_survive_additive_init(client):
 
 def test_role_editor_does_not_echo_invalid_staff_password(client):
     bootstrap(client)
-    response=client.post(ROOT+'staff',json={'email':'wrong@example.com','password':'secret-short','role':'moderator'})
-    assert response.status_code==422 and 'secret-short' not in response.text
+    response=client.post(ROOT+'staff',json={'email':'wrong@example.com','password':'short-key','role':'moderator'})
+    assert response.status_code==422 and 'short-key' not in response.text
     assert one('SELECT id FROM staff_users WHERE email=?',('wrong@example.com',)) is None
