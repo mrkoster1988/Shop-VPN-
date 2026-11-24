@@ -29,7 +29,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS shop_id_policy (
           id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
           allow_new_accounts INTEGER NOT NULL CHECK(allow_new_accounts IN (0,1)),
-          version INTEGER NOT NULL CHECK(version>0),updated INTEGER NOT NULL);
+          version INTEGER NOT NULL CHECK(version>0),updated INTEGER NOT NULL,config_hash TEXT,
+          CHECK((enabled=0 AND config_hash IS NULL) OR (enabled=1 AND config_hash IS NOT NULL)));
         CREATE TABLE IF NOT EXISTS shop_id_links (
           subject TEXT PRIMARY KEY,user_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
           telegram_id INTEGER NOT NULL UNIQUE,created INTEGER NOT NULL);

@@ -215,8 +215,13 @@ def test_disable_and_key_rotation_revoke_id_sessions_not_local_sessions(ready,mo
     assert one('SELECT expires FROM sessions WHERE token=?',(digest(central),))['expires']<=int(time.time())+3600
     monkeypatch.setenv('SHOP_PUSHOK_ID_SECRET','34'*32)
     assert client.get('/api/me').status_code==401
+    assert client.get('/api/catalog').json()['pushok_id']['enabled'] is False
+    assert client.get(ADMIN,headers=admin_headers()).json()['reapproval_required'] is True
+    policy(client,enabled=True) # explicit reapproval of the new trust configuration revokes old sessions
     monkeypatch.setenv('SHOP_PUSHOK_ID_SECRET',KEY)
-    assert client.get('/api/me').status_code==200
+    assert client.get('/api/me').status_code==401
+    assert one('SELECT count(*) AS n FROM shop_id_sessions')['n']==0
+    policy(client,enabled=True)
     policy(client,enabled=False)
     assert client.get('/api/me').status_code==401
     assert one('SELECT count(*) AS n FROM shop_id_sessions')['n']==0

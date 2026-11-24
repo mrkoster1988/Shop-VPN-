@@ -740,7 +740,7 @@ function renderIdPolicy(data){
  $('id-policy-enabled').checked=data.enabled===true;$('id-policy-registration').checked=data.allow_new_accounts===true;
  $('id-policy-readiness').textContent='Локальная конфигурация: '+(data.configured?'настроена':'не настроена')+' · Связано: '+data.linked_accounts+
  ' · Ожидающие запросы: '+data.pending_requests+' · Сеансы: '+data.active_id_sessions+
- ' · Срок Shop-сеанса: '+Math.floor(data.session_ttl/60)+' мин. · Общий кошелёк не подключён. Центральный issuer требует отдельной проверки.';
+ ' · Срок Shop-сеанса: '+Math.floor(data.session_ttl/60)+' мин. · Общий кошелёк не подключён. Центральный issuer требует отдельной проверки.'+(data.reapproval_required?' Конфигурация изменилась. Сохраните настройки после проверки новой пары ключей; прежние ID-сеансы будут отозваны.':'');
  $('id-policy-save').disabled=false;
 }
 async function refreshIdPolicy(){
@@ -753,7 +753,6 @@ $('id-policy-refresh').onclick=refreshIdPolicy;
 $('id-policy-form').onsubmit=async event=>{
  event.preventDefault();if(role!=='owner'||idPolicyBusy||idPolicyVersion===null)return;
  const data={version:idPolicyVersion,enabled:$('id-policy-enabled').checked,allow_new_accounts:$('id-policy-registration').checked};
- if(data.enabled&&!data.allow_new_accounts){/* Existing verified accounts only. */}
  const seq=++idPolicySeq,epoch=authEpoch;idPolicyBusy=true;idPolicyVersion=null;$('id-policy-save').disabled=true;
  try{const result=await api('pushok-id',{method:'PUT',data});if(seq===idPolicySeq&&epoch===authEpoch&&role==='owner'){renderIdPolicy(result);$('id-policy-status').textContent='Настройки сохранены.';}}
  catch(e){if(seq===idPolicySeq&&epoch===authEpoch)$('id-policy-status').textContent=e.message+' Обновите раздел перед повтором.';}

@@ -83,13 +83,18 @@ def configuration():
 
 def policy(conn):
     row=conn.execute('SELECT * FROM shop_id_policy WHERE id=1').fetchone()
-    if not row:return {'enabled':False,'allow_new_accounts':False,'version':0,'updated':0}
+    if not row:return {'enabled':False,'allow_new_accounts':False,'version':0,'updated':0,'config_hash':None}
     return {'enabled':bool(row['enabled']),'allow_new_accounts':bool(row['allow_new_accounts']),
-            'version':row['version'],'updated':row['updated']}
+            'version':row['version'],'updated':row['updated'],'config_hash':row['config_hash']}
+
+
+def trusted(cfg,p):
+    return bool(cfg and p['enabled'] and p['config_hash'] and
+                hmac.compare_digest(cfg['fingerprint'],p['config_hash']))
 
 
 def public_capabilities():
-    with db() as conn:return {'enabled':bool(configuration() and policy(conn)['enabled']),
+    with db() as conn:return {'enabled':trusted(configuration(),policy(conn)),
                               'wallet_status':'not_connected'}
 
 
@@ -101,8 +106,9 @@ def own_link(uid):
 
 
 def admin_view(conn):
-    now=int(time.time());p=policy(conn)
-    return p|{'configured':configuration() is not None,
+    now=int(time.time());p=policy(conn);cfg=configuration()
+    return {k:v for k,v in p.items() if k!='config_hash'}|{'configured':cfg is not None,
+              'available':trusted(cfg,p),'reapproval_required':bool(p['enabled'] and not trusted(cfg,p)),
               'linked_accounts':conn.execute('SELECT count(*) FROM shop_id_links').fetchone()[0],
               'pending_requests':conn.execute('SELECT count(*) FROM shop_id_requests WHERE expires>?',(now,)).fetchone()[0],
               'active_id_sessions':conn.execute("""SELECT count(*) FROM shop_id_sessions b JOIN sessions s
@@ -122,27 +128,30 @@ def update_policy(data):
         conn.execute('BEGIN IMMEDIATE')
         old=policy(conn)
         if old['version']!=data.version:raise HTTPException(409,'Настройки изменились. Обновите раздел.')
-        if data.enabled and configuration() is None:
+        cfg=configuration()
+        if data.enabled and cfg is None:
             raise HTTPException(409,'Сначала настройте HTTPS, отдельный секрет и идентификатор магазина.')
-        if (old['enabled'],old['allow_new_accounts'])!=(data.enabled,data.allow_new_accounts):
-            conn.execute("""INSERT INTO shop_id_policy(id,enabled,allow_new_accounts,version,updated)
-                VALUES (1,?,?,?,?) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled,
-                allow_new_accounts=excluded.allow_new_accounts,version=excluded.version,updated=excluded.updated""",
-                (int(data.enabled),int(data.allow_new_accounts),data.version+1,int(time.time())))
+        fingerprint=cfg['fingerprint'] if data.enabled else None
+        if (old['enabled'],old['allow_new_accounts'],old['config_hash'])!=(data.enabled,data.allow_new_accounts,fingerprint):
+            conn.execute("""INSERT INTO shop_id_policy(id,enabled,allow_new_accounts,version,updated,config_hash)
+                VALUES (1,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled,
+                allow_new_accounts=excluded.allow_new_accounts,version=excluded.version,updated=excluded.updated,
+                config_hash=excluded.config_hash""",
+                (int(data.enabled),int(data.allow_new_accounts),data.version+1,int(time.time()),fingerprint))
             conn.execute('DELETE FROM shop_id_requests')
-            if not data.enabled:
+            if not data.enabled or old['config_hash']!=fingerprint:
                 conn.execute('DELETE FROM sessions WHERE token IN (SELECT session_hash FROM shop_id_sessions)')
         return admin_view(conn)
 
 
 def session_valid(conn,fingerprint):
     cfg=configuration()
-    return bool(cfg and hmac.compare_digest(cfg['fingerprint'],fingerprint) and policy(conn)['enabled'])
+    return bool(trusted(cfg,policy(conn)) and hmac.compare_digest(cfg['fingerprint'],fingerprint))
 
 
 def _enabled(conn):
     cfg=configuration();p=policy(conn)
-    if not cfg or not p['enabled']:raise HTTPException(503,'Вход через Pushok ID пока не включён')
+    if not trusted(cfg,p):raise HTTPException(503,'Вход через Pushok ID не включён или конфигурация требует подтверждения')
     return cfg,p
 
 
