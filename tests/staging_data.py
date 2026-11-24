@@ -50,16 +50,33 @@ def seed(data):
     return {'seeded':True}
 
 
-def snapshot(database=None):
+def snapshot(database=None, projected_columns=None):
     path=Path(database) if database else Path(os.environ.get('DATA_DIR','data'))/'shop.db'
     conn=sqlite3.connect(path.resolve().as_uri()+'?mode=ro',uri=True)
     try:
         conn.execute('BEGIN')
         if conn.execute('PRAGMA integrity_check').fetchall()!=[('ok',)] or conn.execute('PRAGMA foreign_key_check').fetchone():raise ValueError('Invalid staging database')
         records={};business={};counts={};tables=[]
+        table_columns={};projected_table_digests={}
         for (name,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"):
             tables.append(name)
-            quoted='"'+name.replace('"','""')+'"';rows=conn.execute('SELECT * FROM '+quoted).fetchall();counts[name]=len(rows)
+            quoted='"'+name.replace('"','""')+'"'
+            columns=[item[1] for item in conn.execute('PRAGMA table_info('+quoted+')')]
+            table_columns[name]=columns
+            rows=conn.execute('SELECT * FROM '+quoted).fetchall();counts[name]=len(rows)
+            if projected_columns is not None and name in projected_columns:
+                original=projected_columns[name]
+                if (type(original) is not list or not original or
+                        any(type(col) is not str for col in original) or
+                        len(set(original)) != len(original) or
+                        not set(original).issubset(columns)):
+                    raise ValueError('Historical staging schema is missing columns')
+                indexes=[columns.index(col) for col in original]
+                projected_rows=sorted(json.dumps(
+                    tuple(row[index] for index in indexes),ensure_ascii=True)
+                    for row in rows)
+                projected_table_digests[name]=hashlib.sha256(
+                    json.dumps(projected_rows,sort_keys=True).encode()).hexdigest()
             # Новые пустые таблицы рекламы не меняют данные старой схемы; их наличие проверяется отдельно.
             if name in ('ads_policy','ads_requests','ads_events','ads_payment_entries','ads_sites','ads_placements','ads_placement_actions','ads_bookings','ads_booking_actions','ads_expenses','ads_expense_actions') and not rows:continue
             if name not in ('sessions','tickets','shop_id_requests','shop_id_sessions'):
@@ -73,7 +90,8 @@ def snapshot(database=None):
         table_digests={name:hashlib.sha256(json.dumps(rows,sort_keys=True).encode()).hexdigest()
             for name,rows in records.items()}
         observable={name:rows for name,rows in records.items() if name!='admin_audit'}
-        return {'table_digests':table_digests,'digest':hashlib.sha256(json.dumps(observable,sort_keys=True).encode()).hexdigest(),
+        return {'table_digests':table_digests,'table_columns':table_columns,
+            'projected_table_digests':projected_table_digests,'digest':hashlib.sha256(json.dumps(observable,sort_keys=True).encode()).hexdigest(),
             'full_digest':hashlib.sha256(json.dumps(records,sort_keys=True).encode()).hexdigest(),
             'business_digest':hashlib.sha256(json.dumps(business,sort_keys=True).encode()).hexdigest(),'counts':counts,'tables':tables,
             'db_uid':path.stat().st_uid,'db_gid':path.stat().st_gid,'db_mode':stat.S_IMODE(path.stat().st_mode),
@@ -85,6 +103,12 @@ def main():
     command=sys.argv[1]
     if command=='seed':result=seed(json.load(sys.stdin))
     elif command=='snapshot':result=snapshot(sys.argv[2] if len(sys.argv)>2 else None)
+    elif command=='snapshot_projected':
+        payload=json.load(sys.stdin)
+        if type(payload) is not dict or type(payload.get('columns')) is not dict:
+            raise ValueError('Invalid staging projection')
+        result=snapshot(sys.argv[2] if len(sys.argv)>2 else None,
+                        projected_columns=payload['columns'])
     elif command=='ticket':
         from app.db import execute
         from app.security import digest
