@@ -157,7 +157,11 @@ def exchange(ticket, client_id):
         # The owner has not configured a free or paid entitlement.
         return {'status':'disabled' if queued == 'disabled' else 'unavailable',
                 'subscription_url':None}
-    subscription=discovered[0]
+    # An old expired/revoked WireGuard row must not hide a newer usable
+    # entitlement. Prefer active access, then a provision still pending.
+    # Preserve the stable ordering from discover() within each state.
+    priority = {'active': 0, 'pending': 1, 'expired': 2, 'revoked': 3}
+    subscription = min(discovered, key=lambda item: priority.get(item['state'], 4))
     state=subscription['state']
     if state!='active':
         return {'status':state if state in ('pending','expired','revoked') else 'unavailable',
