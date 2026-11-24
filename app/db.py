@@ -418,6 +418,11 @@ def init_db():
             existing = {row['name'] for row in conn.execute('PRAGMA table_info('+table+')')}
             if 'device_limit' not in existing:
                 conn.execute('ALTER TABLE '+table+' ADD COLUMN device_limit INTEGER NOT NULL DEFAULT 4 CHECK(device_limit BETWEEN 0 AND 20)')
+        # Existing SQLite plans tables require positive prices. Keep their
+        # constraints and represent genuinely free offers with an explicit flag.
+        plan_columns = {row['name'] for row in conn.execute('PRAGMA table_info(plans)')}
+        if 'is_free' not in plan_columns:
+            conn.execute('ALTER TABLE plans ADD COLUMN is_free INTEGER NOT NULL DEFAULT 0 CHECK(is_free IN (0,1))')
         for position, plan in enumerate(c.PLANS):
             conn.execute('INSERT OR IGNORE INTO plans(id,name,days,price,stars,position) VALUES (?,?,?,?,?,?)',
                          (plan['id'], plan['name'], plan['days'], plan['price'], plan['stars'], position))
