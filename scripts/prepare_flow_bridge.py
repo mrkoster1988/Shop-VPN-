@@ -16,6 +16,8 @@ import tempfile
 from pathlib import Path
 
 NAME = "FLOW_SHOP_BRIDGE_SECRET"
+PILOT = "FLOW_TRIAL_MTPROXY_ONLY"
+PILOT_LINE = PILOT + "=true"
 KEY = re.compile(r"[0-9a-f]{64}\Z")
 MENTION = re.compile(r"(?m)^\s*(?:export\s+)?" + NAME + r"\s*=")
 ASSIGNMENT = re.compile(
@@ -54,6 +56,25 @@ def _replace(source: str, match, value: str) -> str:
         source += "\n"
     return source + NAME + "=" + value + "\n"
 
+
+
+def _pilot_guard(source: str):
+    # A missing flag becomes true for this MTProxy Flow deployment.
+    # Preserve an explicit owner override (true/false).
+    matches = []
+    for line in source.splitlines():
+        compact = line.strip().replace(' ', '').replace(chr(9), '')
+        if compact.startswith(PILOT + '=') or compact.startswith('export' + PILOT + '='):
+            matches.append(line.strip())
+    if len(matches) > 1:
+        raise BridgeSetupError("Duplicate MTProxy trial eligibility setting")
+    if matches:
+        if matches[0] not in (PILOT + "=true", PILOT + "=false"):
+            raise BridgeSetupError("Unsupported MTProxy trial eligibility setting")
+        return source
+    if source and not source.endswith("\n"):
+        source += "\n"
+    return source + PILOT_LINE + "\n"
 
 def _write_atomic(path: Path, content: bytes):
     fd, temporary = tempfile.mkstemp(prefix=".flow-secret-", dir=path.parent)
@@ -94,14 +115,20 @@ def prepare(mtproxy: Path, shop: Path, backup_root: Path, apply: bool = False):
     distinct = {existing for _, _, _, existing, _ in files if existing}
     if len(distinct) > 1:
         raise BridgeSetupError("Bridge secrets differ; refusing automatic rotation")
+    shop_source = next(item[2] for item in files if item[0] == 'shop')
+    guarded = _pilot_guard(shop_source)
     # A dry run never generates or reveals a secret.
     if not apply:
-        return {"status": "ready" if len(distinct) == 1 and all(f[3] for f in files) else "needs_setup",
-                "changed": False, "backup": None}
+        ready = len(distinct) == 1 and all(f[3] for f in files) and guarded == shop_source
+        return {"status": "ready" if ready else "needs_setup", "changed": False, "backup": None}
     value = next(iter(distinct), None) or secrets.token_hex(32)
-    planned = [(label, path, source, _replace(source, match, value))
-               for label, path, source, existing, match in files
-               if existing != value or match is None]
+    planned = []
+    for label, path, source, existing, match in files:
+        updated = _replace(source, match, value)
+        if label == 'shop':
+            updated = _pilot_guard(updated)
+        if updated != source:
+            planned.append((label, path, source, updated))
     if not planned:
         return {"status": "ready", "changed": False, "backup": None}
     backup = _save_backup(backup_root, files)

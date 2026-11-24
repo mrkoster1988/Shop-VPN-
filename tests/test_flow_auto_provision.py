@@ -159,3 +159,26 @@ def test_policy_off_does_not_revoke_existing_grant(client, monkeypatch):
     assert asyncio.run(auto.process_pending()) == 0
     assert one('SELECT state FROM flow_auto_grants')['state'] == 'pending'
     assert one('SELECT state FROM subscriptions WHERE id=?', (sid,))['state'] == 'pending'
+
+
+def test_mtproxy_only_pilot_excludes_public_shop_signups(client, monkeypatch):
+    monkeypatch.setenv('FLOW_TRIAL_MTPROXY_ONLY', 'true')
+    _node()
+    assert _policy(client, monkeypatch, enabled=True, days=30, max_users=2).status_code == 200
+    register(client)
+    assert auto.enqueue(1) == 'not_mtproxy'
+    assert one('SELECT count(*) AS n FROM flow_auto_grants')['n'] == 0
+
+    # The bridge binds a verified MTProxy identity before requesting a grant.
+    from test_flow_identity_bridge import _enabled, _call
+    _enabled(monkeypatch)
+    reply = _call(client)
+    assert reply.status_code == 200, reply.text
+    assert reply.json() == {'status': 'pending', 'subscription_url': None}
+    grant = one('SELECT user_id,target_expires FROM flow_auto_grants')
+    assert grant['user_id'] == 2
+    assert grant['target_expires'] > int(time.time()) + 29 * 86400
+
+    # Another login by the original Shop email account still cannot claim it.
+    assert auto.enqueue(1) == 'not_mtproxy'
+    assert one('SELECT count(*) AS n FROM flow_auto_grants')['n'] == 1
