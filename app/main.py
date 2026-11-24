@@ -176,11 +176,6 @@ class PlanFields(BaseModel):
     stars: int = Field(ge=0, le=100000, strict=True)
     enabled: bool = Field(strict=True)
     device_limit: int = Field(default=4,ge=0,le=20,strict=True)
-    @field_validator('stars')
-    @classmethod
-    def pass_stars(cls, value):
-        return value
-
     @model_validator(mode='after')
     def check_free(self):
         if (self.price == 0) != (self.stars == 0):
@@ -465,7 +460,7 @@ async def catalog(request: Request):
     except HTTPException:
         customer = None
         tg = False
-    plans = [{**p, 'price': 0 if p['is_free'] else (p['stars'] if tg else p['price'])} for p in all_rows('SELECT id,name,days,price,stars,is_free,version,device_limit FROM plans WHERE enabled=1 ORDER BY position,id')]
+    plans = [{**p, 'price': 0 if p['is_free'] else (p['stars'] if tg else p['price']), 'stars': 0 if p['is_free'] else p['stars']} for p in all_rows('SELECT id,name,days,price,stars,is_free,version,device_limit FROM plans WHERE enabled=1 ORDER BY position,id')]
     public_settings=shop_settings.public()
     options,sale_notice=runtime_settings.catalog_options(customer,providers.available)
     appearance=runtime_settings.get('appearance')
