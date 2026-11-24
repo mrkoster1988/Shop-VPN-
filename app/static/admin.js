@@ -1578,7 +1578,22 @@ async function refreshFlowAutoPolicy() {
   const epoch=authEpoch;
   const p=await api('flow/wireguard/auto');
   if(epoch!==authEpoch || !canGroup('starter'))return;
-  $('flow-auto-count').textContent='Зарезервировано: '+p.used+' из '+p.max_users+'. Осталось: '+p.remaining;
+  const diagnostic=p.diagnostics||{};
+  const statusText={
+    policy_disabled:'Автовыдача выключена.',
+    wgdashboard_not_ready:'Нет активного WGDashboard с настроенным удалением пиров по сроку.',
+    issuance_retrying:'Есть повторяющиеся ошибки создания пиров — проверьте API и очередь.',
+    issuance_pending:'Пиры ожидают создания в фоновой очереди.',
+    ready:'Автовыдача готова для пользователей, подходящих под условия.'
+  };
+  $('flow-auto-count').textContent='Зарезервировано: '+p.used+' из '+p.max_users+
+    '. Осталось: '+p.remaining+'. '+(statusText[diagnostic.state]||'')+
+    ' Ожидают: '+(diagnostic.pending??'—')+
+    ', с повторными попытками: '+(diagnostic.retrying??'—')+
+    ', выдано: '+(diagnostic.active??'—')+
+    ', существующих WG-подписок: '+(diagnostic.existing_wg_subscriptions??'—')+'.'+
+    (diagnostic.mtproxy_only?' Выдача ограничена подтверждёнными пользователями MTProxy.':'');
+
   $('flow-auto-editor').innerHTML=
     '<form class="plan-editor" data-flow-auto-version="'+p.version+'">'+
     '<label class="plan-enabled"><input name="enabled" type="checkbox" '+(p.enabled?'checked':'')+
