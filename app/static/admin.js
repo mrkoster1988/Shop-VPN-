@@ -1322,6 +1322,10 @@ function serverCard(server) {
   const panelExpiry = server.profile === 'wgdashboard' ? `<label><input name="schedule_expiry" type="checkbox" ${server.schedule_expiry?'checked':''}> Дублировать срок подписки заданием WGDashboard</label><label>Часовой пояс ОС панели<input name="panel_timezone" value="${esc(server.panel_timezone || 'UTC')}" maxlength="100" placeholder="Europe/Moscow" required></label><p class="muted">Панель удалит peer по расписанию, даже если Shop временно выключен. Укажите часовой пояс самого сервера WGDashboard.</p>` : '';
   return `<form class="plan-editor" data-server="${esc(server.id)}" data-version="${server.version}"><h3>${esc(server.name)}</h3><p>${esc(protocolLabel(server.protocol))} · ${esc(serverProfileLabel[server.profile] || server.profile)} · ${health}</p><p>Проверка: ${esc(dateTime(server.checked_at))}</p><p class="muted">🔒 Профиль подключения сохранён в Shop. API-адрес и секреты намеренно не отображаются; это не подтверждение доступности сервера.</p><p>Занято: ${server.occupied} · Всего привязано: ${server.bound_subscriptions}</p><label>Название<input name="name" value="${esc(server.name)}" maxlength="80" required></label><label>Локация<input name="location" value="${esc(server.location)}" maxlength="80"></label><label>Лимит занятых подписок (0 — без лимита)<input name="capacity" type="number" min="0" max="1000000" value="${server.capacity}" required></label><label>Режим<select name="state">${Object.entries(serverState).map(([id,label])=>`<option value="${id}" ${server.state===id?'selected':''}>${label}</option>`).join('')}</select></label>${panelExpiry}<button type="submit" class="small">Сохранить настройки сервера</button><button type="button" class="small secondary" data-server-check="${esc(server.id)}">Проверить API</button><button type="button" class="text-link" data-server-edit="${esc(server.id)}">Профиль подключения</button><button type="button" class="text-link" data-server-credentials="${esc(server.id)}">Обновить доступ</button></form>`;
 }
+function showServerNotice(message) {
+  const previous = String($('servers-notice').textContent || '').trim();
+  $('servers-notice').textContent = message + (previous ? ' ' + previous : '');
+}
 async function refreshServers() {
   const data = await api('servers');
   serverCache = data.servers;
@@ -1424,8 +1428,13 @@ $('server-credentials-form').onsubmit = async event => {
     await api('servers/'+encodeURIComponent(server.id)+'/credentials', {method:'PATCH',data});
     if (epoch !== credentialsEpoch) return;
     $('server-credentials-dialog').close();
-    await refreshServers();
-    $('admin-notice').textContent = 'Новый доступ сохранён. Проверьте API и включите нужный режим сервера.';
+    const message = '✅ Новый API-ключ сохранён в зашифрованном виде. Проверьте API и включите нужный режим сервера.';
+    try {
+      await refreshServers();
+      showServerNotice(message);
+    } catch (refreshError) {
+      $('servers-notice').textContent = message+' Список не обновился: '+refreshError.message+'. Нажмите «Обновить».';
+    }
   } catch (error) {
     if (epoch === credentialsEpoch) $('server-credentials-error').textContent = error.message;
   } finally {
@@ -1517,13 +1526,15 @@ $('server-form').onsubmit = async event => {
     await api(original ? 'servers/'+encodeURIComponent(original.id) : 'servers', {method:original?'PUT':'POST',data});
     if (epoch !== serverDialogEpoch) return;
     $('server-dialog').close();
-    $('admin-notice').textContent = profile
+    const message = profile
       ? '✅ Профиль подключения сохранён в Shop (зашифрован). Адрес и ключ скрыты намеренно. Проверьте API перед включением продаж.'
       : '✅ Настройки сервера сохранены. Профиль подключения остался без изменений.';
-    // Failure to refresh the list must not be reported as a failed database save.
-    try { await refreshServers(); }
-    catch (refreshError) {
-      $('servers-notice').textContent = '✅ Сохранение подтверждено Shop, но список серверов не обновился: '+refreshError.message+'. Нажмите «Обновить».';
+    // Server status belongs next to the server list, not in the tariff section.
+    try {
+      await refreshServers();
+      showServerNotice(message);
+    } catch (refreshError) {
+      $('servers-notice').textContent = message+' Список серверов не обновился: '+refreshError.message+'. Нажмите «Обновить».';
     }
   } catch (error) {
     if (epoch === serverDialogEpoch) {
@@ -1538,8 +1549,13 @@ $('server-list').onsubmit = async event => {
   const values=new FormData(form), button=form.querySelector('button[type="submit"]'); button.disabled=true;
   try {
     await api('servers/'+encodeURIComponent(form.dataset.server), {method:'PUT',data:{name:String(values.get('name')),location:String(values.get('location') || ''),capacity:Number(values.get('capacity')),state:String(values.get('state')),version:Number(form.dataset.version),...(form.elements?.schedule_expiry ? {schedule_expiry:form.elements.schedule_expiry.checked,panel_timezone:String(values.get('panel_timezone') || 'UTC')} : {})}});
-    await refreshServers(); $('error').textContent='';
-  } catch (error) { $('error').textContent=error.message; button.disabled=false; }
+    await refreshServers();
+    showServerNotice('✅ Настройки сервера сохранены.');
+    $('error').textContent='';
+  } catch (error) {
+    $('servers-notice').textContent='❌ Не удалось сохранить настройки сервера: '+error.message;
+    button.disabled=false;
+  }
 };
 $('server-list').onclick = async event => {
   const credentials=event.target.closest('[data-server-credentials]');
@@ -1548,8 +1564,14 @@ $('server-list').onclick = async event => {
   if (edit) { openServer(serverCache.find(s=>s.id===edit.dataset.serverEdit)); return; }
   const check=event.target.closest('[data-server-check]'); if (!check) return;
   check.disabled=true;
-  try { await api('servers/'+encodeURIComponent(check.dataset.serverCheck)+'/check',{method:'POST'}); await refreshServers(); }
-  catch (error) { $('error').textContent=error.message; check.disabled=false; }
+  try {
+    await api('servers/'+encodeURIComponent(check.dataset.serverCheck)+'/check',{method:'POST'});
+    await refreshServers();
+    showServerNotice('✅ API сервера проверен. Для запуска подключения отдельно проверьте выдачу WireGuard peer.');
+  } catch (error) {
+    $('servers-notice').textContent='❌ Проверка API не пройдена: '+error.message;
+    check.disabled=false;
+  }
 };
 
 async function refreshFlowAutoPolicy() {
