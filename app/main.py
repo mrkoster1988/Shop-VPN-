@@ -1183,13 +1183,43 @@ def admin_plan(row):
 async def admin_servers():
     return {'servers':servers.list_servers(), 'unassigned_subscriptions':one('SELECT count(*) AS n FROM subscriptions WHERE server_id IS NULL')['n']}
 
+def _server_profile_error(data, fallback):
+    """Do not expose credentials or full server URLs in validation responses."""
+    settings = data.settings
+    if (data.protocol == 'wg' and isinstance(settings, dict)
+            and settings.get('api') == 'wgdashboard'):
+        raw = settings.get('url')
+        if isinstance(raw, str):
+            try:
+                from ipaddress import ip_address
+                parsed = urlsplit(raw)
+                host = parsed.hostname
+                if (parsed.scheme == 'http' and host and
+                        not (ip_address(host).is_private if _is_ip_address(host)
+                             else host == 'localhost' or ('.' not in host and ':' not in host))):
+                    return ('Для WGDashboard с публичным IP нужен HTTPS. '
+                            'Порт панели и UDP-порт WireGuard — разные адреса.')
+            except ValueError:
+                pass
+    return fallback
+
+
+def _is_ip_address(host):
+    from ipaddress import ip_address
+    try:
+        ip_address(host)
+        return True
+    except ValueError:
+        return False
+
+
 @app.post('/api/admin/servers', dependencies=[Depends(admin)])
 async def create_server(data: ServerCreate):
     async with service.lock:
         try:
             result = servers.create(data)
         except (ValidationError, ValueError):
-            raise HTTPException(422,'Проверьте профиль подключения: API, адрес, секреты, inbound и параметры протокола.') from None
+            raise HTTPException(422,_server_profile_error(data,'Проверьте профиль подключения: API, адрес, секреты, inbound и параметры протокола.')) from None
     return JSONResponse(result, status_code=201)
 
 @app.put('/api/admin/servers/{sid}', dependencies=[Depends(admin)])
@@ -1198,7 +1228,7 @@ async def update_server(sid: str, data: ServerUpdate):
         try:
             return servers.update(sid,data)
         except (ValidationError, ValueError):
-            raise HTTPException(422,'Проверьте профиль подключения. Секреты в ответе не возвращаются.') from None
+            raise HTTPException(422,_server_profile_error(data,'Проверьте профиль подключения. Секреты в ответе не возвращаются.')) from None
 
 @app.patch('/api/admin/servers/{sid}/credentials', dependencies=[Depends(admin)])
 async def update_server_credentials(sid: str, data: ServerCredentials):
