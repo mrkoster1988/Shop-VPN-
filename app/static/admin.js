@@ -1327,35 +1327,46 @@ const PEER_STATUS_LABELS = {
 $('user-subscriptions').onclick = async event => {
   const check=event.target.closest('[data-peer-check]');
   const retry=event.target.closest('[data-peer-retry]');
-  if ((check || retry) && role==='owner' && selectedUser!==null) {
-    const button=check||retry;
-    const sid=check?check.dataset.peerCheck:retry.dataset.peerRetry;
+  const restore=event.target.closest('[data-peer-restore]');
+  if ((check || retry || restore) && role==='owner' && selectedUser!==null) {
+    const button=check||retry||restore;
+    const sid=check?check.dataset.peerCheck:retry?retry.dataset.peerRetry:restore.dataset.peerRestore;
     const card=button.closest('.subscription');
     const panel=card?.querySelector('[data-peer-status]');
     if(!panel || panel.dataset.peerStatus!==sid)return;
     const uid=selectedUser,epoch=authEpoch;
     if(retry && !confirm('Повторить создание пира из существующей очереди? Узел и ключ не изменятся.'))return;
+    if(restore && !confirm('Восстановить отсутствующий пир только на исходном сервере и с прежним ключом? Срок подписки не изменится.'))return;
     button.disabled=true;
-    panel.textContent=retry?'Повторная выдача ставится в очередь…':'Проверяем ключ и пир на закреплённом сервере…';
+    panel.textContent=retry?'Повторная выдача ставится в очередь…':restore?'Восстанавливаем пир с прежним ключом…':'Проверяем ключ и пир на закреплённом сервере…';
     try {
-      const url='users/'+encodeURIComponent(uid)+'/wireguard/'+(retry?'retry':'peer');
-      const result=await api(url,{method:retry?'POST':'GET'});
+      const url='users/'+encodeURIComponent(uid)+'/wireguard/'+(retry?'retry':restore?'restore':'peer');
+      const result=await api(url,{method:retry||restore?'POST':'GET'});
       if(uid!==selectedUser || epoch!==authEpoch || panel.isConnected===false)return;
       panel.replaceChildren();
       if(retry){
         panel.textContent='Заявка поставлена в очередь. Повторная попытка выполняется фоновым обработчиком.';
+      } else if(restore){
+        panel.textContent=result.status==='already_present'
+          ? 'Пир уже существует на закреплённом сервере. Данные не менялись.'
+          : 'Пир восстановлен с прежним ключом. Теперь обновите подписку в Pushok Flow.';
       } else {
         const state=PEER_STATUS_LABELS[result.status]||'Статус не определён.';
         const extra=result.server_name?' Закреплённый узел: '+result.server_name+'.':'';
         const attempts=result.grant?.state==='pending'
           ? ' В очереди, попыток: '+result.grant.attempts+'.':'';
         panel.textContent=state+extra+attempts;
-        if(result.can_retry){
+        if(result.can_retry || result.can_restore){
           const action=document.createElement('button');
           action.type='button';
           action.className='small secondary';
-          action.dataset.peerRetry=sid;
-          action.textContent='Повторить выдачу';
+          if(result.can_retry){
+            action.dataset.peerRetry=sid;
+            action.textContent='Повторить выдачу';
+          } else {
+            action.dataset.peerRestore=sid;
+            action.textContent='Восстановить отсутствующий пир';
+          }
           panel.appendChild(action);
         }
       }
