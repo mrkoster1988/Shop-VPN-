@@ -61,6 +61,12 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
      const box=id=>{const r=document.getElementById(id).getBoundingClientRect();return {top:r.top,height:r.height};};
      return {
       overflow:document.documentElement.scrollWidth>innerWidth,
+      docWidth:document.documentElement.scrollWidth,
+      bodyWidth:document.body.scrollWidth,
+      offenders:[...document.querySelectorAll('body *')].map(node=>{
+        const r=node.getBoundingClientRect();
+        return {tag:node.tagName,id:node.id,className:typeof node.className==='string'?node.className.slice(0,50):'',left:Math.round(r.left),right:Math.round(r.right),width:Math.round(r.width)};
+      }).filter(x=>x.width&& (x.left < -5 || x.right > innerWidth+5)).slice(0,15),
       plans:box('plans'),hero:box('home'),
       visual:getComputedStyle(document.querySelector('.hero .visual')).display,
       mobileNav:getComputedStyle(document.querySelector('.shop-mobile-nav')).display
