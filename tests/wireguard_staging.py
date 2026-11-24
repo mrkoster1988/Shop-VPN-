@@ -100,6 +100,16 @@ class Staging:
             self.images.append(image)
             self.run('build fixture' if image==fixture_image else 'build production shop',['docker','build','--label',self.label,'-t',image,str(source)],timeout=900)
         self.event('production_shop_and_agent_images_built')
+        # No production volume, credentials or network: assert image readability before startup.
+        self.run('verify rootless image imports with restrictive checkout', [
+            'docker','run','--rm','--network','none','--entrypoint','python',shop_image,'-c',
+            "import os; from pathlib import Path; "
+            "assert os.getuid()==10001; "
+            "assert os.access('/app/app/main.py',os.R_OK); "
+            "assert not os.access('/app/app/main.py',os.W_OK); "
+            "assert all(os.access(p,os.R_OK) and not os.access(p,os.W_OK) for p in Path('/app/app/static').rglob('*') if p.is_file()); "
+            "import app.main; print('rootless import OK')"])
+        self.event('rootless_image_import_verified')
         transport=self.create_network('transport');egress=self.create_network('egress')
         agent_volume=self.create_volume('agent');shop_volume=self.create_volume('shop')
         nonce=secrets.token_urlsafe(24)
