@@ -182,6 +182,10 @@ def restore(path,password,target):
     with tempfile.TemporaryDirectory(prefix='pushok-restore-') as temp:
         database=Path(temp)/'shop.db';database.write_bytes(files['shop.db']);report=validate(database,files['.env'])
         with closing(sqlite3.connect(database)) as conn:
+            # Pending SSO approvals and their locally issued sessions must never resurrect.
+            for table in ('shop_id_requests','shop_id_sessions'):
+                if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():
+                    conn.execute('DELETE FROM '+table)
             sessions=conn.execute('DELETE FROM sessions').rowcount;tickets=conn.execute('DELETE FROM tickets').rowcount;conn.commit()
         # No extraction, replacement, container startup or mutation of the source installation.
         target=Path(target);target.mkdir(mode=0o700)

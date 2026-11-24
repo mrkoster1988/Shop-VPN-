@@ -1100,3 +1100,19 @@ test('server history and routing replies cannot restore data after logout',async
  assert.equal(p.element('routing-history-list').innerHTML,'');
  assert.equal(p.element('routing-nodes').innerHTML,'');
 });
+
+
+test('Pushok ID trust configuration is developer-only and uses version checks',async()=>{
+ const p=adminPage();
+ p.run("acceptStaffRole({role:'administrator',permissions:['store_settings']});renderManagementNav()");
+ assert.equal(p.element('pushok-id-settings').hidden,true);
+ await p.run('refreshIdPolicy()');assert.equal(p.requests.length,0);
+ const pending=p.run("role='owner';refreshIdPolicy()");
+ p.reply({version:2,configured:true,enabled:false,allow_new_accounts:false,linked_accounts:1,pending_requests:0,active_id_sessions:0,session_ttl:3600});await pending;
+ assert.match(p.element('id-policy-readiness').textContent,/Кошелёк|кошелёк/);
+ p.element('id-policy-enabled').checked=true;
+ const save=p.element('id-policy-form').onsubmit({preventDefault(){}});
+ assert.deepEqual(p.bodies[1],{version:2,enabled:true,allow_new_accounts:false});
+ p.replyAt(1,{detail:'Настройки изменились'},409);await save;
+ assert.equal(p.element('id-policy-save').disabled,true);
+});

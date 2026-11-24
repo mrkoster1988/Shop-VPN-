@@ -289,3 +289,22 @@ def test_routing_policy_and_probe_history_survive_backup(source,tmp_path):
         assert conn.execute('SELECT priority,reserve,version FROM server_routing_nodes').fetchone()==(400,1,1)
         assert conn.execute('SELECT status,duration_ms FROM server_probe_history').fetchone()==('ok',50)
         assert conn.execute('PRAGMA foreign_key_check').fetchall()==[]
+
+
+def test_id_restore_preserves_identity_but_clears_all_transient_approvals_and_sessions(source,tmp_path):
+    uid=one('SELECT id FROM users')['id']
+    execute('UPDATE users SET telegram_id=777 WHERE id=?',(uid,))
+    execute("INSERT INTO shop_id_policy VALUES (1,1,0,1,1,'fixture-config-hash')")
+    execute('INSERT INTO shop_id_links VALUES (?,?,?,?)',('57c00362-45d4-4aae-8b3d-c2bc23172b71',uid,777,1))
+    execute("INSERT INTO shop_id_sessions VALUES ('old-session-hash',?,?)",(uid,'fixture-config-hash'))
+    execute("""INSERT INTO shop_id_requests(request_hash,browser_hash,mode,policy_version,config_hash,created,expires,subject,telegram_id,approved_at)
+        VALUES ('fixture-request-hash','fixture-browser-hash','signin',1,'fixture-config-hash',1,2000000000,?,777,1)""",
+        ('57c00362-45d4-4aae-8b3d-c2bc23172b71',))
+    create(source);target=tmp_path/'identity-restored'
+    b.restore(source[2],PASSWORD,target)
+    with sqlite3.connect(target/'shop.db') as conn:
+        assert conn.execute('SELECT count(*) FROM shop_id_links').fetchone()==(1,)
+        assert conn.execute('SELECT count(*) FROM shop_id_policy').fetchone()==(1,)
+        for table in ('sessions','shop_id_requests','shop_id_sessions'):
+            assert conn.execute('SELECT count(*) FROM '+table).fetchone()==(0,)
+        assert conn.execute('PRAGMA foreign_key_check').fetchall()==[]

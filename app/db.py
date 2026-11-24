@@ -26,6 +26,29 @@ def init_db():
           telegram_id INTEGER UNIQUE, created INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS sessions (
           token TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), expires INTEGER);
+        CREATE TABLE IF NOT EXISTS shop_id_policy (
+          id INTEGER PRIMARY KEY CHECK(id=1), enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+          allow_new_accounts INTEGER NOT NULL CHECK(allow_new_accounts IN (0,1)),
+          version INTEGER NOT NULL CHECK(version>0),updated INTEGER NOT NULL,config_hash TEXT,
+          CHECK((enabled=0 AND config_hash IS NULL) OR (enabled=1 AND config_hash IS NOT NULL)));
+        CREATE TABLE IF NOT EXISTS shop_id_links (
+          subject TEXT PRIMARY KEY,user_id INTEGER NOT NULL UNIQUE REFERENCES users(id),
+          telegram_id INTEGER NOT NULL UNIQUE,created INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS shop_id_requests (
+          request_hash TEXT PRIMARY KEY,browser_hash TEXT NOT NULL UNIQUE,
+          mode TEXT NOT NULL CHECK(mode IN ('signin','link')),
+          local_user_id INTEGER REFERENCES users(id),local_session_hash TEXT,
+          policy_version INTEGER NOT NULL,config_hash TEXT NOT NULL,created INTEGER NOT NULL,expires INTEGER NOT NULL,
+          subject TEXT,telegram_id INTEGER,approved_at INTEGER,
+          CHECK((mode='signin' AND local_user_id IS NULL AND local_session_hash IS NULL)
+            OR (mode='link' AND local_user_id IS NOT NULL AND local_session_hash IS NOT NULL)),
+          CHECK((subject IS NULL AND telegram_id IS NULL AND approved_at IS NULL)
+            OR (subject IS NOT NULL AND telegram_id IS NOT NULL AND approved_at IS NOT NULL)));
+        CREATE INDEX IF NOT EXISTS shop_id_requests_expiry ON shop_id_requests(expires);
+        CREATE TABLE IF NOT EXISTS shop_id_sessions (
+          session_hash TEXT PRIMARY KEY REFERENCES sessions(token) ON DELETE CASCADE,
+          user_id INTEGER NOT NULL REFERENCES users(id),config_hash TEXT NOT NULL);
+        CREATE INDEX IF NOT EXISTS shop_id_sessions_user ON shop_id_sessions(user_id);
         CREATE TABLE IF NOT EXISTS tickets (
           token TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), expires INTEGER);
         CREATE TABLE IF NOT EXISTS password_reset_tokens (
