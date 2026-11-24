@@ -237,3 +237,297 @@ body.shop-admin-ui{
   .shop-admin-ui .stats strong{font-size:21px}
 }
 @media(prefers-reduced-motion:reduce){.shop-admin-ui .management-quick-card{transition:none}}
+
+
+/* Pushok Shop customer surface: compact mobile storefront, no admin side effects. */
+body.shop-public-ui{
+  --bg:#071726;--ink:#edf9ff;--muted:#afc8d7;--green:#56e1d4;--line:#2b4b63;--white:#122b40;
+  --shop-accent:#57e2d4;--shop-card:#10283d;--shop-card-raised:#17364e;
+  background:radial-gradient(ellipse at 100% 0%,#1d315a 0%,transparent 40%),
+    radial-gradient(ellipse at 0% 32%,#093c49 0%,transparent 36%),#071726;
+  color:var(--ink);min-height:100vh;overflow-x:clip;
+}
+html[data-shop-theme="ocean"] body.shop-public-ui{--shop-accent:#71dce7}
+html[data-shop-theme="violet"] body.shop-public-ui{--shop-accent:#c7a6f7}
+html[data-shop-theme="graphite"] body.shop-public-ui{--shop-accent:#a9dbe4}
+.shop-public-ui .wrap{width:min(1080px,calc(100% - 36px))}
+.shop-public-ui h1,.shop-public-ui h2,.shop-public-ui h3{color:var(--ink);letter-spacing:-.035em}
+.shop-public-ui h1{font-size:clamp(38px,4.7vw,66px);line-height:1.09;letter-spacing:-.055em;margin:15px 0}
+.shop-public-ui h1 em{font-style:normal;display:inline-block;margin:0;padding:0 7px;border-radius:9px;
+  color:#183c30;background:linear-gradient(115deg,var(--shop-accent),#7fdef4)}
+.shop-public-ui h2{font-size:clamp(23px,2.8vw,31px);line-height:1.17;margin:5px 0}
+.shop-public-ui h3{font-size:18px}
+.shop-public-ui .eyebrow{color:var(--shop-accent);font-size:10px;letter-spacing:.12em}
+.shop-public-ui .eyebrow i{background:var(--shop-accent)}
+.shop-public-ui .muted,.shop-public-ui .footnote{color:var(--muted)}
+.shop-public-ui .nav{height:68px;position:sticky;top:0;z-index:180;display:flex;gap:14px;
+  background:#091a2fe8;border-color:#28485c;backdrop-filter:blur(16px)}
+.shop-public-ui .nav .brand{font-size:21px;color:#f3fbff;white-space:nowrap}
+.shop-public-ui .nav .brand .muted{color:#63e0d4}
+.shop-public-ui .nav nav{gap:clamp(9px,2.3vw,22px);white-space:nowrap}
+.shop-public-ui .nav nav>a{font-size:13px;font-weight:700;color:#c7dde9}
+.shop-public-ui .nav nav>a:hover{color:var(--shop-accent)}
+.shop-public-ui button:not(.text-link):not(.close),.shop-public-ui .button{
+  background:var(--shop-accent);color:#072839;border:1px solid transparent;
+  border-radius:12px;font-size:13px;font-weight:800;min-height:44px;gap:9px;
+  padding:10px 17px;transition:background-color .15s ease,box-shadow .15s ease;
+}
+.shop-public-ui button:hover:not(:disabled):not(.text-link):not(.close),.shop-public-ui .button:hover{
+  background:#80f3e4;box-shadow:0 0 0 2px #4bdbd329;transform:none}
+.shop-public-ui button:disabled{background:#3d6773!important;color:#bdd5df!important;opacity:.75;box-shadow:none}
+.shop-public-ui button.secondary,.shop-public-ui .secondary{
+  background:#163349;color:#e6f8fc;border:1px solid #3a6479}
+.shop-public-ui button.secondary:hover:not(:disabled){background:#1c465a}
+.shop-public-ui .text-link{color:#65e5d8;gap:7px}
+.shop-public-ui :is(a,button,input,textarea,select,summary):focus-visible{
+  outline:2px solid #84fff0;outline-offset:3px}
+.shop-public-ui .hero{padding-top:26px;padding-bottom:20px;gap:25px;
+  grid-template-columns:minmax(0,1.6fr) minmax(220px,.65fr);min-width:0}
+.shop-public-ui .hero>div:first-child{min-width:0}
+.shop-public-ui .lead{font-size:15px;line-height:1.6;color:#bed3e1;
+  margin:14px 0 18px;max-width:520px;overflow-wrap:anywhere}
+.shop-public-ui .hero .actions{gap:10px}
+.shop-public-ui .hero .button{min-height:46px}
+.shop-public-ui .hero .button span{font-size:17px}
+.shop-public-ui .hero-account-btn{min-height:46px}
+.shop-public-ui .hero-note{margin-top:17px;gap:8px 18px;flex-wrap:wrap;
+  color:#a4c3d1;font-size:11px;letter-spacing:0}
+.shop-public-ui .hero-note span{display:inline-flex;align-items:center;min-height:20px}
+.shop-public-ui .visual{height:230px;overflow:hidden;border-radius:24px;
+  background:radial-gradient(ellipse,#144857 0%,#10263f 47%,transparent 72%);
+  border:1px solid #1d4b60}
+.shop-public-ui .orb{width:155px;height:155px;transform:rotate(-12deg);
+  background:radial-gradient(circle at 32% 24%,#b3fff3 0%,#4adaca 31%,#187c8b 70%,#0b284c 100%);
+  box-shadow:0 14px 30px #0007,inset -8px -10px 18px #03344880}
+.shop-public-ui .orb-paw{font-size:95px;color:#0c536b;filter:none}
+.shop-public-ui .orbit{width:220px;height:110px;border-color:#4ed3d84c}
+.shop-public-ui .orbit-b{width:175px;height:215px}
+.shop-public-ui .floating{padding:8px 12px;background:#0d3144f0;
+  border-color:#3d8592;color:#e4fbff;box-shadow:none;font-size:10px;border-radius:9px}
+.shop-public-ui .floating i{background:var(--shop-accent)}
+.shop-public-ui .tag-one{top:19px;left:10px}
+.shop-public-ui .tag-two{bottom:23px;right:12px}
+.shop-public-ui .coordinate{bottom:6px;color:#91b7c9;font-size:8px}
+.shop-public-ui .stripe{gap:12px;min-height:45px;padding:10px 15px;
+  overflow-x:auto;flex-wrap:nowrap;justify-content:center;
+  border-color:#244457;color:#cedfea;font-size:12px;scrollbar-width:none}
+.shop-public-ui .stripe::-webkit-scrollbar{display:none}
+.shop-public-ui .stripe>span:not(:first-child){color:#438d9d}
+.shop-public-ui .stripe>span:first-child{font-size:10px;white-space:nowrap;color:#92b9c8}
+.shop-public-ui .stripe>*{white-space:nowrap}
+.shop-public-ui .section{padding-top:30px;padding-bottom:8px;scroll-margin-top:78px}
+.shop-public-ui .section-top{align-items:start;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.shop-public-ui .section-top p{font-size:12px;line-height:1.5;margin:3px 0;
+  max-width:350px;color:#afc8d7}
+.shop-public-ui .segmented{display:flex;gap:7px;flex-wrap:wrap;
+  width:fit-content;margin:6px 0 10px;padding:4px;border-radius:13px;
+  border:1px solid var(--line);background:#10283a}
+.shop-public-ui .segmented button{padding:8px 13px;font-size:12px;
+  color:#cae2e8;background:transparent;border:0;min-height:40px;border-radius:9px;
+  white-space:nowrap}
+.shop-public-ui .segmented .chosen{color:#0d2e39;background:var(--shop-accent)}
+.shop-public-ui #provider-note{font-size:13px;line-height:1.5;margin:0}
+.shop-public-ui #provider-note:empty{display:none}
+.shop-public-ui .plans{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:12px 0}
+.shop-public-ui .plan{padding:18px;border:1px solid #31536d;border-radius:17px;
+  background:linear-gradient(135deg,#112f43,#0f2339);min-height:252px;
+  display:flex;flex-direction:column;min-width:0}
+.shop-public-ui .plan.featured{background:linear-gradient(135deg,#1a4e58,#172c46);
+  border-color:#56c6c6}
+.shop-public-ui .plan .badge{right:13px;top:14px;color:#07313d;
+  background:var(--shop-accent);font-size:9px;padding:4px 8px}
+.shop-public-ui .plan h3{font-size:16px;margin:0 0 9px;line-height:1.25;
+  padding-right:105px;min-height:22px}
+.shop-public-ui .price{font-size:clamp(31px,2.9vw,40px);
+  line-height:1.08;letter-spacing:-.05em;color:#f8ffff;font-weight:800}
+.shop-public-ui .price small{font-size:17px;letter-spacing:0;color:var(--shop-accent)}
+.shop-public-ui .plan p{margin:6px 0 5px;color:#c6dce5;font-size:12px}
+.shop-public-ui .plan ul{list-style:none;padding:0;margin:5px 0 14px;
+  display:flex;flex-wrap:wrap;align-content:flex-start;gap:4px 13px;
+  color:#a9c8d9;font-size:11px;line-height:1.5}
+.shop-public-ui .plan li:before{content:'✓';margin-right:5px;color:var(--shop-accent)}
+.shop-public-ui .plan button{width:100%;min-height:44px;margin: auto 0 0}
+.shop-public-ui .trial-offer{margin:10px 0 16px;padding:14px 17px;
+  border-radius:16px;background:#123849;border-color:#2f8792}
+.shop-public-ui .trial-offer h3{margin:2px 0;font-size:17px}
+.shop-public-ui .trial-offer #trial-info{font-size:13px;margin:5px 0}
+.shop-public-ui .trial-offer button{width:auto;min-height:44px;margin:7px 0}
+.shop-public-ui .trial-offer .footnote{text-align:left;font-size:11px;margin:5px 0}
+.shop-public-ui .section>.footnote{font-size:11px;margin:8px 0 0;line-height:1.5}
+.shop-public-ui #how{padding-top:22px}
+.shop-public-ui .how-guide{padding:0;border:1px solid var(--line);
+  border-radius:16px;background:#10273b;overflow:hidden}
+.shop-public-ui .how-guide>summary{padding:13px 18px;display:flex;
+  align-items:center;justify-content:space-between;gap:16px;list-style:none;
+  min-height:66px}
+.shop-public-ui .how-guide>summary::-webkit-details-marker{display:none}
+.shop-public-ui .how-guide>summary>span:first-child{display:flex;
+  flex-direction:column;gap:3px}
+.shop-public-ui .how-guide>summary strong{display:block;font-size:17px}
+.shop-public-ui .how-arrow{color:var(--shop-accent);font-size:25px;line-height:1;
+  transform:rotate(0deg);transition:transform .15s}
+.shop-public-ui .how-guide[open] .how-arrow{transform:rotate(180deg)}
+.shop-public-ui .steps{gap:9px;padding:4px 15px 15px}
+.shop-public-ui .steps article{padding:13px 12px;border:1px solid #31536a;
+  border-radius:12px;background:#0d2436}
+.shop-public-ui .steps article>span{color:var(--shop-accent)}
+.shop-public-ui .steps h3{font-size:15px;margin:3px 0}
+.shop-public-ui .steps p{font-size:12px;line-height:1.55;margin:0;max-width:none}
+.shop-public-ui .faq{gap:clamp(15px,4vw,50px);padding-bottom:28px;
+  grid-template-columns:minmax(0,.8fr) minmax(0,1.4fr)}
+.shop-public-ui .faq details{padding:13px 0;border-color:var(--line)}
+.shop-public-ui .faq summary{font-size:14px;line-height:1.45;color:#e6f7fb}
+.shop-public-ui .faq details p{font-size:12px;line-height:1.6}
+.shop-public-ui footer{min-height:75px;gap:15px;flex-wrap:wrap;
+  padding:18px 0;color:#98b7c7}
+.shop-public-ui footer .brand{color:#e6f8ff}
+.shop-public-ui dialog{box-sizing:border-box;max-height:min(92dvh,calc(100vh - 16px));
+  padding:clamp(18px,3.2vw,27px);background:#0f2539;color:#e8f8fc;
+  border:1px solid #3a5f75;box-shadow:0 14px 55px #000a;scrollbar-width:thin}
+.shop-public-ui dialog::backdrop{background:#030d19b8;backdrop-filter:blur(4px)}
+.shop-public-ui dialog h2{font-size:26px;margin:4px 0 12px}
+.shop-public-ui dialog p{color:#b8cddb;line-height:1.55}
+.shop-public-ui dialog h3{font-size:17px}
+.shop-public-ui dialog label{color:#c3dbe7;margin:11px 0}
+.shop-public-ui dialog :is(input,textarea,select){
+  color:#eaf8ff;background:#132f44;border:1px solid #45697b;
+  padding:10px 12px;border-radius:10px;min-width:0;max-width:100%}
+.shop-public-ui dialog input[type=checkbox]{width:18px;display:inline-block;
+  accent-color:var(--shop-accent)}
+.shop-public-ui dialog :is(input,textarea,select):focus-visible{
+  outline:2px solid var(--shop-accent);outline-offset:1px}
+.shop-public-ui dialog .close{background:transparent;color:#d4eef3;min-height:36px;
+  border:none;padding:2px 9px}
+.shop-public-ui dialog form button{margin:7px 0}
+.shop-public-ui .subscription{background:#143d49;color:#e6f8f9;border:1px solid #277b85;
+  margin:9px 0;padding:14px;border-radius:12px}
+.shop-public-ui .order{border-color:#37546d}
+.shop-public-ui .status{background:#1d4951;color:#dcf8f3;border-radius:7px}
+.shop-public-ui .status.pending{background:#51462b;color:#ffe9bb}
+.shop-public-ui .status.canceled{background:#4f3138;color:#ffd6d8}
+.shop-public-ui #config-status{background:#1a4d52;color:#ebfffe}
+.shop-public-ui #toast{background:#1b4c5b;color:#f3ffff;border:1px solid #387888}
+.shop-public-ui #account-dialog{width:min(710px,calc(100% - 16px))}
+.shop-public-ui #account-dialog .account-shortcuts{position:sticky;top:-20px;z-index:3;
+  display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px;
+  padding:10px 0;background:#0f2539;margin:8px 0 12px}
+.shop-public-ui #account-dialog .account-shortcuts button{width:100%;min-width:0;
+  padding:9px 4px;font-size:12px;min-height:43px;line-height:1.2;
+  margin:0;background:#18364a;border:1px solid #3b5b70;color:#d4ebf3}
+.shop-public-ui #account-dialog .account-shortcuts button[aria-pressed=true]{
+  background:var(--shop-accent);color:#072938;border-color:transparent}
+.shop-public-ui #account-dialog [data-account-pane]:not([data-account-active=true]){display:none!important}
+.shop-public-ui #account-dialog [data-account-pane]{scroll-margin-top:70px;min-width:0}
+.shop-public-ui #account-dialog #account-extras{margin:15px 0 2px}
+.shop-public-ui #account-dialog #account-extras button{width:auto}
+.shop-public-ui #account-dialog #password-settings{margin:4px 0}
+.shop-public-ui #account-dialog> .actions{gap:10px;margin-top:12px}
+.shop-public-ui #account-dialog> .actions button{width:auto}
+.shop-public-ui #account-dialog #referrals-panel{background:#122f40;border-radius:14px;
+  padding:12px 15px;border:1px solid #315c6f}
+.shop-public-ui .store-announcement{background:#113b48;color:#e2f7f8;
+  border-color:#3d7a83;padding:9px 12px;margin:9px 0}
+.shop-public-ui #checkout-dialog .footnote{margin:7px 0}
+.shop-public-ui .shop-mobile-nav{display:none}
+html[data-telegram-theme] body.shop-public-ui .miniapp-nav:not([hidden]){
+  border-color:#2a6471;background:#0c2639f5;color:#d3eaf2;
+  box-shadow:0 -10px 28px #0008}
+html[data-telegram-theme] body.shop-public-ui .miniapp-nav :is(a,button){
+  color:#c0d8e4;background:transparent;border:0;min-height:48px}
+html[data-telegram-theme] body.shop-public-ui .miniapp-nav [aria-current=page]{
+  color:var(--shop-accent);background:#1b4658}
+@media (max-width:860px){
+  .shop-public-ui .hero{grid-template-columns:minmax(0,1fr) 180px}
+  .shop-public-ui .visual{height:205px}
+  .shop-public-ui .orb{width:120px;height:120px}
+  .shop-public-ui .orb-paw{font-size:70px}
+  .shop-public-ui .plans{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .shop-public-ui .plan{min-height:225px}
+}
+@media (max-width:680px){
+  .shop-public-ui{padding-bottom:calc(74px + env(safe-area-inset-bottom,0px))}
+  .shop-public-ui .wrap{width:calc(100% - 24px)}
+  .shop-public-ui .nav{height:58px;gap:7px}
+  .shop-public-ui .nav .brand{font-size:17px}
+  .shop-public-ui .nav nav>a{display:none}
+  .shop-public-ui .nav nav{margin-left:auto}
+  .shop-public-ui #account-btn{font-size:12px;padding:8px 10px;min-height:41px}
+  .shop-public-ui #account-btn .pushok-icon{width:17px;height:17px}
+  .shop-public-ui .hero{display:block;padding:18px 0 15px}
+  .shop-public-ui .hero .eyebrow{font-size:9px}
+  .shop-public-ui h1{font-size:clamp(34px,9vw,44px);letter-spacing:-.04em;
+    line-height:1.09;margin:10px 0}
+  .shop-public-ui .lead{font-size:13px;margin:11px 0 13px;line-height:1.55}
+  .shop-public-ui .hero .actions{display:grid;
+    grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:8px}
+  .shop-public-ui .hero .button,.shop-public-ui .hero-account-btn{min-height:45px;
+    width:100%;padding:9px 8px;font-size:12px}
+  .shop-public-ui .hero .button span{display:none}
+  .shop-public-ui .hero .pushok-icon{width:18px;height:18px}
+  .shop-public-ui .hero #bot-link{grid-column:1/-1;font-size:12px;padding:5px}
+  .shop-public-ui .hero-note{margin-top:12px;gap:2px 11px;font-size:10px;line-height:1.45}
+  .shop-public-ui .hero-note span{min-height:16px}
+  .shop-public-ui .visual{display:none}
+  .shop-public-ui .stripe{justify-content:flex-start;gap:8px;padding:8px 12px;
+    min-height:40px;font-size:11px}
+  .shop-public-ui .stripe>span:first-child{display:none}
+  .shop-public-ui .section{padding-top:22px}
+  .shop-public-ui .section-top{margin:0 0 9px;gap:3px}
+  .shop-public-ui .section-top p{font-size:11px}
+  .shop-public-ui h2{font-size:23px;letter-spacing:-.03em}
+  .shop-public-ui .segmented{display:flex;flex-wrap:nowrap;
+    overflow-x:auto;max-width:100%;width:100%;padding:4px;
+    scrollbar-width:thin;scrollbar-color:#3f7685 transparent}
+  .shop-public-ui .segmented button{flex:none;padding:7px 11px;min-height:38px}
+  .shop-public-ui .plans{grid-template-columns:1fr;gap:9px;margin-top:10px}
+  .shop-public-ui .plan{padding:15px 15px 12px;display:grid;
+    grid-template-columns:minmax(0,1fr) minmax(112px,126px);
+    column-gap:9px;row-gap:1px;min-height:0}
+  .shop-public-ui .plan h3{grid-column:1/-1;grid-row:1;font-size:15px;
+    margin:0 0 5px;padding-right:115px;min-height:20px}
+  .shop-public-ui .plan .price{grid-column:1;grid-row:2;font-size:31px}
+  .shop-public-ui .plan>p{grid-column:1;grid-row:3;font-size:11px;
+    margin:3px 0 0;line-height:1.35}
+  .shop-public-ui .plan ul{grid-column:1/-1;grid-row:4;
+    margin:9px 0 1px;gap:2px 12px;font-size:10px;line-height:1.4}
+  .shop-public-ui .plan button{grid-column:2;grid-row:2/span 2;
+    margin:0;width:100%;align-self:center;padding:9px 4px;font-size:11px;min-height:45px}
+  .shop-public-ui .plan .badge{top:10px;right:12px;font-size:9px}
+  .shop-public-ui #how{padding-top:16px}
+  .shop-public-ui .steps{grid-template-columns:1fr;padding:4px 10px 10px;gap:5px}
+  .shop-public-ui .steps article{padding:10px 12px}
+  .shop-public-ui .faq{grid-template-columns:1fr;gap:8px;padding-bottom:20px}
+  .shop-public-ui .faq summary{font-size:13px}
+  .shop-public-ui .faq details{padding:10px 0}
+  .shop-public-ui .trial-offer{padding:12px 14px}
+  .shop-public-ui footer{font-size:10px;min-height:55px;padding:15px 0}
+  .shop-public-ui footer .brand{font-size:14px}
+  html:not([data-miniapp-ready=true]) body.shop-public-ui .shop-mobile-nav{
+    position:fixed;bottom:0;left:0;right:0;z-index:900;
+    display:grid;grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:3px;padding:7px 8px calc(6px + env(safe-area-inset-bottom,0px));
+    min-height:67px;background:#091d30f7;border-top:1px solid #35667b;
+    backdrop-filter:blur(15px)}
+  .shop-public-ui .shop-mobile-nav :is(a,button){
+    border:0;border-radius:10px;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:2px;min-width:0;min-height:48px;
+    padding:3px 2px;color:#bfdae7;background:transparent;
+    font-size:10px;font-weight:700;line-height:1.25;text-align:center}
+  .shop-public-ui .shop-mobile-nav span{font-size:21px;line-height:1.1;color:#8accd5}
+  .shop-public-ui .shop-mobile-nav :is(a,button):hover,
+  .shop-public-ui .shop-mobile-nav [aria-current=page]{
+    background:#164358;color:#64e4db;box-shadow:none}
+  .shop-public-ui #account-dialog .account-shortcuts{top:-16px}
+  .shop-public-ui #account-dialog .account-shortcuts button{
+    font-size:11px;padding:8px 2px}
+  .shop-public-ui dialog{width:calc(100% - 12px);max-height:94dvh;padding:17px 14px}
+  .shop-public-ui dialog .close{top:8px;right:9px}
+}
+@media (max-width:340px){
+  .shop-public-ui .hero .actions{grid-template-columns:1fr}
+  .shop-public-ui .plan{grid-template-columns:minmax(0,1fr) 105px}
+  .shop-public-ui .plan h3{padding-right:105px}
+}
+@media(prefers-reduced-motion:reduce){
+  .shop-public-ui *{scroll-behavior:auto!important;transition:none!important}
+}
