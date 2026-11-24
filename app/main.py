@@ -30,7 +30,7 @@ from . import shop_settings, runtime_settings, payment_policy, shop_finance, pla
 from . import config as c, providers, service, servers, server_routing, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, pushok_identity, flow_wireguard_devices
+from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, pushok_identity, flow_wireguard_devices, admin_cleanup
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -1344,6 +1344,44 @@ async def admin_users(q: str = Query(default='', max_length=100),
             FROM users u """ + where + ' ORDER BY u.created DESC,u.id DESC LIMIT ? OFFSET ?',
             [int(time.time()), *args, page_size, (page-1)*page_size]).fetchall()
     return {'users': [dict(row) for row in rows], 'total': total, 'page': page, 'page_size': page_size}
+
+# Destructive maintenance requires the developer role regardless of
+# delegated customer/catalog/server privileges.
+def _developer_only(actor):
+    if actor.get('role') != 'owner':
+        raise HTTPException(403, 'Удаление доступно только разработчику')
+
+
+@app.post('/api/admin/subscriptions/{sid}/revoke')
+async def admin_subscription_revoke(sid: str = APIPath(min_length=1,max_length=100),
+                                    actor=Depends(admin)):
+    _developer_only(actor)
+    return await admin_cleanup.revoke_subscription(sid)
+
+
+@app.delete('/api/admin/subscriptions/{sid}')
+async def admin_subscription_delete(sid: str = APIPath(min_length=1,max_length=100),
+                                    actor=Depends(admin)):
+    _developer_only(actor)
+    async with service.lock:
+        return admin_cleanup.purge_subscription(sid)
+
+
+@app.delete('/api/admin/plans/{plan_id}')
+async def admin_plan_delete(plan_id: str = APIPath(min_length=1,max_length=32),
+                            actor=Depends(admin)):
+    _developer_only(actor)
+    async with service.lock:
+        return admin_cleanup.delete_unused_plan(plan_id)
+
+
+@app.delete('/api/admin/servers/{sid}')
+async def admin_server_delete(sid: str = APIPath(min_length=1,max_length=100),
+                              actor=Depends(admin)):
+    _developer_only(actor)
+    async with service.lock:
+        return admin_cleanup.delete_unused_server(sid)
+
 
 @app.get('/api/admin/users/{user_id}', dependencies=[Depends(admin)])
 async def admin_user(user_id: int = APIPath(ge=1, le=9223372036854775807),
