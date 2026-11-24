@@ -907,3 +907,23 @@ test('Pushok ID ignores a late approval after closing and does not offer automat
  assert.equal(p.element('pushok-id-confirm-form').hidden,true);
  assert.equal(p.element('pushok-id-confirm-identity').textContent,'');
 });
+
+test('mobile profile is a separate pane and missing referrals fall back',async()=>{
+ const p=await customerPage();
+ p.run("setShopAccountPane('settings')");
+ assert.equal(p.element('account-settings-pane').dataset.accountActive,'true');
+ assert.equal(p.element('subscriptions-pane').dataset.accountActive,'false');
+ p.run("setShopAccountPane('referrals-panel')");
+ assert.equal(p.element('subscriptions-pane').dataset.accountActive,'true');
+});
+test('ready WireGuard card shows Flow, manual configuration and management separately',async()=>{
+ const p=await customerPage();
+ p.state.customer.subscriptions[0].protocol='wg';p.state.customer.subscriptions[0].primary_key_state='active';
+ await p.run('refreshMe()');
+ const markup=p.element('subscriptions').innerHTML;
+ assert.match(markup,/class="small subscription-flow" data-link="sub-a"/);
+ assert.match(markup,/data-config="sub-a"/);
+ assert.match(markup,/<details class="subscription-options" data-subscription-options="sub-a"/);
+ p.state.customer.subscriptions[0].state='pending';await p.run('refreshMe()');
+ assert.doesNotMatch(p.element('subscriptions').innerHTML,/data-link="sub-a"|data-config="sub-a"/);
+});

@@ -1315,3 +1315,17 @@ test('WireGuard peer diagnosis appears for developer only and contains no creden
   assert.doesNotMatch(admin.element('user-subscriptions').innerHTML,/data-peer-check=/);
   assert.doesNotMatch(admin.element('user-subscriptions').innerHTML,/data-peer-retry=/);
 });
+
+test('mobile admin tabs honor permissions and close the section menu',()=>{
+ const p=adminPage();
+ p.run("role='owner';renderManagementNav();setManagementMenu(true)");
+ assert.equal(p.element('management-header').dataset.mobileMenuOpen,'true');
+ assert.match(p.element('management-mobile-nav').innerHTML,/data-admin-target="users-section"/);
+ p.run("showManagementSection('servers-section',{scroll:true})");
+ assert.equal(p.element('management-header').dataset.mobileMenuOpen,'false');
+ assert.match(p.element('management-mobile-nav').innerHTML,/data-admin-target="servers-section" aria-current="page"/);
+ p.run("acceptStaffRole({role:'moderator',permissions:['moderation']});renderManagementNav()");
+ assert.doesNotMatch(p.element('management-mobile-nav').innerHTML,/users-section|orders-section|servers-section/);
+ assert.match(p.element('management-mobile-nav').innerHTML,/moderation-section/);
+ assert.equal(p.element('management-overview').dataset.adminActive,'true');
+});
