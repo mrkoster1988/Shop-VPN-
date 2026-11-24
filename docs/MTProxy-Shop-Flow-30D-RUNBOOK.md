@@ -65,8 +65,9 @@ python3 scripts/installer_runtime.py migrate "${migrations[@]}"
 
 ## 3. Применение на действующих API (короткое обслуживание)
 
-Команды по очереди пересоздают **только** два API-контейнера из существующих
-образов. MTProxy API может на несколько секунд перестать отвечать,
+Команды по очереди обновляют **только** два API-контейнера. Shop
+пересобирается из текущего проверенного кода (для MTProxy-only проверки),
+MTProxy API использует прежний образ — там меняется только схема БД и секрет. MTProxy API может на несколько секунд перестать отвечать,
 в том числе для рекламы и авторизации. Выберите спокойное время для этого шага.
 
 ```bash
@@ -78,7 +79,7 @@ docker compose config --quiet
 
 # Только Shop; сохраняет именованный том pushok_shop_data:
 cd /opt/pushok-shop
-docker compose -f compose.mtproxy-edge.yaml -p pushok-shop up -d --no-deps --no-build --force-recreate shop
+docker compose -f compose.mtproxy-edge.yaml -p pushok-shop up -d --no-deps --build --force-recreate shop
 
 # Только API MTProxy; не затрагивает его bot, worker, Caddy и БД:
 cd /opt/mtproxy-pushok
