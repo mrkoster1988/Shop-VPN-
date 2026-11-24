@@ -1139,8 +1139,12 @@ def test_pending_paid_order_prevents_free_renewal(client, monkeypatch):
     asyncio.run(service.fulfill(free.json()['id']))
     execute("UPDATE subscriptions SET expires=?",(int(time.time())+30,))
     # A paid purchase is already in progress; do not grant a competing period.
-    assert save_plan(client,plan_edit(client,price=299,stars=150)).status_code==200
-    paid=client.post('/api/orders',json={'plan':'month','plan_version':3,'protocol':'xui'})
+    paid_plan=client.post('/api/admin/plans',headers={
+        'Authorization':'Bearer '+c.ADMIN_TOKEN},json={
+        'id':'premium','name':'Платный','days':30,'price':299,'stars':150,
+        'enabled':True})
+    assert paid_plan.status_code==201,paid_plan.text
+    paid=client.post('/api/orders',json={'plan':'premium','plan_version':1,'protocol':'xui'})
     assert paid.status_code==200
     service.enqueue_free_renewals(int(time.time()))
     assert one("SELECT count(*) AS n FROM orders WHERE kind='free_renewal'")['n']==0
