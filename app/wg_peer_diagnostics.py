@@ -31,9 +31,13 @@ def _grant(conn, user_id):
             'next_attempt': row['next_attempt'] if row['state'] == 'pending' else None}
 
 
+def _new_client():
+    return httpx.AsyncClient(timeout=12, follow_redirects=False, trust_env=False)
+
+
 async def _remote_peer(profile, public_key):
     adapter = wgdashboard.WGDashboard(profile)
-    async with httpx.AsyncClient(timeout=12, follow_redirects=False, trust_env=False) as client:
+    async with _new_client() as client:
         await adapter.check(client)
         match = await adapter.peer(client, public_key)
     if match is None:
@@ -85,6 +89,12 @@ async def inspect(user_id):
         return {**base, 'status': 'server_configuration_error', 'can_retry': False}
     if profile.get('api') != 'wgdashboard':
         return {**base, 'status': 'other_backend', 'can_retry': False}
+    if base['can_retry'] and (server['state'] not in ('active', 'draining')
+                              or server['health'] == 'error'
+                              or profile.get('schedule_expiry') is not True
+                              or not profile.get('panel_timezone')
+                              or (grant and grant.get('next_attempt') is None)):
+        base['can_retry'] = False
     if not key:
         return {**base, 'status': 'key_not_created'}
     try:
@@ -107,11 +117,12 @@ async def retry_pending(user_id):
             if not sub:
                 raise HTTPException(409, 'У пользователя нет заявки WireGuard')
             grant = conn.execute(
-                'SELECT state,subscription_id FROM flow_auto_grants WHERE user_id=?',
+                'SELECT state,subscription_id,target_expires FROM flow_auto_grants WHERE user_id=?',
                 (user_id,)).fetchone()
             policy = conn.execute('SELECT enabled FROM flow_auto_policy WHERE id=1').fetchone()
             if (not policy or not policy['enabled'] or not grant or grant['state'] != 'pending'
                     or grant['subscription_id'] != sub['id']
+                    or grant['target_expires'] <= int(time.time())
                     or sub['state'] != 'pending' or sub['secret']):
                 raise HTTPException(409, 'Нет подходящей ожидающей автовыдачи')
             try:
