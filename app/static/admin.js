@@ -242,7 +242,7 @@ function acceptStaffRole(result){
   delegatedPermissions=new Set(Array.isArray(result.permissions)?result.permissions.filter(x=>typeof x==='string'):[]);
 }
 const MANAGEMENT_SECTIONS=[
-  ['shop-settings','store_settings','Настройки'],['updates-panel','developer','Обновления'],
+  ['shop-settings','store_settings','Настройки'],['appearance-section','store_settings','Оформление'],['sales-controls-section','sales_controls','Продажи'],['notifications-section','notifications','Уведомления'],['updates-panel','developer','Обновления'],
   ['bot-menu-panel','bot_menu','Меню Telegram'],['staff-management','developer','Сотрудники'],
   ['role-policy-section','developer','Полномочия'],['moderation-section','moderation','Модерация'],
   ['support-admin','support','Поддержка'],['commerce-analytics','analytics','Аналитика'],
@@ -337,7 +337,9 @@ async function refreshDelegated({plans=true}={}){
   if(canGroup('starter'))tasks.push(refreshFlowAutoPolicy());
   if(canGroup('moderation'))tasks.push(refreshModeration());
   if(canGroup('support'))tasks.push(refreshSupportAdmin());
-  if(canGroup('store_settings'))tasks.push(refreshShopSettings());
+  if(canGroup('store_settings'))tasks.push(refreshShopSettings(),refreshRuntime('appearance'));
+  if(canGroup('sales_controls'))tasks.push(refreshRuntime('sales'));
+  if(canGroup('notifications'))tasks.push(refreshRuntime('notifications'));
   if(canGroup('bot_menu'))tasks.push(refreshBotMenu());
   if(canGroup('analytics'))tasks.push(refreshCommerceAnalytics());
   if(canGroup('diagnostics'))tasks.push(refreshDiagnostics());
@@ -436,6 +438,88 @@ $('shop-settings-form').onsubmit=async event=>{
  }catch(error){$('shop-settings-status').textContent=error.message}
  finally{button.disabled=false}
 };
+// Независимые версии формы: сохраняем только выбранный раздел.
+const RUNTIME_GROUPS={
+ appearance:{permission:'store_settings',fields:{brand_name:'text',headline:'text',description:'text',announcement:'text',theme:'text'}},
+ sales:{permission:'sales_controls',fields:{new_sales:'bool',renewals:'bool',web_sales:'bool',telegram_sales:'bool',enabled_protocols:'protocols',closed_notice:'text'}},
+ notifications:{permission:'notifications',fields:{order_ready_enabled:'bool',expiry_enabled:'bool',expiry_hours:'number',purchase_text:'text',trial_text:'text',bonus_text:'text',expiry_text:'text'}}
+};
+const RUNTIME_PROTOCOLS=['xui','wg','vmess','hysteria2','tuic'];
+const runtimeState={},runtimeSeq={},runtimeBusy={};
+function runtimeControl(key){return $('runtime-'+key);}
+function runtimeFields(group,callback){
+ for(const [key,type] of Object.entries(RUNTIME_GROUPS[group].fields)){
+  if(type==='protocols')for(const protocol of RUNTIME_PROTOCOLS)callback(runtimeControl('protocol-'+protocol),key,type,protocol);
+  else callback(runtimeControl(key),key,type);
+ }
+}
+function runtimeControls(group,disabled){
+ runtimeFields(group,element=>{element.disabled=disabled;});
+ $('runtime-'+group+'-save').disabled=disabled;
+}
+function clearRuntimeGroup(group){
+ runtimeSeq[group]=(runtimeSeq[group]||0)+1;runtimeState[group]=null;runtimeBusy[group]=false;
+ runtimeFields(group,(el,key,type)=>{if(type==='bool'||type==='protocols')el.checked=false;else el.value='';});
+ runtimeControls(group,true);$('runtime-'+group+'-status').textContent='';
+}
+function clearRuntime(){for(const group of Object.keys(RUNTIME_GROUPS))clearRuntimeGroup(group);}
+function applyRuntime(group,data){
+ if(!Number.isInteger(data.version)||data.version<0)throw new Error('Не удалось прочитать версию настроек');
+ for(const [key,type] of Object.entries(RUNTIME_GROUPS[group].fields)){
+  const value=data[key];
+  if(type==='protocols'?!Array.isArray(value):type==='bool'?typeof value!=='boolean':type==='number'?!Number.isInteger(value):typeof value!=='string')throw new Error('Не удалось прочитать настройки');
+ }
+ runtimeFields(group,(el,key,type,protocol)=>{
+  if(type==='protocols')el.checked=data[key].includes(protocol);
+  else if(type==='bool')el.checked=data[key];
+  else el.value=String(data[key]);
+ });
+ runtimeState[group]={version:data.version};
+ runtimeControls(group,false);
+}
+async function refreshRuntime(group){
+ const def=RUNTIME_GROUPS[group];
+ if(!def||!canGroup(def.permission)){if(def)clearRuntimeGroup(group);return;}
+ if(runtimeBusy[group])return;
+ const seq=runtimeSeq[group]=(runtimeSeq[group]||0)+1,epoch=authEpoch;
+ runtimeState[group]=null;runtimeControls(group,true);
+ $('runtime-'+group+'-status').textContent='Загрузка…';
+ try{
+  const data=await api('runtime/'+group);
+  if(seq!==runtimeSeq[group]||epoch!==authEpoch||!canGroup(def.permission))return;
+  applyRuntime(group,data);
+  $('runtime-'+group+'-status').textContent='Настройки загружены. Версия '+data.version+'.';
+ }catch(e){if(seq===runtimeSeq[group]&&epoch===authEpoch)$('runtime-'+group+'-status').textContent=e.message;}
+}
+function runtimePayload(group){
+ const payload={version:runtimeState[group].version};
+ for(const [key,type] of Object.entries(RUNTIME_GROUPS[group].fields)){
+  if(type==='protocols')payload[key]=RUNTIME_PROTOCOLS.filter(p=>runtimeControl('protocol-'+p).checked);
+  else if(type==='bool')payload[key]=runtimeControl(key).checked;
+  else if(type==='number')payload[key]=Number(runtimeControl(key).value);
+  else payload[key]=runtimeControl(key).value;
+ }
+ return payload;
+}
+async function saveRuntime(group){
+ const def=RUNTIME_GROUPS[group];
+ if(!def||!canGroup(def.permission)||!runtimeState[group]||runtimeBusy[group])return;
+ const payload=runtimePayload(group),epoch=authEpoch,seq=runtimeSeq[group]=(runtimeSeq[group]||0)+1;
+ runtimeBusy[group]=true;runtimeState[group]=null;runtimeControls(group,true);
+ try{
+  const data=await api('runtime/'+group,{method:'PUT',data:payload});
+  if(seq!==runtimeSeq[group]||epoch!==authEpoch||!canGroup(def.permission))return;
+  applyRuntime(group,data);
+  $('runtime-'+group+'-status').textContent='Сохранено. Версия '+data.version+'.';
+ }catch(e){
+  if(seq===runtimeSeq[group]&&epoch===authEpoch)$('runtime-'+group+'-status').textContent=e.message+' Обновите настройки перед повтором.';
+ }finally{if(seq===runtimeSeq[group]&&epoch===authEpoch)runtimeBusy[group]=false;}
+}
+for(const group of Object.keys(RUNTIME_GROUPS)){
+ $('runtime-'+group+'-form').onsubmit=event=>{event.preventDefault();return saveRuntime(group);};
+ $('runtime-'+group+'-refresh').onclick=()=>refreshRuntime(group);
+}
+
 // Настройки меню бот получает из базы при отправке очередного /start.
 let botMenuVersion=0,botMenuButtons=[],botMenuRequest=0;
 function menuFields(){
@@ -504,6 +588,7 @@ async function refreshStaff(){
     const protectedRole=s.id===staffActorId||(s.role==='owner'&&s.enabled&&developers<=1);
     const select=Object.entries(STAFF_LABELS).map(([key,label])=>'<option value="'+key+'" '+(s.role===key?'selected':'')+'>'+esc(label)+'</option>').join('');
     return '<article class="admin-order"><b>'+esc(s.email)+'</b><p class="staff-role staff-role-'+esc(s.role)+'">'+esc(s.role_label)+' · '+(s.enabled?'активен':'отключён')+'</p><p>Последний вход: '+(s.last_login?esc(dateTime(s.last_login)):'—')+'</p>'+
+      (DELEGATED_ROLES.includes(s.role)?'<button type="button" class="small secondary" data-staff-permissions="'+s.id+'">Индивидуальные права</button>':'')+
       (protectedRole?'<p>Защищённая учётная запись разработчика.</p>':'<form data-staff-role="'+s.id+'"><label>Роль<select name="role">'+select+'</select></label><button type="submit" class="small">Изменить роль</button></form><button class="small secondary" data-staff-id="'+s.id+'" data-enabled="'+(!s.enabled)+'">'+(s.enabled?'Отключить':'Включить')+'</button>')+'</article>';
   }).join('');
   $('audit-list').innerHTML=audit.events.map(e=>'<article class="admin-order"><b>'+esc(e.actor_email)+' · '+esc(STAFF_LABELS[e.role]||e.role)+'</b><p>'+esc(e.action)+' '+esc(e.resource)+' · HTTP '+e.status+' · '+esc(dateTime(e.created))+'</p></article>').join('')||'<p>Записей пока нет.</p>';
@@ -516,6 +601,8 @@ $('staff-create').onsubmit=async event=>{
  catch(error){if(epoch===authEpoch)$('staff-error').textContent=error.message}
 };
 $('staff-list').onclick=async event=>{
+ const edit=event.target.closest('[data-staff-permissions]');
+ if(edit&&role==='owner')return openStaffIndividual(Number(edit.dataset.staffPermissions));
  const button=event.target.closest('[data-staff-id]');if(!button||role!=='owner')return;
  const epoch=authEpoch;
  try{await api('staff/'+encodeURIComponent(button.dataset.staffId),{method:'PATCH',data:{enabled:button.dataset.enabled==='true'}});if(epoch===authEpoch)await refreshStaff()}
@@ -527,9 +614,49 @@ $('staff-list').onsubmit=async event=>{
  if(!Object.hasOwn(STAFF_LABELS,next)||button.disabled)return;
  if(next==='owner'&&!confirm('Назначить разработчика с полным доступом к магазину?'))return;
  button.disabled=true;
- try{await api('staff/'+encodeURIComponent(form.dataset.staffRole),{method:'PATCH',data:{role:next}});if(epoch===authEpoch){await refreshStaff();$('staff-error').textContent='Роль изменена. Сеансы прежней роли отозваны.';}}
+ try{await api('staff/'+encodeURIComponent(form.dataset.staffRole),{method:'PATCH',data:{role:next}});if(epoch===authEpoch){clearStaffIndividual();await refreshStaff();$('staff-error').textContent='Роль изменена. Сеансы прежней роли отозваны.';}}
  catch(error){if(epoch===authEpoch)$('staff-error').textContent=error.message}finally{button.disabled=false;}
 };
+
+let individualState=null,individualSeq=0,individualBusy=false;
+function clearStaffIndividual(){
+ individualSeq++;individualState=null;individualBusy=false;
+ $('staff-individual-editor').hidden=true;$('staff-individual-form').replaceChildren();$('staff-individual-status').textContent='';
+}
+function renderStaffIndividual(data){
+ if(!DELEGATED_ROLES.includes(data.role)||!Number.isInteger(data.version)||!Number.isInteger(data.role_version)||!Array.isArray(data.allowed)||!Array.isArray(data.permissions)||!Array.isArray(data.effective))throw new Error('Не удалось прочитать полномочия');
+ individualState=data;
+ $('staff-individual-editor').hidden=false;
+ const selected=data.inherit?data.allowed:data.permissions;
+ $('staff-individual-form').innerHTML='<form id="individual-policy-form"><p>Сотрудник № '+esc(data.staff_id)+' · '+esc(STAFF_LABELS[data.role])+'</p>'+
+   '<label class="permission-choice"><input id="individual-inherit" type="checkbox" '+(data.inherit?'checked':'')+'> Наследовать права роли</label>'+
+   '<div class="permission-grid" id="individual-choices">'+data.allowed.map(key=>'<label class="permission-choice"><input name="permissions" type="checkbox" value="'+esc(key)+'" '+(selected.includes(key)?'checked':'')+' '+(data.inherit?'disabled':'')+'>'+esc(data.labels[key]||key)+'</label>').join('')+'</div><p>Действующие права: '+data.effective.map(key=>esc(data.labels[key]||key)).join(', ')+'</p><button class="small" type="submit">Сохранить индивидуальные права</button></form>';
+}
+async function openStaffIndividual(id){
+ if(role!=='owner'||!Number.isSafeInteger(id)||id<1)return;
+ clearStaffIndividual();const seq=individualSeq,epoch=authEpoch;
+ $('staff-individual-editor').hidden=false;$('staff-individual-status').textContent='Загрузка…';
+ try{const data=await api('staff/'+id+'/permissions');if(seq!==individualSeq||epoch!==authEpoch||role!=='owner')return;renderStaffIndividual(data);$('staff-individual-status').textContent='';}
+ catch(e){if(seq===individualSeq&&epoch===authEpoch)$('staff-individual-status').textContent=e.message;}
+}
+$('staff-individual-form').onchange=event=>{
+ if(event.target.id!=='individual-inherit')return;
+ for(const input of $('individual-choices').querySelectorAll('input'))input.disabled=event.target.checked;
+};
+$('staff-individual-form').onsubmit=async event=>{
+ event.preventDefault();if(role!=='owner'||!individualState||individualBusy)return;
+ const form=event.target.closest('#individual-policy-form');if(!form)return;
+ const before=individualState,seq=individualSeq,epoch=authEpoch;
+ const inherit=$('individual-inherit').checked,values=new FormData(form);
+ const data={version:before.version,role_version:before.role_version,role:before.role,inherit,permissions:inherit?[]:values.getAll('permissions')};
+ individualBusy=true;const button=form.querySelector('button');button.disabled=true;
+ try{
+  const result=await api('staff/'+before.staff_id+'/permissions',{method:'PUT',data});
+  if(seq===individualSeq&&epoch===authEpoch&&role==='owner'){renderStaffIndividual(result);$('staff-individual-status').textContent='Сохранено.';}
+ }catch(e){if(seq===individualSeq&&epoch===authEpoch){$('staff-individual-status').textContent=e.message+' Откройте карточку заново.';individualState=null;}}
+ finally{if(seq===individualSeq&&epoch===authEpoch)individualBusy=false;}
+};
+$('staff-individual-close').onclick=clearStaffIndividual;
 
 let selectedAdminCase=null,adminCaseVersion=0;
 async function refreshSupportAdmin(){
@@ -625,7 +752,7 @@ async function refresh({plans = role==='owner' || canGroup('catalog')} = {}) {
   else if(role==='finance') await Promise.all([refreshAdsAdmin(),refreshOrders(),refreshCommerceAnalytics()]);
   else if(role==='panel_operator') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers()]);
   else if(role==='support') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshSupportAdmin()]);
-  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates(),refreshRolePolicies(),refreshModeration()]);}
+  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates(),refreshRolePolicies(),refreshModeration(),refreshRuntime('appearance'),refreshRuntime('sales'),refreshRuntime('notifications')]);}
   renderManagementNav();
 }
 $('admin-login').onsubmit = async event => {
@@ -646,7 +773,7 @@ $('admin-login').onsubmit = async event => {
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{}); role='';
-  clearUpdates(); clearManagement();
+  clearUpdates(); clearManagement(); clearRuntime(); clearStaffIndividual();
   protocolsRequest++; protocolCache = []; $('protocols-list').replaceChildren();
   $('protocols-status').textContent = ''; $('protocols-filter').value = 'all';
   $('protocols-panel').hidden = true; $('protocols-refresh').disabled = false;

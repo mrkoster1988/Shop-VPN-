@@ -84,7 +84,8 @@ def test_sales_keep_driver_ids_and_check_availability_per_customer(client, monke
         return protocol == 'wg'
     monkeypatch.setattr(providers, 'available', available)
     data = client.get('/api/catalog').json()['protocols']
-    assert data == [{'id':'xui','name':'VLESS','available':False},
+    assert all(row['sales_allowed'] is True and row['sale_reason'] is None and row['trial_available']==row['available'] for row in data)
+    assert [{k:row[k] for k in ('id','name','available')} for row in data] == [{'id':'xui','name':'VLESS','available':False},
                     {'id':'wg','name':'WireGuard','available':True},
                     {'id':'vmess','name':'VMess','available':False},
                     {'id':'hysteria2','name':'Hysteria2','available':False},

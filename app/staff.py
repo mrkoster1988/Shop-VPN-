@@ -29,7 +29,7 @@ def safe_staff(row):
 def role_response(conn,row):
     result={'ok':True,'id':row['id'],'role':row['role'],'role_label':ROLE_LABELS[row['role']]}
     if row['role'] in permissions.ALLOWED:
-        result['permissions']=permissions.permissions(conn,row['role'])
+        result['permissions']=permissions.effective_permissions(conn,row['role'],row['id'])
     return result
 
 def clean_email(v):
@@ -52,7 +52,7 @@ def authorize(request: Request):
             if row:
                 actor={k:row[k] for k in ('id','email','role')}
                 if row['role'] in permissions.ALLOWED:
-                    actor['permissions']=permissions.permissions(conn,row['role'])
+                    actor['permissions']=permissions.effective_permissions(conn,row['role'],row['id'])
     if actor is None: actor=legacy_owner(request)
     if actor is None: raise HTTPException(401,"Войдите под учётной записью сотрудника")
     path=request.url.path.removeprefix(c.BASE_PATH); method=request.method.upper()
@@ -159,6 +159,8 @@ def update_staff(staff_id,enabled,role,actor_id):
             conn.execute('DELETE FROM staff_role_assignments WHERE staff_id=?',(staff_id,))
             conn.execute('UPDATE staff_users SET role=?,enabled=?,updated=? WHERE id=?',
                          (ro,en,int(time.time()),staff_id))
+        if ro!=row['role']:
+            permissions.invalidate_on_role_change(conn,staff_id)
         if not en or ro!=row['role']:
             conn.execute('DELETE FROM staff_sessions WHERE staff_id=?',(staff_id,))
         return safe_staff(effective(conn,staff_id))

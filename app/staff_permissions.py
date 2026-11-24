@@ -2,6 +2,7 @@
 import json
 import re
 import time
+from typing import Literal
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, StrictStr
@@ -18,7 +19,9 @@ LABELS={
     'servers_read':'Состояние серверов и протоколы (просмотр)',
     'moderation':'Модерация заявок рекламы',
     'support':'Обращения и поддержка',
-    'store_settings':'Настройки магазина и условия',
+    'store_settings':'Настройки магазина, условия и оформление',
+    'sales_controls':'Правила продаж и продления',
+    'notifications':'Шаблоны и расписание уведомлений',
     'bot_menu':'Редактор меню Telegram',
     'analytics':'Финансовая аналитика',
     'diagnostics':'Диагностика',
@@ -28,7 +31,7 @@ ALLOWED={
     'moderator':frozenset(('moderation','support')),
 }
 DEFAULTS={
-    'administrator':frozenset(LABELS)-{'payments','bot_menu'},
+    'administrator':frozenset(LABELS)-{'payments','bot_menu','sales_controls','notifications'},
     'moderator':frozenset(('moderation',)),
 }
 # Права разработчика на сотрудников, секреты, установку и обновление
@@ -47,7 +50,10 @@ RULES={
     'moderation': [('GET',r'/moderation/requests'),('PUT',r'/moderation/requests/[^/]+')],
     'support': [('GET',r'/support/tickets(?:/[^/]+)?'),('POST',r'/support/tickets/[^/]+/messages'),
                 ('PATCH',r'/support/tickets/[^/]+')],
-    'store_settings': [('GET',r'/shop-settings'),('PUT',r'/shop-settings')],
+    'store_settings': [('GET',r'/shop-settings'),('PUT',r'/shop-settings'),
+                       ('GET',r'/runtime/appearance'),('PUT',r'/runtime/appearance')],
+    'sales_controls': [('GET',r'/runtime/sales'),('PUT',r'/runtime/sales')],
+    'notifications': [('GET',r'/runtime/notifications'),('PUT',r'/runtime/notifications')],
     'bot_menu': [('GET',r'/bot-menu'),('PUT',r'/bot-menu')],
     'analytics': [('GET',r'/commerce-analytics')],
     'diagnostics': [('GET',r'/diagnostics')],
@@ -102,6 +108,85 @@ def update(role,data):
 
 def permissions(conn,role):
     return policy(conn,role)['permissions'] if role in ALLOWED else []
+
+
+class IndividualUpdate(BaseModel):
+    model_config={'extra':'forbid'}
+    version:int=Field(ge=0,strict=True)
+    role_version:int=Field(ge=0,strict=True)
+    role:Literal['administrator','moderator']
+    inherit:bool=Field(strict=True)
+    permissions:list[StrictStr]=Field(max_length=len(LABELS))
+
+
+def _individual_row(conn,staff_id):
+    return conn.execute('SELECT permissions,version,updated FROM staff_permission_limits WHERE staff_id=?',
+                        (staff_id,)).fetchone()
+
+
+def _limit_values(row):
+    if not row or row['permissions'] is None:return None
+    try:
+        values=json.loads(row['permissions'])
+        if not isinstance(values,list) or any(type(v) is not str for v in values) or not set(values)<=set(LABELS):
+            raise ValueError('Invalid individual limits')
+        return sorted(set(values))
+    except (TypeError,ValueError):
+        # При повреждении ограничения закрываем все делегированные полномочия.
+        return []
+
+
+def effective_permissions(conn,role,staff_id):
+    allowed=set(permissions(conn,role))
+    values=_limit_values(_individual_row(conn,staff_id))
+    if values is not None:allowed.intersection_update(values)
+    if 'orders' not in allowed:allowed.discard('payments')
+    return sorted(allowed)
+
+
+def individual(conn,staff_id):
+    row=conn.execute("""SELECT a.role FROM staff_role_assignments a
+        JOIN staff_users u ON u.id=a.staff_id WHERE u.id=?""",(staff_id,)).fetchone()
+    if not row or row['role'] not in ALLOWED:
+        raise HTTPException(404,'Настройки сотрудника недоступны для этой роли')
+    role=row['role'];saved=_individual_row(conn,staff_id);values=_limit_values(saved)
+    role_policy=policy(conn,role)
+    allowed=role_policy['permissions']
+    return {'staff_id':staff_id,'role':role,'version':saved['version'] if saved else 0,'role_version':role_policy['version'],
+            'inherit':values is None,'allowed':allowed,'permissions':values or [],
+            'effective':effective_permissions(conn,role,staff_id),'labels':LABELS}
+
+
+def individual_get(staff_id):
+    with db() as conn:
+        conn.execute('BEGIN')
+        return individual(conn,staff_id)
+
+
+def individual_update(staff_id,data):
+    with db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        old=individual(conn,staff_id)
+        if old['role']!=data.role or old['version']!=data.version or old['role_version']!=data.role_version:
+            raise HTTPException(409,'Роль или полномочия изменились. Обновите карточку.')
+        values=set(data.permissions)
+        if len(values)!=len(data.permissions) or not values<=set(old['allowed']) or (data.inherit and values):
+            raise HTTPException(422,'Индивидуальные права могут только ограничивать текущую роль')
+        if 'payments' in values and 'orders' not in values:
+            raise HTTPException(422,'Для подтверждения оплаты разрешите просмотр заказов')
+        encoded=None if data.inherit else json.dumps(sorted(values),separators=(',',':'))
+        conn.execute("""INSERT INTO staff_permission_limits(staff_id,permissions,version,updated)
+            VALUES (?,?,?,?) ON CONFLICT(staff_id) DO UPDATE SET permissions=excluded.permissions,
+            version=excluded.version,updated=excluded.updated""",
+            (staff_id,encoded,data.version+1,int(time.time())))
+        return individual(conn,staff_id)
+
+
+def invalidate_on_role_change(conn,staff_id):
+    # Даже если роль затем вернётся, запрос старой версии не сможет снять ограничения.
+    conn.execute("""INSERT INTO staff_permission_limits(staff_id,permissions,version,updated)
+        VALUES (?,NULL,1,?) ON CONFLICT(staff_id) DO UPDATE SET version=version+1,
+        updated=excluded.updated""",(staff_id,int(time.time())))
 
 
 def permits(values,path,method):

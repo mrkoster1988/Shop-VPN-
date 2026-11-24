@@ -105,10 +105,29 @@ function date(ts) { return new Date(ts*1000).toLocaleDateString('ru-RU'); }
 function protocolName(id) { return ({wg:'WireGuard',xui:'VLESS',vmess:'VMess',hysteria2:'Hysteria2',tuic:'TUIC v5'})[id] || id; }
 function profileAllowance(limit) { return limit===0 ? 'Только основной профиль' : 'Основной + до '+limit+' дополнительных профилей'; }
 function displayOrderStatus(order) { if(order.progress?.title)return order.progress.title; return order.kind==='referral'&&order.status==='paid'?'Добавляем бонусные дни':order.kind==='referral'&&order.status==='active'?'Бонусные дни добавлены':order.kind==='trial'&&order.status==='paid'?'Готовим пробный VPN':order.kind==='trial'&&order.status==='active'?'Пробный доступ выдан':statusLabel[order.status] || order.status; }
+function renderAppearance(){
+ const config=catalog?.appearance;
+ if(!config)return;
+ const textFields=[['brand',config.brand_name==='pushok.vpn'?'':config.brand_name],['headline',config.headline],['description',config.description]];
+ for(const [field,value] of textFields){
+  const custom=$('shop-'+field+'-custom'),original=$('shop-'+field+'-default');
+  const text=typeof value==='string'?value:'';
+  custom.textContent=text;custom.hidden=!text;original.hidden=!!text;
+ }
+ const announcement=typeof config.announcement==='string'?config.announcement:'';
+ $('shop-announcement').textContent=announcement;$('shop-announcement').hidden=!announcement;
+ if(document.documentElement?.dataset)document.documentElement.dataset.shopTheme=['pushok','ocean','graphite','violet'].includes(config.theme)?config.theme:'pushok';
+}
+function trialProtocolAvailable(){
+ const item=catalog.protocols.find(p=>p.id===protocol);
+ return !!(item?.trial_available??item?.available);
+}
 function renderPlans() {
+  renderAppearance();
   $('protocols').innerHTML = catalog.protocols.map(p => `<button class="${p.id===protocol?'chosen':''}" data-protocol="${p.id}" aria-pressed="${p.id===protocol}">${esc(protocolName(p.id))}${p.available?'':' · скоро'}</button>`).join('');
-  const available = catalog.protocols.find(p => p.id===protocol).available;
-  $('provider-note').textContent = available ? '' : 'Подключение этого протокола ещё не настроено. Покупки временно недоступны.';
+  const selected=catalog.protocols.find(p=>p.id===protocol);
+  const available=!!selected?.available;
+  $('provider-note').textContent = available ? '' : selected?.sales_allowed===false ? (catalog.sale_notice||'Продажи временно приостановлены.') : 'Подключение этого протокола ещё не настроено. Покупки временно недоступны.';
   $('plan-list').innerHTML = catalog.plans.length ? catalog.plans.map((p,i) => `<article class="plan ${i===1?'featured':''}">${i===1?'<span class="badge">УДОБНЫЙ ВЫБОР</span>':''}<h3>${esc(p.name)}</h3><div class="price">${p.price.toLocaleString('ru-RU')} <small>${catalog.currency==='XTR'?'★':'₽'}</small></div><p>${p.days} дней доступа · ${esc(protocolName(protocol))}</p><ul><li>${esc(profileAllowance(p.device_limit ?? 4))}</li><li>Настройки и QR-код в кабинете</li><li>Продление с сохранением дней</li></ul><button data-plan="${p.id}" ${available?'':'disabled'}>${available?'Выбрать тариф ↗':'Скоро'}</button></article>`).join('') : '<p class="plans-empty">Тарифы временно недоступны. Пожалуйста, обратитесь в поддержку.</p>';
   renderTrial();
 }
@@ -238,6 +257,7 @@ async function beginCheckout(id) {
   selectedPlan = catalog.plans.find(p => p.id===id);
   if (!selectedPlan) throw new Error('Тариф больше недоступен. Выберите другой тариф.');
   if (!me) { show('auth-dialog'); return; }
+  if(catalog.protocols.find(p=>p.id===protocol)?.sales_allowed===false)throw new Error(catalog.sale_notice||'Продажи временно приостановлены.');
   $('promo-controls').hidden=false;renderCheckoutAmount();
   if(promoIntent){$('promo-code').value=promoIntent;$('promo-status').textContent='Промокод из ссылки. Нажмите «Применить», чтобы проверить скидку и итоговую цену.';}
   clearPayment(); $('checkout-form').hidden = false;
@@ -481,7 +501,7 @@ function renderTrial() {
   const trial=catalog.trial;
   $('trial-offer').hidden=!trial || (!trial.enabled&&!trial.claim);
   if(!trial)return;
-  const available=!!catalog.protocols.find(p=>p.id===protocol)?.available;
+  const available=trialProtocolAvailable();
   const messages={telegram_required:'Войдите через Telegram, чтобы попробовать VPN.',existing_customer:'Пробный доступ доступен аккаунтам без прежних заказов и подписок.',limit_reached:'Пробные активации временно недоступны.',not_configured:'Пробный доступ готовится к запуску.',disabled:'Пробный доступ отключён.'};
   $('trial-info').textContent=trial.claim?'Пробный доступ уже выбран: '+protocolName(trial.claim.protocol)+'. Статус и настройки — в кабинете.':trial.eligible?trial.days+' дн. · '+protocolName(protocol)+' · только основной профиль.':messages[trial.reason] || 'Пробный доступ уже использован.';
   $('trial-start').textContent=trial.claim?'Открыть кабинет':trial.reason==='telegram_required'?'Войти через Telegram':'Попробовать бесплатно';
@@ -492,7 +512,7 @@ async function beginTrial() {
   await refreshMe();const trial=catalog.trial;
   if(trial?.claim){show('account-dialog');return;}
   if(!me?.telegram_id){show('auth-dialog');toast('Пробный доступ доступен при входе через Telegram-бота.');return;}
-  if(!trial?.eligible || !catalog.protocols.find(p=>p.id===protocol)?.available)throw new Error('Пробный доступ сейчас недоступен.');
+  if(!trial?.eligible || !trialProtocolAvailable())throw new Error('Пробный доступ сейчас недоступен.');
   selectedPlan=null;checkoutTrial={protocol,version:trial.version};$('promo-controls').hidden=true;
   $('checkout-info').textContent='Пробный доступ / '+trial.days+' дн. / '+protocolName(protocol)+' / без оплаты / только основной профиль';
   clearPayment();$('checkout-form').hidden=false;$('receipt-label').hidden=true;$('receipt-label').querySelector('input').required=false;
