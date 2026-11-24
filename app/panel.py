@@ -76,9 +76,11 @@ class Legacy:
             return ''
         payload = dict(existing) if existing else {
             'id': sub['id'], 'email': 'pushok_' + sub['id'], 'flow': self.profile['flow'],
-            'limitIp': 0, 'totalGB': 0, 'subId': sub['id'].replace('-', '')}
+            'limitIp': 0, 'totalGB': int(sub.get('free_traffic_gb',0))*1073741824, 'subId': sub['id'].replace('-', '')}
         self.identity_available(records, payload)
         payload.update(enable=enabled, expiryTime=sub['expires'] * 1000)
+        if enabled and 'free_traffic_gb' in sub:
+            payload['totalGB'] = int(sub['free_traffic_gb'])*1073741824
         endpoint = f"updateClient/{sub['id']}" if existing else 'addClient'
         result(await client.post(self.base + '/panel/api/inbounds/' + endpoint,
             data={'id': self.inbound_id, 'settings': json.dumps({'clients': [payload]})}))
@@ -110,7 +112,7 @@ class Clients(Legacy):
 
     def new_payload(self, sub):
         return {'id':sub['id'], 'email':'pushok_' + sub['id'], 'subId':sub['id'].replace('-',''),
-                'flow':self.profile['flow'], 'limitIp':0, 'limitHwid':0, 'totalGB':0}
+                'flow':self.profile['flow'], 'limitIp':0, 'limitHwid':0, 'totalGB':int(sub.get('free_traffic_gb',0))*1073741824}
 
     def connection_link(self, sub):
         return self.profile['link_template'].replace('{uuid}',sub['id'])
@@ -165,6 +167,8 @@ class Clients(Legacy):
         else:
             payload = self.new_payload(sub)
         payload.update(enable=enabled, expiryTime=sub['expires']*1000)
+        if enabled and 'free_traffic_gb' in sub:
+            payload['totalGB'] = int(sub['free_traffic_gb'])*1073741824
         path = '/panel/api/clients/update/'+quote(email,safe='') if exists else '/panel/api/clients/add'
         body = payload if exists else {'client':payload, 'inboundIds':[self.inbound_id]}
         result(await client.post(self.base+path,json=body))
