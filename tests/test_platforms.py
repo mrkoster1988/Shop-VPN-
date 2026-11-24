@@ -45,3 +45,18 @@ def test_unknown_protocol_never_contacts_panel_or_wireguard(monkeypatch, protoco
         asyncio.run(providers.disable(payload))
     with pytest.raises(ValueError, match='UnsupportedVpnProtocol'):
         asyncio.run(providers.probe_server(payload))
+
+
+def test_shop_catalog_hides_telegram_login_when_bot_token_missing(client, monkeypatch):
+    # A hub bot username alone does not make it a working Shop sign-in.
+    monkeypatch.setattr(c, 'BOT_TOKEN', '')
+    monkeypatch.setattr(c, 'BOT_USERNAME', 'pushok_app')
+    response = client.get('/api/catalog')
+    assert response.status_code == 200
+    assert response.json()['bot_username'] is None
+
+    # The UI may advertise sign-in only after both credentials are configured.
+    monkeypatch.setattr(c, 'BOT_TOKEN', '123:test-token')
+    response = client.get('/api/catalog')
+    assert response.status_code == 200
+    assert response.json()['bot_username'] == 'pushok_app'
