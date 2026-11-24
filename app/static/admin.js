@@ -242,7 +242,7 @@ function acceptStaffRole(result){
   delegatedPermissions=new Set(Array.isArray(result.permissions)?result.permissions.filter(x=>typeof x==='string'):[]);
 }
 const MANAGEMENT_SECTIONS=[
-  ['shop-settings','store_settings','Настройки'],['updates-panel','developer','Обновления'],
+  ['shop-settings','store_settings','Настройки'],['appearance-section','store_settings','Оформление'],['sales-controls-section','sales_controls','Продажи'],['notifications-section','notifications','Уведомления'],['updates-panel','developer','Обновления'],
   ['bot-menu-panel','bot_menu','Меню Telegram'],['staff-management','developer','Сотрудники'],
   ['role-policy-section','developer','Полномочия'],['moderation-section','moderation','Модерация'],
   ['support-admin','support','Поддержка'],['commerce-analytics','analytics','Аналитика'],
@@ -337,7 +337,9 @@ async function refreshDelegated({plans=true}={}){
   if(canGroup('starter'))tasks.push(refreshFlowAutoPolicy());
   if(canGroup('moderation'))tasks.push(refreshModeration());
   if(canGroup('support'))tasks.push(refreshSupportAdmin());
-  if(canGroup('store_settings'))tasks.push(refreshShopSettings());
+  if(canGroup('store_settings'))tasks.push(refreshShopSettings(),refreshRuntime('appearance'));
+  if(canGroup('sales_controls'))tasks.push(refreshRuntime('sales'));
+  if(canGroup('notifications'))tasks.push(refreshRuntime('notifications'));
   if(canGroup('bot_menu'))tasks.push(refreshBotMenu());
   if(canGroup('analytics'))tasks.push(refreshCommerceAnalytics());
   if(canGroup('diagnostics'))tasks.push(refreshDiagnostics());
@@ -436,6 +438,88 @@ $('shop-settings-form').onsubmit=async event=>{
  }catch(error){$('shop-settings-status').textContent=error.message}
  finally{button.disabled=false}
 };
+// Независимые версии формы: сохраняем только выбранный раздел.
+const RUNTIME_GROUPS={
+ appearance:{permission:'store_settings',fields:{brand_name:'text',headline:'text',description:'text',announcement:'text',theme:'text'}},
+ sales:{permission:'sales_controls',fields:{new_sales:'bool',renewals:'bool',web_sales:'bool',telegram_sales:'bool',enabled_protocols:'protocols',closed_notice:'text'}},
+ notifications:{permission:'notifications',fields:{order_ready_enabled:'bool',expiry_enabled:'bool',expiry_hours:'number',purchase_text:'text',trial_text:'text',bonus_text:'text',expiry_text:'text'}}
+};
+const RUNTIME_PROTOCOLS=['xui','wg','vmess','hysteria2','tuic'];
+const runtimeState={},runtimeSeq={},runtimeBusy={};
+function runtimeControl(key){return $('runtime-'+key);}
+function runtimeFields(group,callback){
+ for(const [key,type] of Object.entries(RUNTIME_GROUPS[group].fields)){
+  if(type==='protocols')for(const protocol of RUNTIME_PROTOCOLS)callback(runtimeControl('protocol-'+protocol),key,type,protocol);
+  else callback(runtimeControl(key),key,type);
+ }
+}
+function runtimeControls(group,disabled){
+ runtimeFields(group,element=>{element.disabled=disabled;});
+ $('runtime-'+group+'-save').disabled=disabled;
+}
+function clearRuntimeGroup(group){
+ runtimeSeq[group]=(runtimeSeq[group]||0)+1;runtimeState[group]=null;runtimeBusy[group]=false;
+ runtimeFields(group,(el,key,type)=>{if(type==='bool'||type==='protocols')el.checked=false;else el.value='';});
+ runtimeControls(group,true);$('runtime-'+group+'-status').textContent='';
+}
+function clearRuntime(){for(const group of Object.keys(RUNTIME_GROUPS))clearRuntimeGroup(group);}
+function applyRuntime(group,data){
+ if(!Number.isInteger(data.version)||data.version<0)throw new Error('Не удалось прочитать версию настроек');
+ for(const [key,type] of Object.entries(RUNTIME_GROUPS[group].fields)){
+  const value=data[key];
+  if(type==='protocols'?!Array.isArray(value):type==='bool'?typeof value!=='boolean':type==='number'?!Number.isInteger(value):typeof value!=='string')throw new Error('Не удалось прочитать настройки');
+ }
+ runtimeFields(group,(el,key,type,protocol)=>{
+  if(type==='protocols')el.checked=data[key].includes(protocol);
+  else if(type==='bool')el.checked=data[key];
+  else el.value=String(data[key]);
+ });
+ runtimeState[group]={version:data.version};
+ runtimeControls(group,false);
+}
+async function refreshRuntime(group){
+ const def=RUNTIME_GROUPS[group];
+ if(!def||!canGroup(def.permission)){if(def)clearRuntimeGroup(group);return;}
+ if(runtimeBusy[group])return;
+ const seq=runtimeSeq[group]=(runtimeSeq[group]||0)+1,epoch=authEpoch;
+ runtimeState[group]=null;runtimeControls(group,true);
+ $('runtime-'+group+'-status').textContent='Загрузка…';
+ try{
+  const data=await api('runtime/'+group);
+  if(seq!==runtimeSeq[group]||epoch!==authEpoch||!canGroup(def.permission))return;
+  applyRuntime(group,data);
+  $('runtime-'+group+'-status').textContent='Настройки загружены. Версия '+data.version+'.';
+ }catch(e){if(seq===runtimeSeq[group]&&epoch===authEpoch)$('runtime-'+group+'-status').textContent=e.message;}
+}
+function runtimePayload(group){
+ const payload={version:runtimeState[group].version};
+ for(const [key,type] of Object.entries(RUNTIME_GROUPS[group].fields)){
+  if(type==='protocols')payload[key]=RUNTIME_PROTOCOLS.filter(p=>runtimeControl('protocol-'+p).checked);
+  else if(type==='bool')payload[key]=runtimeControl(key).checked;
+  else if(type==='number')payload[key]=Number(runtimeControl(key).value);
+  else payload[key]=runtimeControl(key).value;
+ }
+ return payload;
+}
+async function saveRuntime(group){
+ const def=RUNTIME_GROUPS[group];
+ if(!def||!canGroup(def.permission)||!runtimeState[group]||runtimeBusy[group])return;
+ const payload=runtimePayload(group),epoch=authEpoch,seq=runtimeSeq[group]=(runtimeSeq[group]||0)+1;
+ runtimeBusy[group]=true;runtimeState[group]=null;runtimeControls(group,true);
+ try{
+  const data=await api('runtime/'+group,{method:'PUT',data:payload});
+  if(seq!==runtimeSeq[group]||epoch!==authEpoch||!canGroup(def.permission))return;
+  applyRuntime(group,data);
+  $('runtime-'+group+'-status').textContent='Сохранено. Версия '+data.version+'.';
+ }catch(e){
+  if(seq===runtimeSeq[group]&&epoch===authEpoch)$('runtime-'+group+'-status').textContent=e.message+' Обновите настройки перед повтором.';
+ }finally{if(seq===runtimeSeq[group]&&epoch===authEpoch)runtimeBusy[group]=false;}
+}
+for(const group of Object.keys(RUNTIME_GROUPS)){
+ $('runtime-'+group+'-form').onsubmit=event=>{event.preventDefault();return saveRuntime(group);};
+ $('runtime-'+group+'-refresh').onclick=()=>refreshRuntime(group);
+}
+
 // Настройки меню бот получает из базы при отправке очередного /start.
 let botMenuVersion=0,botMenuButtons=[],botMenuRequest=0;
 function menuFields(){
@@ -625,7 +709,7 @@ async function refresh({plans = role==='owner' || canGroup('catalog')} = {}) {
   else if(role==='finance') await Promise.all([refreshAdsAdmin(),refreshOrders(),refreshCommerceAnalytics()]);
   else if(role==='panel_operator') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers()]);
   else if(role==='support') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshSupportAdmin()]);
-  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates(),refreshRolePolicies(),refreshModeration()]);}
+  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates(),refreshRolePolicies(),refreshModeration(),refreshRuntime('appearance'),refreshRuntime('sales'),refreshRuntime('notifications')]);}
   renderManagementNav();
 }
 $('admin-login').onsubmit = async event => {
@@ -646,7 +730,7 @@ $('admin-login').onsubmit = async event => {
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{}); role='';
-  clearUpdates(); clearManagement();
+  clearUpdates(); clearManagement(); clearRuntime();
   protocolsRequest++; protocolCache = []; $('protocols-list').replaceChildren();
   $('protocols-status').textContent = ''; $('protocols-filter').value = 'all';
   $('protocols-panel').hidden = true; $('protocols-refresh').disabled = false;

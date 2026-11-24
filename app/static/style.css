@@ -131,3 +131,13 @@ html[data-telegram-theme="dark"] #miniapp-nav [aria-current="page"]{background:#
 .permission-choice{display:flex;align-items:center;gap:9px;line-height:1.45;padding:8px;border:1px solid var(--line);border-radius:9px}
 .permission-choice input{width:auto;flex-shrink:0}.staff-role{font-weight:800}.staff-role-owner{color:#7454b4}.staff-role-administrator{color:#aa2435}.staff-role-moderator{color:#16735e}
 @media(max-width:560px){.management-header{padding:14px}.management-nav{gap:6px}.management-nav a{padding:7px 9px;font-size:13px}.permission-grid{grid-template-columns:1fr}}
+
+/* Управляемые светлые палитры; Telegram dark имеет приоритет. */
+:root:not([data-telegram-theme="dark"])[data-shop-theme="ocean"]{--bg:#f0f7fa;--ink:#16475e;--muted:#507483;--green:#a9e7ed;--line:#c7dce5}
+:root:not([data-telegram-theme="dark"])[data-shop-theme="graphite"]{--bg:#f3f4f6;--ink:#2e3947;--muted:#5c6876;--green:#d9e3ed;--line:#d3dce5}
+:root:not([data-telegram-theme="dark"])[data-shop-theme="violet"]{--bg:#f6f3fb;--ink:#49356e;--muted:#72638c;--green:#e1d5fa;--line:#ddd3eb}
+.store-announcement{padding:12px 16px;border:1px solid var(--line);border-radius:12px;background:var(--white);white-space:pre-line;overflow-wrap:anywhere}
+#shop-headline-custom,#shop-brand-custom{overflow-wrap:anywhere}
+#shop-description-custom{white-space:pre-line;overflow-wrap:anywhere}
+#shop-headline-custom[hidden],#shop-headline-default[hidden],#shop-brand-custom[hidden],#shop-brand-default[hidden],#shop-description-custom[hidden],#shop-description-default[hidden],#shop-announcement[hidden]{display:none!important}
+#appearance-section .plan-editor,#sales-controls-section .plan-editor,#notifications-section .plan-editor{max-width:900px}
