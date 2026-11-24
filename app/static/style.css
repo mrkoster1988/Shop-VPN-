@@ -429,6 +429,7 @@ body.shop-public-ui :where(button:hover:not(:disabled):not(.text-link):not(.clos
   border-color:#3d7a83;padding:9px 12px;margin:9px 0}
 .shop-public-ui #checkout-dialog .footnote{margin:7px 0}
 .shop-public-ui .shop-mobile-nav{display:none}
+html[data-telegram-theme] body.shop-public-ui .shop-mobile-nav{display:none!important}
 html[data-telegram-theme] body.shop-public-ui .miniapp-nav:not([hidden]){
   border-color:#2a6471;background:#0c2639f5;color:#d3eaf2;
   box-shadow:0 -10px 28px #0008}
