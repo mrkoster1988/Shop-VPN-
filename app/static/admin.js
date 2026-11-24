@@ -242,7 +242,7 @@ function acceptStaffRole(result){
   delegatedPermissions=new Set(Array.isArray(result.permissions)?result.permissions.filter(x=>typeof x==='string'):[]);
 }
 const MANAGEMENT_SECTIONS=[
-  ['shop-settings','store_settings','Настройки'],['appearance-section','store_settings','Оформление'],['pushok-id-settings','developer','Pushok ID'],['sales-controls-section','sales_controls','Продажи'],['payment-policy-section','payment_settings','Оплата'],['shop-finance-section','finance_read','Финансы Shop'],['notifications-section','notifications','Уведомления'],['updates-panel','developer','Обновления'],
+  ['shop-settings','store_settings','Настройки'],['appearance-section','store_settings','Оформление'],['pushok-id-settings','developer','Pushok ID'],['pushok-ai-section','ai_read','Pushok ИИ'],['sales-controls-section','sales_controls','Продажи'],['payment-policy-section','payment_settings','Оплата'],['shop-finance-section','finance_read','Финансы Shop'],['notifications-section','notifications','Уведомления'],['updates-panel','developer','Обновления'],
   ['bot-menu-panel','bot_menu','Меню Telegram'],['staff-management','developer','Сотрудники'],
   ['role-policy-section','developer','Полномочия'],['moderation-section','moderation','Модерация'],
   ['support-admin','support','Поддержка'],['commerce-analytics','analytics','Аналитика'],
@@ -345,6 +345,7 @@ async function refreshDelegated({plans=true}={}){
   if(canGroup('bot_menu'))tasks.push(refreshBotMenu());
   if(canGroup('analytics'))tasks.push(refreshCommerceAnalytics());
   if(canGroup('diagnostics'))tasks.push(refreshDiagnostics());
+  if(canGroup('ai_read'))tasks.push(refreshAi());else clearAi();
   await Promise.all(tasks);
   if(epoch===authEpoch)renderManagementNav();
 }
@@ -759,6 +760,131 @@ $('id-policy-form').onsubmit=async event=>{
  finally{if(seq===idPolicySeq&&epoch===authEpoch)idPolicyBusy=false;}
 };
 
+// Pushok ИИ: локальные рекомендации, отдельные права и версионное рассмотрение.
+const AI_BOOLS=['enabled','automatic','diagnostics_enabled','servers_enabled','commerce_enabled','finance_enabled'];
+const AI_NUMBERS=['interval_minutes','queue_age_minutes','capacity_percent','sales_days','min_orders','payment_rate_percent'];
+const AI_STATES={open:'Новая',acknowledged:'Принята к работе',dismissed:'Отложена',resolved:'Условие больше не обнаружено'};
+const AI_CATEGORIES={diagnostics:'Диагностика',servers:'Серверы',commerce:'Продажи',finance:'Финансы'};
+const AI_SEVERITY={critical:'Критическая',warning:'Предупреждение',info:'Информация'};
+const AI_EVIDENCE={state:'Состояние',queue:'Очередь',pending:'Ожидают',errors:'Ошибки',age_seconds:'Возраст, сек.',observed:'Обнаружено',protocol:'Протокол',nodes:'Узлы',eligible:'Подходящие узлы',near_limit:'У лимита',finite_nodes:'Узлы с лимитом',threshold_percent:'Порог, %',orders:'Заказы',paid:'Оплачено',days:'Дней',currency:'Валюта',receipts:'Поступления',refunds:'Возвраты',fees:'Комиссии',expenses:'Расходы',net_recorded:'Разница учтённых сумм'};
+const AI_ACTIONS={detected:'Обнаружена',recurrence:'Обнаружена снова',resolved:'Условие исчезло',acknowledge:'Принята к работе',dismiss:'Отложена',reopen:'Возвращена к рассмотрению'};
+const AI_REASONS={investigate:'Проверить',expected:'Ожидаемое состояние',later:'Рассмотреть позже',not_applicable:'Не применимо',revisit:'Повторное рассмотрение'};
+let aiState=null,aiSeq=0,aiBusy=false,aiHistorySeq=0,aiHistoryPage=1,aiReviewIntents=new Map();
+function clearAiHistory(){
+ aiHistorySeq++;aiHistoryPage=1;$('ai-history-panel').hidden=true;
+ $('ai-history-list').replaceChildren();$('ai-history-page').textContent='';
+ $('ai-history-prev').disabled=true;$('ai-history-next').disabled=true;
+}
+function clearAi(){
+ aiSeq++;aiState=null;aiBusy=false;aiReviewIntents.clear();clearAiHistory();
+ for(const k of AI_BOOLS)$('ai-'+k).checked=false;
+ for(const k of AI_NUMBERS)$('ai-'+k).value='';
+ $('ai-policy-form').hidden=true;$('ai-policy-save').disabled=true;$('ai-scan').disabled=true;
+ $('ai-summary').textContent='';$('ai-status').textContent='';$('ai-findings').replaceChildren();$('ai-filter').value='active';
+}
+function aiControls(){
+ $('ai-policy-save').disabled=aiBusy||!aiState||role!=='owner';
+ $('ai-scan').disabled=aiBusy||!aiState?.policy.enabled||!canGroup('ai_scan');
+ for(const k of [...AI_BOOLS,...AI_NUMBERS])$('ai-'+k).disabled=aiBusy||!aiState||role!=='owner';
+}
+function aiEvidence(f){
+ return Object.entries(f.evidence||{}).map(([key,value])=>{
+  let displayed=value;
+  if(f.category==='finance'&&['receipts','refunds','fees','expenses','net_recorded'].includes(key))
+   displayed=financeMoney(value,f.evidence.currency);
+  if(key==='protocol')displayed=protocolLabel(value);
+  return '<span>'+esc(AI_EVIDENCE[key]||key)+': <b>'+esc(displayed)+'</b></span>';
+ }).join('');
+}
+function renderAiFindings(){
+ if(!aiState||!canGroup('ai_read')){$('ai-findings').replaceChildren();return;}
+ const filter=$('ai-filter').value||'active';
+ const list=aiState.findings.filter(f=>filter==='all'||(filter==='active'?f.active:f.active&&f.state===filter));
+ $('ai-findings').innerHTML=list.map(f=>{
+  const actions=f.active&&canGroup('ai_review')?
+   (f.state==='open'?'<button type="button" class="small" data-ai-action="acknowledge" data-ai-code="'+esc(f.code)+'">Принять к работе</button>':'')+
+   (['open','acknowledged'].includes(f.state)?'<button type="button" class="small secondary" data-ai-action="dismiss" data-ai-code="'+esc(f.code)+'">Отложить</button>':'')+
+   (['acknowledged','dismissed'].includes(f.state)?'<button type="button" class="small secondary" data-ai-action="reopen" data-ai-code="'+esc(f.code)+'">Рассмотреть снова</button>':''):'';
+  return '<article class="admin-order ai-card ai-'+esc(f.severity)+'"><h3>'+esc(f.title)+'</h3><p class="ai-meta">'+esc(AI_CATEGORIES[f.category]||f.category)+' · '+esc(AI_SEVERITY[f.severity]||f.severity)+' · '+esc(AI_STATES[f.state]||f.state)+(!f.active&&f.state!=='resolved'?' · Анализ приостановлен':'')+'</p><p>'+esc(f.recommendation)+'</p><div class="ai-evidence">'+aiEvidence(f)+'</div><p>Последнее обнаружение: '+esc(dateTime(f.last_seen))+' · Повторных эпизодов: '+esc(f.occurrences)+'</p><div class="actions">'+actions+'</div></article>';
+ }).join('')||'<p>Нет рекомендаций по выбранному фильтру. Это не подтверждает работоспособность реального трафика или платежей.</p>';
+}
+function renderAi(data){
+ if(data.engine!=='local_rules_v1'||!Number.isSafeInteger(data.policy?.version)||!Array.isArray(data.findings))throw new Error('Не удалось прочитать результаты анализа');
+ aiState=data;
+ $('ai-policy-form').hidden=role!=='owner';
+ if(role==='owner'){
+  for(const k of AI_BOOLS)$('ai-'+k).checked=data.policy[k]===true;
+  for(const k of AI_NUMBERS)$('ai-'+k).value=String(data.policy[k]);
+ }
+ const run=data.run,policy=data.policy;
+ $('ai-summary').textContent=(policy.enabled?'Pushok ИИ включён':'Pushok ИИ выключен')+' · '+(policy.automatic?'Автоанализ':'Ручной режим')+
+  ' · Последний завершённый анализ: '+(run.last_scan?dateTime(run.last_scan):'ещё не проводился')+
+  (run.last_scan&&run.policy_version!==policy.version?' · Настройки изменились после анализа':'')+
+  ' · Анализов: '+run.scan_count+' · Видимых актуальных рекомендаций: '+data.findings.filter(f=>f.active).length;
+ aiControls();renderAiFindings();
+}
+async function refreshAi(){
+ if(!canGroup('ai_read')){clearAi();return;}
+ if(aiBusy)return;
+ const seq=++aiSeq,epoch=authEpoch;aiState=null;aiControls();$('ai-findings').replaceChildren();
+ try{const data=await api('pushok-ai');if(seq===aiSeq&&epoch===authEpoch&&canGroup('ai_read')){renderAi(data);$('ai-status').textContent='';}}
+ catch(e){if(seq===aiSeq&&epoch===authEpoch){$('ai-summary').textContent='';$('ai-status').textContent=e.message;}}
+}
+async function mutateAi(path,method,data,message){
+ if(aiBusy||!aiState)return;
+ const seq=++aiSeq,epoch=authEpoch;aiBusy=true;aiControls();
+ try{
+  const result=await api(path,{method,data});
+  if(seq!==aiSeq||epoch!==authEpoch||!canGroup('ai_read'))return;
+  const fresh=path==='pushok-ai/scan'?result:await api('pushok-ai');
+  if(seq!==aiSeq||epoch!==authEpoch||!canGroup('ai_read'))return;
+  renderAi(fresh);$('ai-status').textContent=message;
+  if(!$('ai-history-panel').hidden)await refreshAiHistory(aiHistoryPage);
+ }catch(e){if(seq===aiSeq&&epoch===authEpoch){aiState=null;$('ai-findings').replaceChildren();$('ai-status').textContent=e.message+' Обновите раздел перед повтором.';}}
+ finally{if(seq===aiSeq&&epoch===authEpoch){aiBusy=false;aiControls();}}
+}
+$('ai-refresh').onclick=refreshAi;
+$('ai-filter').onchange=renderAiFindings;
+$('ai-policy-form').onsubmit=event=>{
+ event.preventDefault();if(role!=='owner'||!aiState||aiBusy)return;
+ const data={version:aiState.policy.version};
+ for(const k of AI_BOOLS)data[k]=$('ai-'+k).checked;
+ for(const k of AI_NUMBERS)data[k]=Number($('ai-'+k).value);
+ if(!data.enabled)data.automatic=false;
+ return mutateAi('pushok-ai/policy','PUT',data,'Настройки сохранены.');
+};
+$('ai-scan').onclick=()=>{if(canGroup('ai_scan')&&aiState?.policy.enabled&&!aiBusy)return mutateAi('pushok-ai/scan','POST',undefined,'Локальный анализ завершён. Бизнес-операции не выполнялись.');};
+$('ai-findings').onclick=async event=>{
+ const button=event.target.closest('[data-ai-action]');
+ if(!button||!canGroup('ai_review')||!aiState||aiBusy)return;
+ const f=aiState.findings.find(item=>item.code===button.dataset.aiCode);
+ if(!f?.active)return;
+ const action=button.dataset.aiAction,reason={acknowledge:'investigate',dismiss:'later',reopen:'revisit'}[action];
+ if(!reason)return;
+ const signature=JSON.stringify([f.code,f.version,action,reason]);
+ let intent=aiReviewIntents.get(f.code);
+ if(!intent||intent.signature!==signature){intent={signature,id:crypto.randomUUID()};aiReviewIntents.set(f.code,intent);}
+ await mutateAi('pushok-ai/findings/'+encodeURIComponent(f.code)+'/review','POST',{operation_id:intent.id,version:f.version,action,reason},'Решение записано в журнал. Настройки и деньги не изменены.');
+};
+async function refreshAiHistory(page=1){
+ if(!canGroup('ai_read')){clearAiHistory();return;}
+ const seq=++aiHistorySeq,epoch=authEpoch;
+ $('ai-history-panel').hidden=false;$('ai-history-list').replaceChildren();
+ $('ai-history-prev').disabled=true;$('ai-history-next').disabled=true;
+ try{
+  const data=await api('pushok-ai/history?page='+page);
+  if(seq!==aiHistorySeq||epoch!==authEpoch||!canGroup('ai_read'))return;
+  aiHistoryPage=data.page;
+  $('ai-history-list').innerHTML=data.events.map(e=>'<article class="admin-order"><b>'+esc(e.title)+'</b><p>'+esc(AI_ACTIONS[e.action]||e.action)+' · '+esc(dateTime(e.created))+' · '+esc(e.actor_role==='analysis'?'Pushok ИИ':STAFF_LABELS[e.actor_role]||e.actor_role)+(e.reason?' · '+esc(AI_REASONS[e.reason]||e.reason):'')+'</p></article>').join('')||'<p>Журнал пока пуст.</p>';
+  $('ai-history-page').textContent='Страница '+data.page+' · всего '+data.total;
+  $('ai-history-prev').disabled=data.page<=1;$('ai-history-next').disabled=data.page*data.page_size>=data.total;
+ }catch(e){if(seq===aiHistorySeq&&epoch===authEpoch)$('ai-history-list').textContent=e.message;}
+}
+$('ai-history-open').onclick=()=>refreshAiHistory(1);
+$('ai-history-prev').onclick=()=>{if(aiHistoryPage>1)return refreshAiHistory(aiHistoryPage-1);};
+$('ai-history-next').onclick=()=>{if(!$('ai-history-next').disabled)return refreshAiHistory(aiHistoryPage+1);};
+$('ai-history-close').onclick=clearAiHistory;
+
 // Настройки меню бот получает из базы при отправке очередного /start.
 let botMenuVersion=0,botMenuButtons=[],botMenuRequest=0;
 function menuFields(){
@@ -991,7 +1117,7 @@ async function refresh({plans = role==='owner' || canGroup('catalog')} = {}) {
   else if(role==='finance') await Promise.all([refreshAdsAdmin(),refreshOrders(),refreshCommerceAnalytics()]);
   else if(role==='panel_operator') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers(),refreshRouting()]);
   else if(role==='support') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshSupportAdmin()]);
-  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates(),refreshRolePolicies(),refreshModeration(),refreshRuntime('appearance'),refreshRuntime('sales'),refreshRuntime('notifications'),refreshPaymentPolicy(),refreshShopFinance(),refreshRouting(),refreshIdPolicy()]);}
+  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates(),refreshRolePolicies(),refreshModeration(),refreshRuntime('appearance'),refreshRuntime('sales'),refreshRuntime('notifications'),refreshPaymentPolicy(),refreshShopFinance(),refreshRouting(),refreshIdPolicy(),refreshAi()]);}
   renderManagementNav();
 }
 $('admin-login').onsubmit = async event => {
@@ -1012,7 +1138,7 @@ $('admin-login').onsubmit = async event => {
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{}); role='';
-  clearUpdates(); clearManagement(); clearRuntime(); clearStaffIndividual(); clearPaymentPolicy(); clearShopFinance(); clearRouting(); clearIdPolicy();
+  clearUpdates(); clearManagement(); clearRuntime(); clearStaffIndividual(); clearPaymentPolicy(); clearShopFinance(); clearRouting(); clearIdPolicy(); clearAi();
   protocolsRequest++; protocolCache = []; $('protocols-list').replaceChildren();
   $('protocols-status').textContent = ''; $('protocols-filter').value = 'all';
   $('protocols-panel').hidden = true; $('protocols-refresh').disabled = false;

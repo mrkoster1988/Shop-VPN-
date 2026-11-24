@@ -30,7 +30,7 @@ from . import shop_settings, runtime_settings, payment_policy, shop_finance, pla
 from . import config as c, providers, service, servers, server_routing, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, pushok_identity
+from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, pushok_identity, pushok_ai
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -59,6 +59,7 @@ async def lifespan(app):
         tasks.append(asyncio.create_task(service.worker()))
         tasks.append(asyncio.create_task(updates.worker()))
         tasks.append(asyncio.create_task(server_routing.worker()))
+        tasks.append(asyncio.create_task(pushok_ai.worker()))
         if c.BOT_TOKEN:
             tasks.append(asyncio.create_task(service.bot_loop()))
     yield
@@ -350,6 +351,27 @@ async def runtime_notifications_get():
 @app.put('/api/admin/runtime/notifications',dependencies=[Depends(admin)])
 async def runtime_notifications_update(data:runtime_settings.NotificationsUpdate):
     return runtime_settings.update('notifications',data)
+
+@app.get('/api/admin/pushok-ai',dependencies=[Depends(admin)])
+def pushok_ai_status(request:Request):
+    return pushok_ai.status(request.state.admin_actor)
+
+@app.put('/api/admin/pushok-ai/policy',dependencies=[Depends(admin)])
+def pushok_ai_policy(data:pushok_ai.PolicyUpdate):
+    return pushok_ai.update_policy(data)
+
+@app.post('/api/admin/pushok-ai/scan',dependencies=[Depends(admin)])
+def pushok_ai_scan(request:Request):
+    pushok_ai.scan(dict(service.worker_health))
+    return pushok_ai.status(request.state.admin_actor)
+
+@app.get('/api/admin/pushok-ai/history',dependencies=[Depends(admin)])
+def pushok_ai_history(request:Request,page:int=Query(default=1,ge=1,le=100000)):
+    return pushok_ai.history(request.state.admin_actor,page)
+
+@app.post('/api/admin/pushok-ai/findings/{code}/review',dependencies=[Depends(admin)])
+def pushok_ai_review(code:str,data:pushok_ai.Review,request:Request):
+    return pushok_ai.review(code,data,request.state.admin_actor)
 
 @app.get('/api/admin/pushok-id',dependencies=[Depends(admin)])
 async def pushok_id_admin():
