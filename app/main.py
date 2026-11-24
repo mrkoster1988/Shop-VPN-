@@ -184,6 +184,8 @@ class PlanFields(BaseModel):
     def check_free(self):
         if self.price != 0 and (self.free_activation_limit or self.free_traffic_gb or self.free_auto_renew or self.free_max_renewals):
             raise ValueError('Ограничения бесплатного тарифа доступны только при цене 0')
+        if self.free_auto_renew and self.free_traffic_gb:
+            raise ValueError('Автопродление тарифа с квотой трафика недоступно до реализации сброса счётчика 3x-ui')
         if self.free_auto_renew != (self.free_max_renewals > 0):
             raise ValueError('Для автопродления укажите число продлений от 1 до 12')
         if (self.price == 0) != (self.stars == 0):
