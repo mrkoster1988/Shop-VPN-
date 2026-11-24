@@ -4,6 +4,7 @@ Disabled by default. No MTProxy read-only token, no implicit payment,
 no remote API call on an authentication request. One claim per Shop user.
 """
 import logging
+import os
 import time
 import uuid
 
@@ -90,6 +91,14 @@ def enqueue(user_id: int) -> str:
         setting = conn.execute('SELECT * FROM flow_auto_policy WHERE id=1').fetchone()
         if not setting or not setting['enabled']:
             return 'disabled'
+        # This installation may restrict free Flow access to verified MTProxy
+        # identities. Registration in Shop alone must not spend the pilot quota.
+        if os.getenv('FLOW_TRIAL_MTPROXY_ONLY', '').lower() == 'true':
+            linked = conn.execute(
+                'SELECT 1 FROM flow_bridge_identities WHERE shop_user_id=?',
+                (user_id,)).fetchone()
+            if linked is None:
+                return 'not_mtproxy'
         if conn.execute('SELECT count(*) FROM flow_auto_grants').fetchone()[0] >= setting['max_users']:
             return 'limit'
         node = _node(conn)
