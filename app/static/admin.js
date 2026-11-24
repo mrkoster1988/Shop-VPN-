@@ -524,7 +524,9 @@ function planForm(plan) {
       <label>Дополнительных профилей (0 — только основной)<input name="device_limit" type="number" value="${plan.device_limit ?? 4}" min="0" max="20" step="1" required></label>
     </div>
     <label class="plan-enabled"><input name="enabled" type="checkbox" ${plan.enabled ? 'checked' : ''}> Доступен для новых покупок</label>
-    <button type="submit" class="small">Сохранить тариф</button>
+    <div class="record-actions"><button type="submit" class="small">Сохранить тариф</button>
+    ${role==='owner' && !plan.enabled && !['month','quarter','year'].includes(plan.id)
+      ? '<button type="button" class="danger-action" data-plan-delete="'+esc(plan.id)+'">Удалить неиспользуемый тариф</button>' : ''}</div>
   </form>`;
 }
 async function refreshShopSettings(){
@@ -1160,6 +1162,25 @@ $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method
   $('list').replaceChildren(); $('stats').replaceChildren(); $('plan-editors').replaceChildren();
   $('admin-notice').textContent = ''; $('error').textContent = ''; $('dashboard').hidden = true; $('admin-login').hidden = false;
 };
+$('plan-editors').onclick = async event => {
+  const button=event.target.closest('[data-plan-delete]');
+  if(!button || role!=='owner')return;
+  const id=button.dataset.planDelete;
+  if(!id || !confirm('Удалить неиспользуемый тариф '+id+'?'))return;
+  if(prompt('Для удаления тарифа введите УДАЛИТЬ','')!=='УДАЛИТЬ')return;
+  button.disabled=true;
+  const epoch=authEpoch;
+  try{
+    await api('plans/'+encodeURIComponent(id),{method:'DELETE'});
+    if(epoch===authEpoch){
+      button.closest('[data-plan-id]')?.remove();
+      $('admin-notice').textContent='Тариф '+id+' удалён. Оплаченные заказы не затронуты.';
+    }
+  }catch(error){
+    if(epoch===authEpoch)$('admin-notice').textContent=error.message;
+    button.disabled=false;
+  }
+};
 $('plan-editors').onsubmit = async event => {
   event.preventDefault();
   const form = event.target.closest('[data-plan-id]');
@@ -1259,8 +1280,18 @@ async function loadUser(page) {
     $('user-title').textContent = 'Пользователь № ' + user.id;
     $('user-details').innerHTML = `<p>Email: ${esc(user.email || '—')}</p><p>Telegram ID: ${esc(user.telegram_id ?? '—')}</p><p>Регистрация: ${esc(dateTime(user.created))}</p>`;
     $('user-subscriptions').innerHTML = data.subscriptions.length ? data.subscriptions.map(sub => {
-      const status = sub.access_active ? 'Активна' : sub.state === 'pending' ? 'Готовится' : 'Неактивна';
-      return `<article class="subscription"><b>${esc(protocolLabel(sub.protocol))}</b><p>${status} · Срок: ${esc(dateTime(sub.expires))}</p><p>Дополнительных профилей: ${sub.device_limit ?? 4}</p></article>`;
+      const status = sub.access_active ? 'Активна' : sub.state === 'pending' ? 'Готовится'
+        : sub.state === 'revoked' ? 'Доступ отозван' : 'Неактивна';
+      const tools = role==='owner'
+        ? `<div class="record-actions">
+          ${sub.state!=='revoked' ? '<button type="button" class="danger-action" data-subscription-revoke="'+esc(sub.id)+'">Отозвать доступ</button>' : ''}
+          ${sub.state==='revoked' ? '<button type="button" class="danger-action" data-subscription-delete="'+esc(sub.id)+'">Удалить запись</button>' : ''}
+          </div><p class="record-note">Сначала отзываются пиры на сервере. Оплаченные заказы и финансовая история сохраняются.</p>`
+        : '';
+      return `<article class="subscription"><b>${esc(protocolLabel(sub.protocol))}</b>
+        <p>${esc(status)} · Срок: ${esc(dateTime(sub.expires))}</p>
+        <p>Дополнительных профилей: ${sub.device_limit ?? 4}</p>
+        ${tools}</article>`;
     }).join('') : '<p>Подписок пока нет.</p>';
     $('user-orders').innerHTML = data.orders.length ? data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${order.days} дней · ${order.method==='referral'?'Бонус · '+order.days+' дней':order.amount+' '+(order.currency === 'XTR' ? '★' : '₽')}</b><p>${esc(protocolLabel(order.protocol))} · ${esc(orderStatus[order.status] || order.status)}</p><p>Заказ: ${esc(order.id)}</p>${order.promo_code?`<p>Код ${esc(order.promo_code)} · скидка ${order.discount} ${order.currency==='XTR'?'★':'₽'} от ${order.base_amount}</p>`:''}<p>${esc(dateTime(order.created))} · ${esc(order.method==='referral'?'Бонусное продление':order.method==='trial'?'Пробный доступ':order.method)}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}</article>`).join('') : '<p>Заказов пока нет.</p>';
     const pages = Math.max(1, Math.ceil(data.orders_total / data.orders_page_size));
@@ -1270,6 +1301,33 @@ async function loadUser(page) {
     $('user-error').textContent = '';
   } catch (error) { if (request === profileRequest && selectedUser === userId) $('user-error').textContent = error.message; }
 }
+// Destructive actions require the developer role and explicit confirmation.
+// Server failure never removes the card or pretends the peer was revoked.
+$('user-subscriptions').onclick = async event => {
+  const revoke=event.target.closest('[data-subscription-revoke]');
+  const erase=event.target.closest('[data-subscription-delete]');
+  const button=revoke || erase;
+  if(!button || role!=='owner' || selectedUser===null)return;
+  const sid=revoke?revoke.dataset.subscriptionRevoke:erase.dataset.subscriptionDelete;
+  if(typeof sid!=='string' || !sid)return;
+  const question=revoke
+    ? 'Отозвать подключение пользователя на сервере? История оплат сохранится.'
+    : 'Удалить запись подписки после подтверждённого отзыва пиров?';
+  if(!confirm(question))return;
+  if(erase && prompt('Для удаления записи введите УДАЛИТЬ','')!=='УДАЛИТЬ')return;
+  button.disabled=true;
+  const uid=selectedUser, epoch=authEpoch;
+  try{
+    await api('subscriptions/'+encodeURIComponent(sid)+(revoke?'/revoke':''),
+      {method:revoke?'POST':'DELETE'});
+    if(uid===selectedUser && epoch===authEpoch){
+      await loadUser(profilePage);
+      $('user-error').textContent=revoke?'Подключение отозвано.':'Запись подписки удалена.';
+    }
+  }catch(error){
+    if(uid===selectedUser && epoch===authEpoch)$('user-error').textContent=error.message;
+  }finally{button.disabled=false}
+};
 $('users-list').onclick = event => {
   const button = event.target.closest('[data-user]'); if (!button) return;
   openUser(button.dataset.user);
@@ -1320,7 +1378,10 @@ const serverState = {active:'Принимать новых', draining:'Толь�
 function serverCard(server) {
   const health = server.health === 'ok' ? 'API доступен' : server.health === 'error' ? 'Ошибка API' : 'Ещё не проверен';
   const panelExpiry = server.profile === 'wgdashboard' ? `<label><input name="schedule_expiry" type="checkbox" ${server.schedule_expiry?'checked':''}> Дублировать срок подписки заданием WGDashboard</label><label>Часовой пояс ОС панели<input name="panel_timezone" value="${esc(server.panel_timezone || 'UTC')}" maxlength="100" placeholder="Europe/Moscow" required></label><p class="muted">Панель удалит peer по расписанию, даже если Shop временно выключен. Укажите часовой пояс самого сервера WGDashboard.</p>` : '';
-  return `<form class="plan-editor" data-server="${esc(server.id)}" data-version="${server.version}"><h3>${esc(server.name)}</h3><p>${esc(protocolLabel(server.protocol))} · ${esc(serverProfileLabel[server.profile] || server.profile)} · ${health}</p><p>Проверка: ${esc(dateTime(server.checked_at))}</p><p class="muted">🔒 Профиль подключения сохранён в Shop. API-адрес и секреты намеренно не отображаются; это не подтверждение доступности сервера.</p><p>Занято: ${server.occupied} · Всего привязано: ${server.bound_subscriptions}</p><label>Название<input name="name" value="${esc(server.name)}" maxlength="80" required></label><label>Локация<input name="location" value="${esc(server.location)}" maxlength="80"></label><label>Лимит занятых подписок (0 — без лимита)<input name="capacity" type="number" min="0" max="1000000" value="${server.capacity}" required></label><label>Режим<select name="state">${Object.entries(serverState).map(([id,label])=>`<option value="${id}" ${server.state===id?'selected':''}>${label}</option>`).join('')}</select></label>${panelExpiry}<button type="submit" class="small">Сохранить настройки сервера</button><button type="button" class="small secondary" data-server-check="${esc(server.id)}">Проверить API</button><button type="button" class="text-link" data-server-edit="${esc(server.id)}">Профиль подключения</button><button type="button" class="text-link" data-server-credentials="${esc(server.id)}">Обновить доступ</button></form>`;
+  return `<form class="plan-editor" data-server="${esc(server.id)}" data-version="${server.version}"><h3>${esc(server.name)}</h3><p>${esc(protocolLabel(server.protocol))} · ${esc(serverProfileLabel[server.profile] || server.profile)} · ${health}</p><p>Проверка: ${esc(dateTime(server.checked_at))}</p><p class="muted">🔒 Профиль подключения сохранён в Shop. API-адрес и секреты намеренно не отображаются; это не подтверждение доступности сервера.</p><p>Занято: ${server.occupied} · Всего привязано: ${server.bound_subscriptions}</p><label>Название<input name="name" value="${esc(server.name)}" maxlength="80" required></label><label>Локация<input name="location" value="${esc(server.location)}" maxlength="80"></label><label>Лимит занятых подписок (0 — без лимита)<input name="capacity" type="number" min="0" max="1000000" value="${server.capacity}" required></label><label>Режим<select name="state">${Object.entries(serverState).map(([id,label])=>`<option value="${id}" ${server.state===id?'selected':''}>${label}</option>`).join('')}</select></label>${panelExpiry}<button type="submit" class="small">Сохранить настройки сервера</button><button type="button" class="small secondary" data-server-check="${esc(server.id)}">Проверить API</button><button type="button" class="text-link" data-server-edit="${esc(server.id)}">Профиль подключения</button><button type="button" class="text-link" data-server-credentials="${esc(server.id)}">Обновить доступ</button>
+    ${role==='owner' && server.state==='disabled' && !server.bound_subscriptions
+      ? '<button type="button" class="danger-action" data-server-delete="'+esc(server.id)+'">Удалить пустой сервер</button>' : ''}
+    </form>`;
 }
 function showServerNotice(message) {
   const previous = String($('servers-notice').textContent || '').trim();
@@ -1558,6 +1619,22 @@ $('server-list').onsubmit = async event => {
   }
 };
 $('server-list').onclick = async event => {
+  const remove=event.target.closest('[data-server-delete]');
+  if(remove && role==='owner'){
+    const id=remove.dataset.serverDelete;
+    if(!confirm('Удалить выключенный сервер без подписок и ключей?'))return;
+    if(prompt('Для удаления сервера введите УДАЛИТЬ','')!=='УДАЛИТЬ')return;
+    remove.disabled=true;
+    try{
+      await api('servers/'+encodeURIComponent(id),{method:'DELETE'});
+      await refreshServers();
+      showServerNotice('Пустой сервер удалён.');
+    }catch(error){
+      $('servers-notice').textContent=error.message;
+      remove.disabled=false;
+    }
+    return;
+  }
   const credentials=event.target.closest('[data-server-credentials]');
   if (credentials) { openServerCredentials(serverCache.find(s=>s.id===credentials.dataset.serverCredentials)); return; }
   const edit=event.target.closest('[data-server-edit]');
