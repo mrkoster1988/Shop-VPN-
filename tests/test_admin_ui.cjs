@@ -1032,3 +1032,36 @@ test('individual permission form is scoped to selected employee and rejects late
  assert.equal(p.element('staff-individual-editor').hidden,true);
  assert.equal(p.element('staff-individual-form').innerHTML,'');
 });
+
+
+test('finance parses rubles exactly and refuses fractional stars',()=>{
+ const p=adminPage();
+ assert.equal(p.run("parseFinanceAmount('123,45','RUB')"),12345);
+ assert.equal(p.run("parseFinanceAmount('0.01','RUB')"),1);
+ assert.equal(p.run("parseFinanceAmount('1.001','RUB')"),null);
+ assert.equal(p.run("parseFinanceAmount('1.2','XTR')"),null);
+ assert.equal(p.run("parseFinanceAmount('150','XTR')"),150);
+ assert.equal(p.run("parseFinanceAmount('1e3','RUB')"),null);
+});
+test('payment settings expose readiness without secrets and reject stale updates',async()=>{
+ const p=adminPage(),load=p.run("role='owner';refreshPaymentPolicy()");
+ p.reply({version:3,web_mode:'manual',effective_web_mode:'manual',web_enabled:true,stars_enabled:true,manual_text:'Fixture',merchant_configured:false,stars_bot_configured:true,open_web_orders:1});await load;
+ assert.match(p.element('shop-payment-readiness').textContent,/Незакрытые счета: 1/);
+ p.element('shop-payment-stars').checked=false;
+ const pending=p.element('shop-payment-form').onsubmit({preventDefault(){}});
+ assert.deepEqual(p.bodies[1],{version:3,web_mode:'manual',web_enabled:true,stars_enabled:false,manual_text:'Fixture'});
+ p.replyAt(1,{detail:'Настройки изменились'},409);await pending;
+ assert.equal(p.element('shop-payment-save').disabled,true);
+});
+test('finance view-only role cannot record and late responses cannot restore journal',async()=>{
+ const p=adminPage();
+ const read=p.run("acceptStaffRole({role:'administrator',permissions:['finance_read']});refreshShopFinance()");
+ const report={totals:{RUB:{receipts:12345,refunds:0,fees:0,expenses:0,net_recorded:12345},XTR:{receipts:90,refunds:0,fees:0,expenses:0,net_recorded:90}},period:{start:1,end:2},missing_payment_timestamp:1,receipts_by_method:[],entries:[{id:'e1',kind:'expense',currency:'RUB',amount_minor:100,occurred_at:1,reference:'<img>',note:'<script>fixture</script>',state:'recorded'}],page:1,page_size:25,total:1};
+ p.reply(report);await read;
+ assert.equal(p.element('shop-finance-entry-form').hidden,true);
+ assert.match(p.element('shop-finance-summary').innerHTML,/123,45/);
+ assert.match(p.element('shop-finance-list').innerHTML,/&lt;script&gt;/);
+ assert.doesNotMatch(p.element('shop-finance-list').innerHTML,/<script|data-finance-void/);
+ const pending=p.run('refreshShopFinance()');p.run("$('exit').onclick()");p.replyAt(1,report);await pending;
+ assert.equal(p.element('shop-finance-list').innerHTML,'');
+});

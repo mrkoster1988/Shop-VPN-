@@ -26,7 +26,7 @@ from starlette.applications import Starlette
 from starlette.routing import Mount
 from . import ads_bookings as bookings, ads_finance as finance
 from . import support as support_cases
-from . import shop_settings, runtime_settings, platforms, protocols, bot_menu as menu_editor, payment_events
+from . import shop_settings, runtime_settings, payment_policy, shop_finance, platforms, protocols, bot_menu as menu_editor, payment_events
 from . import config as c, providers, service, servers, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
@@ -163,6 +163,7 @@ class Purchase(BaseModel):
     promo_version: int | None = Field(default=None,ge=1,strict=True)
     quoted_amount: int | None = Field(default=None,ge=1,le=1000000,strict=True)
     quote_currency: Literal['RUB','XTR'] | None = None
+    payment_policy_version: int | None = Field(default=None,ge=0,strict=True)
 
 
 class PlanFields(BaseModel):
@@ -348,6 +349,28 @@ async def runtime_notifications_get():
 async def runtime_notifications_update(data:runtime_settings.NotificationsUpdate):
     return runtime_settings.update('notifications',data)
 
+@app.get('/api/admin/payment-policy',dependencies=[Depends(admin)])
+async def payment_policy_get():
+    return payment_policy.get()
+
+@app.put('/api/admin/payment-policy',dependencies=[Depends(admin)])
+async def payment_policy_update(data:payment_policy.Update):
+    async with service.lock:return payment_policy.update(data)
+
+@app.get('/api/admin/shop-finance',dependencies=[Depends(admin)])
+async def shop_finance_report(start:int|None=Query(default=None,ge=0,le=commerce_analytics.MAX_TIME),
+                              end:int|None=Query(default=None,ge=1,le=commerce_analytics.MAX_TIME),
+                              page:int=Query(default=1,ge=1,le=100000)):
+    return shop_finance.report(start,end,page)
+
+@app.post('/api/admin/shop-finance/entries',dependencies=[Depends(admin)])
+async def shop_finance_entry(data:shop_finance.Entry,request:Request):
+    return shop_finance.record(data,request.state.admin_actor)
+
+@app.post('/api/admin/shop-finance/entries/{eid}/void',dependencies=[Depends(admin)])
+async def shop_finance_void(eid:UUID,data:shop_finance.Void,request:Request):
+    return shop_finance.void(str(eid),data,request.state.admin_actor)
+
 @app.get('/api/admin/bot-menu',dependencies=[Depends(admin)])
 async def bot_menu_get(request: Request):
     return menu_editor.get()
@@ -425,12 +448,13 @@ async def catalog(request: Request):
     public_settings=shop_settings.public()
     options,sale_notice=runtime_settings.catalog_options(customer,providers.available)
     appearance=runtime_settings.get('appearance')
+    payment=payment_policy.catalog(customer)
     return {'plans': plans, 'currency': 'XTR' if tg else 'RUB', 'protocols': options,
             'appearance':{k:v for k,v in appearance.items() if k not in ('version','updated')},
             'sale_notice':sale_notice,
-            'trial':trials.offer(customer), 'payment_mode': 'stars' if tg else c.PAYMENT_MODE, 'bot_username': c.BOT_USERNAME,
+            'trial':trials.offer(customer), **payment, 'bot_username': c.BOT_USERNAME,
             'support': public_settings['support'],
-            'receipts': not tg and os.getenv('YOOKASSA_RECEIPTS') == 'true',
+            'receipts': not tg and payment['payment_mode'] in ('yookassa','sbp') and os.getenv('YOOKASSA_RECEIPTS') == 'true',
             'terms': public_settings['terms']}
 
 @app.get('/api/support/tickets')
@@ -698,16 +722,17 @@ async def referral_policy_update(data: referrals.PolicyUpdate):
 async def purchase(data: Purchase, user=Depends(current_user)):
     if not providers.available(data.protocol, user['id']):
         raise HTTPException(503, 'Этот способ подключения ещё не настроен')
-    method = 'stars' if user['telegram_id'] else c.PAYMENT_MODE
-    if method == 'stars' and (not c.BOT_TOKEN or not shop_settings.terms_configured()):
-        raise HTTPException(503, 'Владелец ещё не настроил оплату и условия продажи в Telegram')
-    if method == 'stars' and not data.accept_terms:
-        raise HTTPException(422, 'Подтвердите согласие с условиями продажи')
-    email = email_address(data.receipt_email) if data.receipt_email else user['email']
-    if method in ('yookassa', 'sbp') and os.getenv('YOOKASSA_RECEIPTS') == 'true' and not email:
-        raise HTTPException(422, 'Укажите email для чека')
     async with service.lock:
+        method = payment_policy.method_for(user)
+        if method == 'stars' and (not c.BOT_TOKEN or not shop_settings.terms_configured()):
+            raise HTTPException(503, 'Владелец ещё не настроил оплату и условия продажи в Telegram')
+        if method == 'stars' and not data.accept_terms:
+            raise HTTPException(422, 'Подтвердите согласие с условиями продажи')
+        email = email_address(data.receipt_email) if data.receipt_email else user['email']
+        if method in ('yookassa', 'sbp') and os.getenv('YOOKASSA_RECEIPTS') == 'true' and not email:
+            raise HTTPException(422, 'Укажите email для чека')
         order = promos.make_order(data,user,method,email)
+        method = order['method']
         if method == 'stars' and order['status']=='pending' and not order['payment_url']:
             try:
                 url = await providers.stars_invoice(order)
@@ -732,7 +757,7 @@ async def order_status(order_id: str, user=Depends(current_user)):
         raise HTTPException(404, 'Заказ не найден')
     return {k: order[k] for k in ('id', 'protocol', 'plan_name', 'days', 'amount', 'currency', 'method', 'status', 'payment_url','device_limit','kind','base_amount','discount','promo_code','promo_percent')} | {
         'progress': order_progress.public(order),
-        'instructions': os.getenv('MANUAL_PAYMENT_TEXT', 'Свяжитесь с поддержкой и сообщите номер заказа.')
+        'instructions': payment_policy.manual_instructions()
         if order['method'] == 'manual' and order['status'] in ('pending','checkout') else ''}
 
 @app.post('/api/payments/yookassa/notify')

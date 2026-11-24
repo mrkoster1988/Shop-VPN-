@@ -29,7 +29,7 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
      if(p===base+'/')return route.fulfill({contentType:'text/html',body:fs.readFileSync(root+'/app/static/index.html','utf8').replaceAll('__BASE_PATH__',base)});
      if(p.startsWith(base+'/static/')){
       const file=p.slice((base+'/static/').length);
-      if(['app.js','style.css','pushok-icons.svg'].includes(file)){
+      if(['app.js','flow-links.js','style.css','pushok-icons.svg'].includes(file)){
        if(file==='pushok-icons.svg'){sprites.push(p);if(missing)return route.fulfill({status:404,body:''});}
        return route.fulfill({contentType:file.endsWith('.js')?'text/javascript':file.endsWith('.svg')?'image/svg+xml':'text/css',body:fs.readFileSync(root+'/app/static/'+file)});
       }

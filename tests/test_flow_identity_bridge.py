@@ -54,7 +54,7 @@ def test_missing_secret_no_account_no_peer_and_malformed_input(client, monkeypat
     for token in [_ticket(aud='other-service'),
                   _ticket(secret='2b'*32),_ticket(iat_delta=-300),
                   _ticket(iat_delta=120),
-                  _ticket()[:-1]+'0']:
+                  (lambda signed: signed[:-1]+('1' if signed[-1]=='0' else '0'))(_ticket())]:
         assert _call(client,token).status_code==401
     assert one('SELECT count(*) AS n FROM users')['n']==0
 

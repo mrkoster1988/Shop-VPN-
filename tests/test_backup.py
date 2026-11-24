@@ -257,3 +257,20 @@ def test_runtime_configuration_and_role_limits_survive_encrypted_backup(source,t
         assert json.loads(content)['brand_name']=='Backup Shop' and version==1
         assert conn.execute('SELECT permissions,version FROM staff_permission_limits WHERE staff_id=?',(staff_id,)).fetchone()==('[]',1)
         assert conn.execute('PRAGMA foreign_key_check').fetchall()==[]
+
+
+def test_shop_finance_and_payment_policy_survive_encrypted_restore(source,tmp_path):
+    from app import payment_policy,shop_finance
+    import time
+    payment_policy.update(payment_policy.Update(version=0,web_mode='manual',web_enabled=False,
+        stars_enabled=True,manual_text='Fixture instructions'))
+    saved=shop_finance.record(shop_finance.Entry(operation_id=uuid.uuid4(),kind='expense',
+        category='server',currency='RUB',amount_minor=12550,occurred_at=int(time.time())-1,
+        reference='fixture-server',note='Confirmed fixture',verified=True),{'id':None})
+    create(source);target=tmp_path/'finance-restored'
+    b.restore(source[2],PASSWORD,target)
+    with sqlite3.connect(target/'shop.db') as conn:
+        assert conn.execute('SELECT web_enabled,version FROM shop_payment_policy').fetchone()==(0,1)
+        assert conn.execute('SELECT amount_minor,state FROM shop_finance_entries WHERE id=?',(saved['id'],)).fetchone()==(12550,'recorded')
+        assert conn.execute('SELECT count(*) FROM shop_finance_actions').fetchone()==(1,)
+        assert conn.execute('PRAGMA foreign_key_check').fetchall()==[]

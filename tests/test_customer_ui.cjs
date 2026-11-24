@@ -813,3 +813,15 @@ test('storefront applies customer-facing text safely and sales pause independent
  assert.equal(p.element('trial-start').disabled,false);
  await assert.rejects(p.run("beginCheckout('month')"),/Продажи временно закрыты/);
 });
+
+
+test('payment pause disables paid checkout but preserves eligible trial',async()=>{
+ const p=await customerPage();
+ p.state.catalog.payment_available=false;p.state.catalog.payment_notice='Оплата приостановлена';
+ p.state.catalog.trial={enabled:true,eligible:true,days:1,version:1,claim:null};
+ await p.run('refreshMe()');
+ assert.equal(p.element('provider-note').textContent,'Оплата приостановлена');
+ assert.match(p.element('plan-list').innerHTML,/disabled/);
+ assert.equal(p.element('trial-start').disabled,false);
+ await assert.rejects(p.run("beginCheckout('month')"),/Оплата приостановлена/);
+});
