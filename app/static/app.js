@@ -1019,7 +1019,7 @@ document.querySelectorAll('[data-shop-route]').forEach(link => {
     }
   });
 });
-window.addEventListener('hashchange', () => {
+window.addEventListener?.('hashchange', () => {
   const hash = location.hash.slice(1);
   if (!['home','plans','how','help'].includes(hash)) return;
   const chosen = hash === 'how' ? 'plans' : hash;
