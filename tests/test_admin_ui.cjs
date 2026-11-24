@@ -773,7 +773,7 @@ test('credential dialog chooses token fields and sends no endpoint or stale pass
   assert.equal(page.element('server-credentials-token').value,'');
   assert.equal(page.element('server-credentials-password').value,'');
   page.replyAt(1,{servers:[]});await request;
-  assert.match(page.element('admin-notice').textContent,/Проверьте API/);
+  assert.match(page.element('servers-notice').textContent,/Проверьте API/);
 });
 
 test('legacy credential dialog preserves login when changing password only',async()=>{
@@ -1237,7 +1237,27 @@ test('saving server succeeded even when refreshing server list fails',async()=>{
   await new Promise(setImmediate);
   assert.equal(page.requests.length,2);
   page.replyAt(1,{detail:'Список временно недоступен'},503);await request;
-  assert.match(page.element('admin-notice').textContent,/Профиль подключения сохранён/);
+  assert.match(page.element('servers-notice').textContent,/Профиль подключения сохранён/);
   assert.match(page.element('servers-notice').textContent,/список серверов не обновился/);
   assert.equal(page.element('server-dialog').open,false);
+});
+
+
+test('successful server creation confirms persistence next to servers, not tariffs',async()=>{
+  class Fields{constructor(form){this.fields=form.fields;}get(key){return this.fields[key];}}
+  const page=adminPage({FormData:Fields});
+  const form=mockWireGuardServerForm(page);
+  form.fields.url='https://wg.example';
+  form.elements.url.value='https://wg.example';
+  const request=page.run("serverWizardStep=3; $('server-form').onsubmit({preventDefault(){},target:$('server-form')})");
+  page.replyAt(0,{id:'wg-1',profile:'wgdashboard'});
+  await new Promise(setImmediate);
+  page.replyAt(1,{servers:[{
+    id:'wg-1',name:'WG node',location:'',profile:'wgdashboard',protocol:'wg',
+    state:'disabled',capacity:0,version:1,health:'unknown',checked_at:null,
+    occupied:0,bound_subscriptions:0,
+  }],unassigned_subscriptions:0});await request;
+  assert.match(page.element('servers-notice').textContent,/Профиль подключения сохранён/);
+  assert.equal(page.element('admin-notice').textContent,'');
+  assert.match(page.element('server-list').innerHTML,/Профиль подключения сохранён в Shop/);
 });
