@@ -103,11 +103,12 @@ async def safety(request, call_next):
             return JSONResponse({'detail': 'Слишком большой запрос'}, status_code=413)
     if private_feed or path.startswith('/api/'):
         ip = request.client.host if request.client else 'unknown'
-        bucket = hits[(ip, 'sub' if private_feed else 'auth' if path.startswith('/api/auth/') else 'api')]
+        category='sub' if private_feed else 'id_approval' if path=='/api/auth/pushok-id/approve' else 'id_auth' if path.startswith('/api/auth/pushok-id/') else 'auth' if path.startswith('/api/auth/') else 'api'
+        bucket=hits[(ip,category)]
         now = time.monotonic()
         while bucket and bucket[0] < now - 60:
             bucket.popleft()
-        limit = 60 if private_feed else 20 if path.startswith(('/api/auth/','/api/admin/auth/')) else 180
+        limit = 60 if private_feed else 120 if category=='id_approval' else 30 if category=='id_auth' else 20 if path.startswith(('/api/auth/','/api/admin/auth/')) else 180
         if len(bucket) >= limit:
             return JSONResponse({'detail': 'Слишком много запросов. Подождите минуту.'}, status_code=429,headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer'})
         bucket.append(now)

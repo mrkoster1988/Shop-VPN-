@@ -242,7 +242,7 @@ function acceptStaffRole(result){
   delegatedPermissions=new Set(Array.isArray(result.permissions)?result.permissions.filter(x=>typeof x==='string'):[]);
 }
 const MANAGEMENT_SECTIONS=[
-  ['shop-settings','store_settings','Настройки'],['appearance-section','store_settings','Оформление'],['sales-controls-section','sales_controls','Продажи'],['payment-policy-section','payment_settings','Оплата'],['shop-finance-section','finance_read','Финансы Shop'],['notifications-section','notifications','Уведомления'],['updates-panel','developer','Обновления'],
+  ['shop-settings','store_settings','Настройки'],['appearance-section','store_settings','Оформление'],['pushok-id-settings','developer','Pushok ID'],['sales-controls-section','sales_controls','Продажи'],['payment-policy-section','payment_settings','Оплата'],['shop-finance-section','finance_read','Финансы Shop'],['notifications-section','notifications','Уведомления'],['updates-panel','developer','Обновления'],
   ['bot-menu-panel','bot_menu','Меню Telegram'],['staff-management','developer','Сотрудники'],
   ['role-policy-section','developer','Полномочия'],['moderation-section','moderation','Модерация'],
   ['support-admin','support','Поддержка'],['commerce-analytics','analytics','Аналитика'],
@@ -727,6 +727,39 @@ $('routing-nodes').onclick=event=>{
 };
 $('routing-history-close').onclick=clearRoutingHistory;
 
+// Интеграционные ключи и запуск доверенной авторизации — только разработчик.
+let idPolicySeq=0,idPolicyVersion=null,idPolicyBusy=false;
+function clearIdPolicy(){
+ idPolicySeq++;idPolicyVersion=null;idPolicyBusy=false;
+ $('id-policy-enabled').checked=false;$('id-policy-registration').checked=false;
+ $('id-policy-readiness').textContent='';$('id-policy-status').textContent='';$('id-policy-save').disabled=true;
+}
+function renderIdPolicy(data){
+ if(!Number.isSafeInteger(data.version)||data.version<0)throw new Error('Не удалось прочитать версию');
+ idPolicyVersion=data.version;
+ $('id-policy-enabled').checked=data.enabled===true;$('id-policy-registration').checked=data.allow_new_accounts===true;
+ $('id-policy-readiness').textContent='Локальная конфигурация: '+(data.configured?'настроена':'не настроена')+' · Связано: '+data.linked_accounts+
+ ' · Ожидающие запросы: '+data.pending_requests+' · Сеансы: '+data.active_id_sessions+
+ ' · Срок Shop-сеанса: '+Math.floor(data.session_ttl/60)+' мин. · Общий кошелёк не подключён. Центральный issuer требует отдельной проверки.';
+ $('id-policy-save').disabled=false;
+}
+async function refreshIdPolicy(){
+ if(role!=='owner'){clearIdPolicy();return;}
+ if(idPolicyBusy)return;const seq=++idPolicySeq,epoch=authEpoch;idPolicyVersion=null;$('id-policy-save').disabled=true;
+ try{const data=await api('pushok-id');if(seq===idPolicySeq&&epoch===authEpoch&&role==='owner'){renderIdPolicy(data);$('id-policy-status').textContent='';}}
+ catch(e){if(seq===idPolicySeq&&epoch===authEpoch)$('id-policy-status').textContent=e.message;}
+}
+$('id-policy-refresh').onclick=refreshIdPolicy;
+$('id-policy-form').onsubmit=async event=>{
+ event.preventDefault();if(role!=='owner'||idPolicyBusy||idPolicyVersion===null)return;
+ const data={version:idPolicyVersion,enabled:$('id-policy-enabled').checked,allow_new_accounts:$('id-policy-registration').checked};
+ if(data.enabled&&!data.allow_new_accounts){/* Existing verified accounts only. */}
+ const seq=++idPolicySeq,epoch=authEpoch;idPolicyBusy=true;idPolicyVersion=null;$('id-policy-save').disabled=true;
+ try{const result=await api('pushok-id',{method:'PUT',data});if(seq===idPolicySeq&&epoch===authEpoch&&role==='owner'){renderIdPolicy(result);$('id-policy-status').textContent='Настройки сохранены.';}}
+ catch(e){if(seq===idPolicySeq&&epoch===authEpoch)$('id-policy-status').textContent=e.message+' Обновите раздел перед повтором.';}
+ finally{if(seq===idPolicySeq&&epoch===authEpoch)idPolicyBusy=false;}
+};
+
 // Настройки меню бот получает из базы при отправке очередного /start.
 let botMenuVersion=0,botMenuButtons=[],botMenuRequest=0;
 function menuFields(){
@@ -959,7 +992,7 @@ async function refresh({plans = role==='owner' || canGroup('catalog')} = {}) {
   else if(role==='finance') await Promise.all([refreshAdsAdmin(),refreshOrders(),refreshCommerceAnalytics()]);
   else if(role==='panel_operator') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers(),refreshRouting()]);
   else if(role==='support') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshSupportAdmin()]);
-  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates(),refreshRolePolicies(),refreshModeration(),refreshRuntime('appearance'),refreshRuntime('sales'),refreshRuntime('notifications'),refreshPaymentPolicy(),refreshShopFinance(),refreshRouting()]);}
+  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates(),refreshRolePolicies(),refreshModeration(),refreshRuntime('appearance'),refreshRuntime('sales'),refreshRuntime('notifications'),refreshPaymentPolicy(),refreshShopFinance(),refreshRouting(),refreshIdPolicy()]);}
   renderManagementNav();
 }
 $('admin-login').onsubmit = async event => {
@@ -980,7 +1013,7 @@ $('admin-login').onsubmit = async event => {
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{}); role='';
-  clearUpdates(); clearManagement(); clearRuntime(); clearStaffIndividual(); clearPaymentPolicy(); clearShopFinance(); clearRouting();
+  clearUpdates(); clearManagement(); clearRuntime(); clearStaffIndividual(); clearPaymentPolicy(); clearShopFinance(); clearRouting(); clearIdPolicy();
   protocolsRequest++; protocolCache = []; $('protocols-list').replaceChildren();
   $('protocols-status').textContent = ''; $('protocols-filter').value = 'all';
   $('protocols-panel').hidden = true; $('protocols-refresh').disabled = false;

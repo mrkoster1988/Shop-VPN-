@@ -14,7 +14,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from . import config as c
 from .db import db
@@ -52,7 +52,13 @@ class Finish(BaseModel):
     model_config={'extra':'forbid'}
     confirmation:str=Field(pattern=r'^[a-f0-9]{64}$',strict=True)
     subject:UUID
-    confirm:Literal[True]
+    confirm:bool=Field(strict=True)
+
+    @field_validator('confirm')
+    @classmethod
+    def explicit(cls,value):
+        if not value:raise ValueError('Требуется явное подтверждение')
+        return value
 
 
 def configuration():
@@ -67,6 +73,7 @@ def configuration():
         or key in (c.ADMIN_TOKEN,os.getenv('FLOW_SHOP_BRIDGE_SECRET',''),os.getenv('PARTNER_WEBHOOK_SECRET',''))
         or not _AUDIENCE.fullmatch(audience) or url.scheme!='https' or not url.hostname
         or url.username or url.password or url.query or url.fragment
+        or not re.fullmatch(r'[A-Za-z0-9.-]+',url.hostname or '')
         or not re.fullmatch(r'(?:/[A-Za-z0-9_-]+)*',url.path)
         or any(ord(ch)<33 or ord(ch)>126 for ch in portal)):
         return None
@@ -251,10 +258,9 @@ def status(request):
 
 def finish(data,request):
     """Связывание и выдача короткой Shop-сессии только после явного подтверждения браузера."""
-    now=int(time.time())
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
-        cfg,p=_enabled(conn)
+        now=int(time.time());cfg,p=_enabled(conn)
         row=_request(conn,request,now,cfg,p)
         if not row or not row['subject'] or not hmac.compare_digest(row['request_hash'],data.confirmation) or row['subject']!=str(data.subject):
             raise HTTPException(409,'Подтверждение изменилось или истекло. Начните вход заново.')
