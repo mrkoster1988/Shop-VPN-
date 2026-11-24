@@ -176,8 +176,12 @@ class PlanFields(BaseModel):
     stars: int = Field(ge=0, le=100000, strict=True)
     enabled: bool = Field(strict=True)
     device_limit: int = Field(default=4,ge=0,le=20,strict=True)
+    free_activation_limit: int = Field(default=0,ge=0,le=1000000,strict=True)
+    free_traffic_gb: int = Field(default=0,ge=0,le=10000,strict=True)
     @model_validator(mode='after')
     def check_free(self):
+        if self.price != 0 and (self.free_activation_limit or self.free_traffic_gb):
+            raise ValueError('Ограничения бесплатного тарифа доступны только при цене 0')
         if (self.price == 0) != (self.stars == 0):
             raise ValueError('Бесплатный тариф должен стоить 0 ₽ и 0 Stars одновременно')
         return self
@@ -460,7 +464,7 @@ async def catalog(request: Request):
     except HTTPException:
         customer = None
         tg = False
-    plans = [{**p, 'price': 0 if p['is_free'] else (p['stars'] if tg else p['price']), 'stars': 0 if p['is_free'] else p['stars']} for p in all_rows('SELECT id,name,days,price,stars,is_free,version,device_limit FROM plans WHERE enabled=1 ORDER BY position,id')]
+    plans = [{**p, 'price': 0 if p['is_free'] else (p['stars'] if tg else p['price']), 'stars': 0 if p['is_free'] else p['stars']} for p in all_rows('SELECT id,name,days,price,stars,is_free,version,device_limit,free_activation_limit,free_traffic_gb FROM plans WHERE enabled=1 ORDER BY position,id')]
     public_settings=shop_settings.public()
     options,sale_notice=runtime_settings.catalog_options(customer,providers.available)
     appearance=runtime_settings.get('appearance')
@@ -1237,8 +1241,8 @@ async def create_plan(data: PlanCreate):
             if conn.execute('SELECT 1 FROM plans WHERE id=?', (data.id,)).fetchone():
                 raise HTTPException(409, 'Тариф с таким кодом уже существует. Обновите список тарифов.')
             position = conn.execute('SELECT coalesce(max(position),-1)+1 FROM plans').fetchone()[0]
-            conn.execute('INSERT INTO plans(id,name,days,price,stars,is_free,enabled,position,updated,device_limit) VALUES (?,?,?,?,?,?,?,?,?,?)',
-                         (data.id, data.name, data.days, max(1,data.price), max(1,data.stars), int(data.price==0), int(data.enabled), position, int(time.time()),data.device_limit))
+            conn.execute('INSERT INTO plans(id,name,days,price,stars,is_free,enabled,position,updated,device_limit,free_activation_limit,free_traffic_gb) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
+                         (data.id, data.name, data.days, max(1,data.price), max(1,data.stars), int(data.price==0), int(data.enabled), position, int(time.time()),data.device_limit,data.free_activation_limit,data.free_traffic_gb))
             saved = dict(conn.execute('SELECT * FROM plans WHERE id=?', (data.id,)).fetchone())
             conn.execute('INSERT INTO plan_changes(plan_id,created,before_data,after_data) VALUES (?,?,?,?)',
                          (data.id, saved['updated'], 'null', json.dumps(saved, ensure_ascii=False)))
@@ -1257,8 +1261,8 @@ async def update_plan(plan_id: str, data: PlanUpdate):
                 raise HTTPException(409, 'Тариф уже изменён. Обновите страницу перед сохранением.')
             if all((0 if before['is_free'] else before[key]) == value for key, value in data.model_dump(exclude={'version','device_limit'},exclude_none=True).items() if key in ('price','stars')) and all(before[key] == value for key, value in data.model_dump(exclude={'version','price','stars'},exclude_none=True).items()):
                 return admin_plan(before)
-            conn.execute('UPDATE plans SET name=?,days=?,price=?,stars=?,is_free=?,enabled=?,device_limit=?,version=version+1,updated=? WHERE id=?',
-                         (data.name, data.days, max(1,data.price), max(1,data.stars), int(data.price==0), int(data.enabled),before['device_limit'] if data.device_limit is None else data.device_limit,int(time.time()),plan_id))
+            conn.execute('UPDATE plans SET name=?,days=?,price=?,stars=?,is_free=?,enabled=?,device_limit=?,free_activation_limit=?,free_traffic_gb=?,version=version+1,updated=? WHERE id=?',
+                         (data.name, data.days, max(1,data.price), max(1,data.stars), int(data.price==0), int(data.enabled),before['device_limit'] if data.device_limit is None else data.device_limit,data.free_activation_limit,data.free_traffic_gb,int(time.time()),plan_id))
             after = dict(conn.execute('SELECT * FROM plans WHERE id=?', (plan_id,)).fetchone())
             conn.execute('INSERT INTO plan_changes(plan_id,created,before_data,after_data) VALUES (?,?,?,?)',
                          (plan_id, after['updated'], json.dumps(before, ensure_ascii=False), json.dumps(after, ensure_ascii=False)))
