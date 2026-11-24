@@ -1125,3 +1125,46 @@ def test_free_plan_preserves_legacy_positive_prices_in_db(client):
     assert admin.status_code==200
     item=next(x for x in admin.json()['plans'] if x['id']=='month')
     assert item['price']==item['stars']==0
+
+
+def test_pending_paid_order_prevents_free_renewal(client, monkeypatch):
+    register(client)
+    assert save_plan(client,plan_edit(client,price=0,stars=0,
+        free_auto_renew=True,free_max_renewals=2)).status_code==200
+    free=client.post('/api/orders',json={
+        'plan':'month','plan_version':2,'protocol':'xui'})
+    assert free.status_code==200
+    async def provision(sub):return 'vless://'+sub['id']
+    monkeypatch.setattr(providers,'provision',provision)
+    asyncio.run(service.fulfill(free.json()['id']))
+    execute("UPDATE subscriptions SET expires=?",(int(time.time())+30,))
+    # A paid purchase is already in progress; do not grant a competing period.
+    assert save_plan(client,plan_edit(client,price=299,stars=150)).status_code==200
+    paid=client.post('/api/orders',json={'plan':'month','plan_version':3,'protocol':'xui'})
+    assert paid.status_code==200
+    service.enqueue_free_renewals(int(time.time()))
+    assert one("SELECT count(*) AS n FROM orders WHERE kind='free_renewal'")['n']==0
+
+
+def test_free_renewal_is_idempotent_when_worker_runs_twice(client, monkeypatch):
+    register(client)
+    assert save_plan(client,plan_edit(client,price=0,stars=0,
+        free_auto_renew=True,free_max_renewals=2)).status_code==200
+    made=client.post('/api/orders',json={'plan':'month','plan_version':2,'protocol':'xui'})
+    assert made.status_code==200
+    calls=[]
+    async def provision(sub):
+        calls.append(dict(sub))
+        return 'vless://'+sub['id']
+    monkeypatch.setattr(providers,'provision',provision)
+    asyncio.run(service.fulfill(made.json()['id']))
+    execute("UPDATE subscriptions SET expires=?",(int(time.time())+30,))
+    service.enqueue_free_renewals(int(time.time()))
+    service.enqueue_free_renewals(int(time.time()))
+    queued=one("SELECT id FROM orders WHERE kind='free_renewal' AND status='paid'")
+    assert queued is not None
+    assert one("SELECT count(*) AS n FROM orders WHERE kind='free_renewal'")['n']==1
+    asyncio.run(service.fulfill(queued['id']))
+    asyncio.run(service.fulfill(queued['id']))
+    assert one("SELECT free_renewals_used FROM subscriptions")['free_renewals_used']==1
+    assert len(calls)==2
