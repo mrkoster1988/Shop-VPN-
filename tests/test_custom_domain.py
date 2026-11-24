@@ -17,7 +17,7 @@ def test_independent_owner_domain_controls_links_cookies_and_origin(client,monke
     with TestClient(create_app(prefix),base_url=origin) as shop:
         page=shop.get(prefix+'/')
         assert page.status_code==200 and 'content="'+prefix+'"' in page.text
-        assert 'pushok.shop' not in page.text and 'href="'+prefix+'/static/style.css"' in page.text
+        assert 'pushok.shop' not in page.text and 'href="'+prefix+'/static/style.css?v=' in page.text
         response=shop.post(prefix+'/api/auth/register',json={'email':'owner@example.invalid','password':'long-owner-password'},headers={'Origin':origin})
         assert response.status_code==200
         assert 'Secure' in response.headers['set-cookie'] and 'Path='+prefix+'/' in response.headers['set-cookie']
