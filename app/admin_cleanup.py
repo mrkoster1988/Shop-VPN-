@@ -138,6 +138,33 @@ async def revoke_subscription(sid: str):
         return {'ok': True, 'status': 'revoked'}
 
 
+def purge_blocker(conn, sub):
+    """A customer-safe reason why this subscription cannot be purged."""
+    sid = sub['id']
+    if sub['state'] != 'revoked' or not conn.execute(
+            'SELECT 1 FROM admin_subscription_revocations WHERE subscription_id=?',
+            (sid,)).fetchone():
+        return 'Сначала нужно отозвать подключение на сервере.'
+    if _blocked_orders(conn, sub['user_id'], sub['protocol']):
+        return 'Есть незавершённые заказы этого протокола.'
+    if conn.execute('SELECT 1 FROM flow_auto_grants WHERE subscription_id=?',
+                    (sid,)).fetchone():
+        return 'История бесплатной автовыдачи сохраняется для защиты лимитов.'
+    if conn.execute('SELECT 1 FROM referral_redemptions WHERE subscription_id=?',
+                    (sid,)).fetchone():
+        return 'Подписка связана с реферальной историей.'
+    if conn.execute('SELECT 1 FROM primary_rotations WHERE subscription_id=?',
+                    (sid,)).fetchone() or conn.execute(
+                    'SELECT 1 FROM device_rotations WHERE device_id IN '
+                    '(SELECT id FROM devices WHERE subscription_id=?)',
+                    (sid,)).fetchone():
+        return 'Нужно сохранить историю смены ключей.'
+    if conn.execute("SELECT 1 FROM devices WHERE subscription_id=? "
+                    "AND state!='revoked'", (sid,)).fetchone():
+        return 'Не все дополнительные подключения отозваны.'
+    return None
+
+
 def purge_subscription(sid: str):
     """Purge only after our confirmed revoke; retain payment and referral history."""
     with db() as conn:
@@ -146,6 +173,9 @@ def purge_subscription(sid: str):
         if not row:
             raise HTTPException(404, 'Подписка не найдена')
         sub = dict(row)
+        reason = purge_blocker(conn, sub)
+        if reason:
+            raise HTTPException(409, reason)
         if sub['state'] != 'revoked' or not conn.execute(
                 'SELECT 1 FROM admin_subscription_revocations WHERE subscription_id=?',
                 (sid,)).fetchone():
