@@ -103,6 +103,8 @@ def quote_locked(conn,data,user):
     amount=max(0,base-discount)
     result={'plan':plan['id'],'plan_name':plan['name'],'days':plan['days'],'device_limit':plan['device_limit'],
         'free_traffic_gb':plan['free_traffic_gb'] if plan['is_free'] else 0,
+        'free_auto_renew':int(plan['free_auto_renew']) if plan['is_free'] else 0,
+        'free_max_renewals':plan['free_max_renewals'] if plan['is_free'] else 0,
         'plan_version':plan['version'],'protocol':data.protocol,'currency':'XTR' if user['telegram_id'] else 'RUB',
         'base_amount':base,'amount':amount,'discount':base-amount,'promo_code':code,
         'promo_version':coupon['version'] if coupon else None,'promo_percent':coupon['percent'] if coupon else None}
@@ -160,7 +162,7 @@ def make_order(data,user,method,email):
         else:
             payment_policy.require_new(conn,user,method,getattr(data,'payment_policy_version',None))
         oid=str(uuid.uuid4());now=int(time.time())
-        conn.execute('INSERT INTO orders(id,user_id,protocol,plan,days,amount,created,receipt_email,currency,method,plan_version,plan_name,device_limit,base_amount,discount,promo_id,promo_code,promo_version,promo_percent,status,free_traffic_gb) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-            (oid,user['id'],data.protocol,data.plan,result['days'],result['amount'],now,email,result['currency'],method,result['plan_version'],result['plan_name'],result['device_limit'],result['base_amount'],result['discount'],coupon['id'] if coupon else None,code,result['promo_version'],result['promo_percent'],'paid' if method=='free' else 'pending',result['free_traffic_gb']))
+        conn.execute('INSERT INTO orders(id,user_id,protocol,plan,days,amount,created,receipt_email,currency,method,plan_version,plan_name,device_limit,base_amount,discount,promo_id,promo_code,promo_version,promo_percent,status,free_traffic_gb,free_auto_renew,free_max_renewals) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+            (oid,user['id'],data.protocol,data.plan,result['days'],result['amount'],now,email,result['currency'],method,result['plan_version'],result['plan_name'],result['device_limit'],result['base_amount'],result['discount'],coupon['id'] if coupon else None,code,result['promo_version'],result['promo_percent'],'paid' if method=='free' else 'pending',result['free_traffic_gb'],result['free_auto_renew'],result['free_max_renewals']))
         if coupon:conn.execute('INSERT INTO coupon_uses(coupon_id,user_id,order_id,created) VALUES (?,?,?,?)',(coupon['id'],user['id'],oid,now))
         return dict(conn.execute('SELECT * FROM orders WHERE id=?',(oid,)).fetchone())
