@@ -40,6 +40,8 @@ def test_apply_adds_shared_key_with_backups_and_is_idempotent(tmp_path):
     assert result["changed"] and result["status"] == "ready"
     secret = _key(left)
     assert len(secret) == 64 and secret == _key(right)
+    assert b'FLOW_TRIAL_MTPROXY_ONLY=true\n' in right.read_bytes()
+    assert b'FLOW_TRIAL_MTPROXY_ONLY=' not in left.read_bytes()
     assert left.stat().st_mode & 0o777 == 0o600
     assert right.stat().st_mode & 0o777 == 0o600
     copies = Path(result["backup"])
