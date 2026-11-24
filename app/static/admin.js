@@ -227,6 +227,124 @@ let adsStopRequest=0,adsStopPage=1;
 let adsSitesCache=[],adsPrivateSites=[],adsSitesRequest=0,adsSiteEditor=null,adsSiteMutation=0,adsPlacementIntents=new Map();
 let adsPolicy=null,adsPage=1,adsRequest=0,adsPaymentIntents=new Map();
 let token = '', role = '', authEpoch = 0, usersPage = 1, usersQuery = '', usersRequest = 0, shopSettingsVersion = 0, commerceAnalyticsRequest = 0;
+let delegatedPermissions=new Set(),staffActorId=null,moderationRequest=0,moderationPage=1,rolePolicyRequest=0;
+const STAFF_LABELS={owner:'Разработчик',administrator:'Администратор',moderator:'Модератор',panel_operator:'Оператор панелей',mtproxy_manager:'Менеджер MTProxy',finance:'Финансовый сотрудник',support:'Поддержка'};
+const DELEGATED_ROLES=['administrator','moderator'];
+const LEGACY_GROUPS={panel_operator:['dashboard','customers','orders','servers_read','diagnostics'],support:['dashboard','customers','orders','support','diagnostics'],finance:['dashboard','orders','payments','analytics','advertising','ad_finance'],mtproxy_manager:['advertising','placements']};
+function delegatedRole(){return DELEGATED_ROLES.includes(role);}
+function canGroup(group){
+  return role==='owner' || (delegatedRole()?delegatedPermissions.has(group):(LEGACY_GROUPS[role]||[]).includes(group));
+}
+function acceptStaffRole(result){
+  role=typeof result.role==='string'?result.role:'';
+  if(!Object.hasOwn(STAFF_LABELS,role))throw new Error('Неизвестная роль сотрудника');
+  staffActorId=Number.isSafeInteger(result.id)?result.id:staffActorId;
+  delegatedPermissions=new Set(Array.isArray(result.permissions)?result.permissions.filter(x=>typeof x==='string'):[]);
+}
+const MANAGEMENT_SECTIONS=[
+  ['shop-settings','store_settings','Настройки'],['updates-panel','developer','Обновления'],
+  ['bot-menu-panel','bot_menu','Меню Telegram'],['staff-management','developer','Сотрудники'],
+  ['role-policy-section','developer','Полномочия'],['moderation-section','moderation','Модерация'],
+  ['support-admin','support','Поддержка'],['commerce-analytics','analytics','Аналитика'],
+  ['plans-section','catalog','Тарифы'],['users-section','customers','Пользователи'],
+  ['orders-section','orders','Заказы'],['servers-section','servers_read','Серверы'],
+  ['protocols-panel','servers_read','Протоколы'],['flow-auto-section','starter','Автовыдача'],
+  ['coupons-section','promotions','Промокоды'],['referrals-section','promotions','Бонусы'],
+  ['trial-section','promotions','Пробный доступ'],['ads-requests-section','advertising','Реклама MTProxy'],
+  ['ads-finance-section','ad_finance','Финансы рекламы'],['ads-bookings-section','placements','Брони'],
+  ['ads-stop-section','placements','Остановки'],['ads-sites-section','placements','Площадки'],
+  ['diagnostics-section','diagnostics','Диагностика']
+];
+function renderManagementNav(){
+  $('management-role').textContent=STAFF_LABELS[role]||'Кабинет сотрудника';
+  $('management-scope').textContent=role==='owner'?'Полный доступ к настройкам магазина и сотрудникам.':'Доступ только к назначенным разделам.';
+  const visible=[];
+  for(const [id,group,title] of MANAGEMENT_SECTIONS){
+    const allowed=canGroup(group);
+    $(id).hidden=!allowed;
+    if(allowed)visible.push('<a href="#'+id+'">'+esc(title)+'</a>');
+  }
+  $('management-nav').innerHTML=visible.join('')||'<span>Нет назначенных разделов</span>';
+  $('new-server').hidden=delegatedRole();
+}
+async function refreshModeration(){
+  const seq=++moderationRequest,epoch=authEpoch;
+  if(!canGroup('moderation')){$('moderation-section').hidden=true;$('moderation-list').replaceChildren();return;}
+  $('moderation-section').hidden=false;
+  try{
+    const filter=$('moderation-state').value||'pending';
+    const data=await api('moderation/requests?page='+moderationPage+'&state='+encodeURIComponent(filter));
+    if(seq!==moderationRequest||epoch!==authEpoch||!canGroup('moderation'))return;
+    const labels={pending:'На модерации',approved:'Одобрено',rejected:'Отклонено',canceled:'Отменено'};
+    $('moderation-list').innerHTML=data.requests.map(r=>'<article class="admin-order"><h3>'+esc('@'+r.channel)+'</h3><p>'+esc(labels[r.state]||r.state)+'</p><p>'+esc(r.comment||'')+'</p><p>'+esc(r.reason||'')+'</p>'+
+      (r.state==='pending'?'<form data-moderation-id="'+esc(r.id)+'" data-version="'+r.version+'"><label>Решение<select name="state"><option value="approved">Одобрить</option><option value="rejected">Отклонить</option></select></label><label>Причина<textarea name="reason" maxlength="500"></textarea></label><button type="submit" class="small">Сохранить решение</button></form>':'')+'</article>').join('')||'<p>Заявок нет.</p>';
+    $('moderation-page').textContent='Страница '+data.page+' · всего '+data.total;
+    $('moderation-prev').disabled=data.page<=1;$('moderation-next').disabled=data.page*data.page_size>=data.total;
+    $('moderation-status').textContent='';
+  }catch(e){if(seq===moderationRequest&&epoch===authEpoch){$('moderation-list').replaceChildren();$('moderation-status').textContent=e.message;}}
+}
+$('moderation-refresh').onclick=()=>refreshModeration();
+$('moderation-state').onchange=()=>{moderationPage=1;return refreshModeration();};
+$('moderation-prev').onclick=()=>{if(moderationPage>1){moderationPage--;return refreshModeration();}};
+$('moderation-next').onclick=()=>{if(!$('moderation-next').disabled){moderationPage++;return refreshModeration();}};
+$('moderation-list').onsubmit=async event=>{
+  event.preventDefault();const f=event.target.closest('[data-moderation-id]');if(!f||!canGroup('moderation'))return;
+  const values=new FormData(f),epoch=authEpoch,seq=moderationRequest,button=f.querySelector('button');
+  if(button.disabled)return;button.disabled=true;
+  try{await api('moderation/requests/'+encodeURIComponent(f.dataset.moderationId),{method:'PUT',data:{version:Number(f.dataset.version),state:values.get('state'),reason:String(values.get('reason')||'')}});
+    if(epoch===authEpoch&&seq===moderationRequest&&canGroup('moderation'))await refreshModeration();
+  }catch(e){if(epoch===authEpoch&&seq===moderationRequest)$('moderation-status').textContent=e.message;}
+  finally{button.disabled=false;}
+};
+async function refreshRolePolicies(){
+  const seq=++rolePolicyRequest,epoch=authEpoch;
+  if(role!=='owner'){$('role-policy-section').hidden=true;$('role-policy-list').replaceChildren();return;}
+  $('role-policy-section').hidden=false;
+  try{
+    const data=await api('role-policies');
+    if(seq!==rolePolicyRequest||epoch!==authEpoch||role!=='owner')return;
+    $('role-policy-list').innerHTML=data.roles.map(p=>'<form class="plan-editor" data-role-policy="'+esc(p.role)+'" data-version="'+p.version+'"><h3>'+esc(STAFF_LABELS[p.role]||p.role)+'</h3><div class="permission-grid">'+p.allowed.map(key=>'<label class="permission-choice"><input type="checkbox" name="permissions" value="'+esc(key)+'" '+(p.permissions.includes(key)?'checked':'')+'>'+esc(data.labels[key]||key)+'</label>').join('')+'</div><button class="small" type="submit">Сохранить полномочия</button></form>').join('');
+    $('role-policy-status').textContent='';
+  }catch(e){if(seq===rolePolicyRequest&&epoch===authEpoch)$('role-policy-status').textContent=e.message;}
+}
+$('role-policy-list').onsubmit=async event=>{
+  event.preventDefault();const f=event.target.closest('[data-role-policy]');if(!f||role!=='owner')return;
+  const data=new FormData(f),epoch=authEpoch,button=f.querySelector('button');if(button.disabled)return;button.disabled=true;
+  try{await api('role-policies/'+encodeURIComponent(f.dataset.rolePolicy),{method:'PUT',data:{version:Number(f.dataset.version),permissions:data.getAll('permissions')}});
+    if(epoch===authEpoch&&role==='owner'){await refreshRolePolicies();$('role-policy-status').textContent='Полномочия сохранены.';}
+  }catch(e){if(epoch===authEpoch)$('role-policy-status').textContent=e.message;}finally{button.disabled=false;}
+};
+function clearManagement(){
+  delegatedPermissions.clear();staffActorId=null;moderationRequest++;rolePolicyRequest++;moderationPage=1;
+  for(const id of ['management-nav','management-role','management-scope','moderation-list','moderation-status','moderation-page','role-policy-list','role-policy-status'])$(id).replaceChildren();
+  $('moderation-state').value='pending';$('moderation-section').hidden=true;$('role-policy-section').hidden=true;
+}
+async function refreshDelegated({plans=true}={}){
+  const epoch=authEpoch;
+  const identity=await api('auth/me');
+  if(epoch!==authEpoch)return;
+  acceptStaffRole(identity);
+  if(!delegatedRole())throw new Error('Роль изменилась. Войдите заново.');
+  renderManagementNav();
+  $('stats').replaceChildren();
+  const tasks=[];
+  if(canGroup('dashboard'))tasks.push(api('dashboard-summary').then(data=>{if(epoch===authEpoch)$('stats').innerHTML='<div>Пользователи<strong>'+esc(data.users)+'</strong></div><div>Подписки<strong>'+esc(data.active)+'</strong></div><div>Заказы в работе<strong>'+esc(data.pending_orders)+'</strong></div>';}));
+  if(canGroup('catalog')&&plans)tasks.push(api('plans').then(data=>{if(epoch===authEpoch)$('plan-editors').innerHTML=data.plans.map(planForm).join('');}));
+  if(canGroup('orders'))tasks.push(refreshOrders());
+  if(canGroup('customers'))tasks.push(refreshUsers());
+  if(canGroup('servers_read'))tasks.push(refreshServers(),refreshProtocols());
+  if(canGroup('promotions'))tasks.push(refreshTrialPolicy(),refreshCoupons(),refreshReferralPolicy());
+  if(canGroup('starter'))tasks.push(refreshFlowAutoPolicy());
+  if(canGroup('moderation'))tasks.push(refreshModeration());
+  if(canGroup('support'))tasks.push(refreshSupportAdmin());
+  if(canGroup('store_settings'))tasks.push(refreshShopSettings());
+  if(canGroup('bot_menu'))tasks.push(refreshBotMenu());
+  if(canGroup('analytics'))tasks.push(refreshCommerceAnalytics());
+  if(canGroup('diagnostics'))tasks.push(refreshDiagnostics());
+  await Promise.all(tasks);
+  if(epoch===authEpoch)renderManagementNav();
+}
+
 let selectedUser = null, profilePage = 1, profileRequest = 0;
 let serverCache = [], editingServer = null;
 let serverWizardStep = 3, serverDialogEpoch = 0, serverSubmitting = false;
@@ -265,7 +383,7 @@ function renderProtocols() {
 }
 async function refreshProtocols() {
   const section = $('protocols-panel'), epoch = authEpoch, request = ++protocolsRequest;
-  if (!['owner', 'panel_operator'].includes(role)) {
+  if (!canGroup('servers_read')) {
     section.hidden = true; protocolCache = []; $('protocols-list').replaceChildren();
     $('protocols-status').textContent = ''; return;
   }
@@ -301,7 +419,7 @@ function planForm(plan) {
   </form>`;
 }
 async function refreshShopSettings(){
- const section=$('shop-settings');if(role!=='owner'){section.hidden=true;return}section.hidden=false;
+ const section=$('shop-settings');if(!canGroup('store_settings')){section.hidden=true;return}section.hidden=false;
  try{
   const data=await api('shop-settings');shopSettingsVersion=data.version;
   $('shop-support-text').value=data.support_text;$('shop-terms-text').value=data.terms_text;
@@ -351,7 +469,7 @@ function renderBotMenu(){
 }
 async function refreshBotMenu(){
  const section=$('bot-menu-panel');
- if(role!=='owner'){section.hidden=true;return}
+ if(!canGroup('bot_menu')){section.hidden=true;return}
  section.hidden=false;
  const epoch=authEpoch,request=++botMenuRequest;
  try{
@@ -364,7 +482,7 @@ async function refreshBotMenu(){
 $('bot-menu-rows').oninput=()=>menuPreview(menuFields());
 $('bot-menu-rows').onchange=()=>menuPreview(menuFields());
 $('bot-menu-form').onsubmit=async event=>{
- event.preventDefault();if(role!=='owner')return;
+ event.preventDefault();if(!canGroup('bot_menu'))return;
  const button=$('bot-menu-save'),epoch=authEpoch;
  button.disabled=true;
  try{
@@ -376,27 +494,46 @@ $('bot-menu-form').onsubmit=async event=>{
  finally{if(epoch===authEpoch)button.disabled=false}
 };
 async function refreshStaff(){
- const section=$('staff-management');if(role!=='owner'){section.hidden=true;return}section.hidden=false;
+ const section=$('staff-management'),epoch=authEpoch;
+ if(role!=='owner'){section.hidden=true;return}section.hidden=false;
  try{
-  const out=await Promise.all([api('staff'),api('audit?limit=50')]),data=out[0],audit=out[1];
-  $('staff-list').innerHTML=data.staff.map(s=>'<article class="admin-order"><b>'+esc(s.email)+'</b><p>'+esc(s.role_label)+' · '+(s.enabled?'активен':'отключён')+' · последний вход: '+(s.last_login?esc(dateTime(s.last_login)):'—')+'</p>'+((s.role==='owner'&&data.staff.filter(x=>x.enabled&&x.role==='owner').length<=1)?'':'<button class="small secondary" data-staff-id="'+s.id+'" data-enabled="'+(!s.enabled)+'">'+(s.enabled?'Отключить':'Включить')+'</button>')+'</article>').join('');
-  $('audit-list').innerHTML=audit.events.map(e=>'<article class="admin-order"><b>'+esc(e.actor_email)+' · '+esc(e.role)+'</b><p>'+esc(e.action)+' '+esc(e.resource)+' · HTTP '+e.status+' · '+esc(dateTime(e.created))+'</p></article>').join('')||'<p>Записей пока нет.</p>';
- }catch(error){$('staff-error').textContent=error.message}
+  const [data,audit]=await Promise.all([api('staff'),api('audit?limit=50')]);
+  if(epoch!==authEpoch||role!=='owner')return;
+  const developers=data.staff.filter(x=>x.enabled&&x.role==='owner').length;
+  $('staff-list').innerHTML=data.staff.map(s=>{
+    const protectedRole=s.id===staffActorId||(s.role==='owner'&&s.enabled&&developers<=1);
+    const select=Object.entries(STAFF_LABELS).map(([key,label])=>'<option value="'+key+'" '+(s.role===key?'selected':'')+'>'+esc(label)+'</option>').join('');
+    return '<article class="admin-order"><b>'+esc(s.email)+'</b><p class="staff-role staff-role-'+esc(s.role)+'">'+esc(s.role_label)+' · '+(s.enabled?'активен':'отключён')+'</p><p>Последний вход: '+(s.last_login?esc(dateTime(s.last_login)):'—')+'</p>'+
+      (protectedRole?'<p>Защищённая учётная запись разработчика.</p>':'<form data-staff-role="'+s.id+'"><label>Роль<select name="role">'+select+'</select></label><button type="submit" class="small">Изменить роль</button></form><button class="small secondary" data-staff-id="'+s.id+'" data-enabled="'+(!s.enabled)+'">'+(s.enabled?'Отключить':'Включить')+'</button>')+'</article>';
+  }).join('');
+  $('audit-list').innerHTML=audit.events.map(e=>'<article class="admin-order"><b>'+esc(e.actor_email)+' · '+esc(STAFF_LABELS[e.role]||e.role)+'</b><p>'+esc(e.action)+' '+esc(e.resource)+' · HTTP '+e.status+' · '+esc(dateTime(e.created))+'</p></article>').join('')||'<p>Записей пока нет.</p>';
+ }catch(error){if(epoch===authEpoch)$('staff-error').textContent=error.message}
 }
 $('staff-create').onsubmit=async event=>{
- event.preventDefault();const form=event.target,values=new FormData(form);
- try{await api('staff',{method:'POST',data:{email:values.get('email'),password:values.get('password'),role:values.get('role')}});form.reset();$('staff-error').textContent='Сотрудник добавлен.';await refreshStaff()}
- catch(error){$('staff-error').textContent=error.message}
+ event.preventDefault();if(role!=='owner')return;
+ const form=event.target,values=new FormData(form),epoch=authEpoch;
+ try{await api('staff',{method:'POST',data:{email:values.get('email'),password:values.get('password'),role:values.get('role')}});if(epoch!==authEpoch)return;form.reset();$('staff-error').textContent='Сотрудник добавлен.';await refreshStaff()}
+ catch(error){if(epoch===authEpoch)$('staff-error').textContent=error.message}
 };
 $('staff-list').onclick=async event=>{
- const button=event.target.closest('[data-staff-id]');if(!button)return;
- try{await api('staff/'+button.dataset.staffId,{method:'PATCH',data:{enabled:button.dataset.enabled==='true'}});await refreshStaff()}
- catch(error){$('staff-error').textContent=error.message}
+ const button=event.target.closest('[data-staff-id]');if(!button||role!=='owner')return;
+ const epoch=authEpoch;
+ try{await api('staff/'+encodeURIComponent(button.dataset.staffId),{method:'PATCH',data:{enabled:button.dataset.enabled==='true'}});if(epoch===authEpoch)await refreshStaff()}
+ catch(error){if(epoch===authEpoch)$('staff-error').textContent=error.message}
+};
+$('staff-list').onsubmit=async event=>{
+ event.preventDefault();const form=event.target.closest('[data-staff-role]');if(!form||role!=='owner')return;
+ const next=new FormData(form).get('role'),epoch=authEpoch,button=form.querySelector('button');
+ if(!Object.hasOwn(STAFF_LABELS,next)||button.disabled)return;
+ if(next==='owner'&&!confirm('Назначить разработчика с полным доступом к магазину?'))return;
+ button.disabled=true;
+ try{await api('staff/'+encodeURIComponent(form.dataset.staffRole),{method:'PATCH',data:{role:next}});if(epoch===authEpoch){await refreshStaff();$('staff-error').textContent='Роль изменена. Сеансы прежней роли отозваны.';}}
+ catch(error){if(epoch===authEpoch)$('staff-error').textContent=error.message}finally{button.disabled=false;}
 };
 
 let selectedAdminCase=null,adminCaseVersion=0;
 async function refreshSupportAdmin(){
- const panel=$('support-admin');if(role!=='owner'&&role!=='support'){panel.hidden=true;return}panel.hidden=false;
+ const panel=$('support-admin');if(!canGroup('support')){panel.hidden=true;return}panel.hidden=false;
  try{
   const q=$('support-admin-filter').value,listing=await api('support/tickets?page=1'+(q?'&status='+encodeURIComponent(q):''));
   $('support-admin-list').innerHTML=listing.cases.map(c=>'<article class="admin-order"><b>'+esc(c.subject)+'</b><p>'+esc(c.status)+' · клиент № '+c.user_id+(c.order_id?' · заказ '+esc(c.order_id):'')+'</p><p>'+esc(c.last_message||'')+'</p><button class="small secondary" data-admin-case="'+esc(c.id)+'">Открыть</button></article>').join('')||'<p>Обращений нет.</p>';
@@ -442,7 +579,7 @@ function commerceEventsMarkup(result){
 }
 async function refreshCommerceAnalytics(){
  const section=$('commerce-analytics');
- if(role!=='owner'&&role!=='finance'){section.hidden=true;return}
+ if(!canGroup('analytics')){section.hidden=true;return}
  section.hidden=false;
  const epoch=authEpoch,request=++commerceAnalyticsRequest;
  const start=$('commerce-analytics-start').value,end=$('commerce-analytics-end').value;
@@ -475,7 +612,8 @@ async function refreshCommerceAnalytics(){
 }
 $('commerce-analytics-period').onsubmit=event=>{event.preventDefault();return refreshCommerceAnalytics();};
 
-async function refresh({plans = role==='owner'} = {}) {
+async function refresh({plans = role==='owner' || canGroup('catalog')} = {}) {
+  if(delegatedRole())return refreshDelegated({plans});
   const data = role==='mtproxy_manager' ? {users:'—',active:'—',revenue:'—',stars:'—'} : await api('overview');
   const catalog = plans ? await api('plans') : null;
   $('stats').innerHTML = `<div>Пользователи<strong>${data.users}</strong></div><div>Подписки<strong>${data.active}</strong></div><div>Подтверждено<strong>${data.revenue} ₽ / ${data.stars} ★</strong></div>`;
@@ -487,7 +625,8 @@ async function refresh({plans = role==='owner'} = {}) {
   else if(role==='finance') await Promise.all([refreshAdsAdmin(),refreshOrders(),refreshCommerceAnalytics()]);
   else if(role==='panel_operator') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers()]);
   else if(role==='support') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshSupportAdmin()]);
-  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates()]);}
+  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates(),refreshRolePolicies(),refreshModeration()]);}
+  renderManagementNav();
 }
 $('admin-login').onsubmit = async event => {
   event.preventDefault(); const button=event.target.querySelector('button'); button.disabled=true; authEpoch++;
@@ -500,14 +639,14 @@ $('admin-login').onsubmit = async event => {
       result=await response.json();
     }
     if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'Не удалось войти');
-    role=result.role;token='';await refresh();
+    acceptStaffRole(result);token='';await refresh();
     $('key').value='';$('staff-password').value='';$('admin-login').hidden=true;$('dashboard').hidden=false;$('error').textContent='';
   } catch(error){authEpoch++;token='';$('error').textContent=error.message}
   finally{button.disabled=false}
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{}); role='';
-  clearUpdates();
+  clearUpdates(); clearManagement();
   protocolsRequest++; protocolCache = []; $('protocols-list').replaceChildren();
   $('protocols-status').textContent = ''; $('protocols-filter').value = 'all';
   $('protocols-panel').hidden = true; $('protocols-refresh').disabled = false;
@@ -688,7 +827,7 @@ async function refreshOrders() {
     $('orders-page').textContent = 'Страница ' + data.page + ' из ' + pages;
     $('orders-prev').disabled = data.page <= 1;
     $('orders-next').disabled = data.page * data.page_size >= data.total;
-    $('list').innerHTML = data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${esc(protocolLabel(order.protocol))} · ${order.method==='referral'?'Бонус · '+order.days+' дней':order.amount+' '+(order.currency === 'XTR' ? '★' : '₽')}</b><p><button class="text-link" data-order-user="${order.user_id}">${esc(order.email || 'Telegram ' + order.telegram_id)} · № ${order.user_id}</button></p><p>Заказ: ${esc(order.id)}</p>${order.promo_code?`<p>Код ${esc(order.promo_code)} · скидка ${order.discount} ${order.currency==='XTR'?'★':'₽'} от ${order.base_amount}</p>`:''}<p>${esc(orderStatus[order.status] || order.status)} · ${esc(order.method==='referral'?'Бонусное продление':order.method==='trial'?'Пробный доступ':order.method)} · ${esc(dateTime(order.created))}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}<div class="actions">${order.can_confirm ? `<button data-action="confirm" data-id="${esc(order.id)}">Подтвердить поступление оплаты</button>` : ''}${order.can_reject ? `<button class="secondary" data-action="reject" data-id="${esc(order.id)}">Отменить заказ</button>` : ''}${order.can_retry ? `<button data-action="retry" data-id="${esc(order.id)}">Повторить выдачу</button>` : ''}</div></article>`).join('');
+    $('list').innerHTML = data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${esc(protocolLabel(order.protocol))} · ${order.method==='referral'?'Бонус · '+order.days+' дней':order.amount+' '+(order.currency === 'XTR' ? '★' : '₽')}</b><p><button class="text-link" data-order-user="${order.user_id}">${esc(order.email || 'Telegram ' + order.telegram_id)} · № ${order.user_id}</button></p><p>Заказ: ${esc(order.id)}</p>${order.promo_code?`<p>Код ${esc(order.promo_code)} · скидка ${order.discount} ${order.currency==='XTR'?'★':'₽'} от ${order.base_amount}</p>`:''}<p>${esc(orderStatus[order.status] || order.status)} · ${esc(order.method==='referral'?'Бонусное продление':order.method==='trial'?'Пробный доступ':order.method)} · ${esc(dateTime(order.created))}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}<div class="actions">${order.can_confirm && (!delegatedRole() || canGroup('payments')) ? `<button data-action="confirm" data-id="${esc(order.id)}">Подтвердить поступление оплаты</button>` : ''}${order.can_reject && (!delegatedRole() || canGroup('payments')) ? `<button class="secondary" data-action="reject" data-id="${esc(order.id)}">Отменить заказ</button>` : ''}${order.can_retry ? `<button data-action="retry" data-id="${esc(order.id)}">Повторить выдачу</button>` : ''}</div></article>`).join('');
   } catch (error) {
     if (request === ordersRequest) { $('list').replaceChildren(); $('orders-state').textContent = error.message; }
     throw error;
@@ -715,7 +854,7 @@ function serverCard(server) {
 async function refreshServers() {
   const data = await api('servers');
   serverCache = data.servers;
-  $('server-list').innerHTML = data.servers.map(serverCard).join('');
+  $('server-list').innerHTML = data.servers.map(s=>delegatedRole()?'<article class="admin-order"><h3>'+esc(s.name)+'</h3><p>'+esc(protocolLabel(s.protocol))+' · '+esc(serverState[s.state]||s.state)+'</p><p>API: '+esc(s.health)+' · Занято: '+esc(s.occupied)+' · Лимит: '+esc(s.capacity||'без лимита')+'</p><p>Проверено: '+esc(dateTime(s.checked_at))+'</p></article>':serverCard(s)).join('');
   $('servers-notice').textContent = data.unassigned_subscriptions ? 'Есть подписки без привязки: '+data.unassigned_subscriptions+'. Автоматический перенос запрещён; проверьте настройки миграции.' : data.servers.length ? '' : 'Добавьте первый сервер для продажи VPN.';
 }
 function setServerStep(step) {
@@ -926,7 +1065,7 @@ $('server-list').onclick = async event => {
 async function refreshFlowAutoPolicy() {
   const epoch=authEpoch;
   const p=await api('flow/wireguard/auto');
-  if(epoch!==authEpoch || role!=='owner')return;
+  if(epoch!==authEpoch || !canGroup('starter'))return;
   $('flow-auto-count').textContent='Зарезервировано: '+p.used+' из '+p.max_users+'. Осталось: '+p.remaining;
   $('flow-auto-editor').innerHTML=
     '<form class="plan-editor" data-flow-auto-version="'+p.version+'">'+
@@ -940,7 +1079,7 @@ async function refreshFlowAutoPolicy() {
 $('flow-auto-editor').onsubmit=async event=>{
   event.preventDefault();
   const form=event.target.closest('[data-flow-auto-version]');
-  if(!form || role!=='owner')return;
+  if(!form || !canGroup('starter'))return;
   const values=new FormData(form),button=form.querySelector('button');
   button.disabled=true;
   try {
