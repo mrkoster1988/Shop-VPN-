@@ -369,6 +369,14 @@ async def staff_update(staff_id: int, data: StaffUpdate, request: Request):
     actor=request.state.admin_actor
     if actor['role']!='owner': raise HTTPException(403,'Управлять сотрудниками может только владелец')
     return staff.update_staff(staff_id,data.enabled,data.role,actor.get('id'))
+@app.get('/api/admin/staff/{staff_id}/permissions',dependencies=[Depends(admin)])
+async def staff_individual_permissions(staff_id:int):
+    return staff_permissions.individual_get(staff_id)
+
+@app.put('/api/admin/staff/{staff_id}/permissions',dependencies=[Depends(admin)])
+async def staff_individual_permissions_update(staff_id:int,data:staff_permissions.IndividualUpdate):
+    return staff_permissions.individual_update(staff_id,data)
+
 @app.get('/api/admin/role-policies',dependencies=[Depends(admin)])
 async def role_policies():
     return staff_permissions.get_all()

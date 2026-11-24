@@ -262,6 +262,9 @@ def init_db():
           staff_id INTEGER PRIMARY KEY REFERENCES staff_users(id) ON DELETE CASCADE,
           role TEXT NOT NULL CHECK(role IN ('administrator','moderator')),
           enabled INTEGER NOT NULL CHECK(enabled IN (0,1)));
+        CREATE TABLE IF NOT EXISTS staff_permission_limits (
+          staff_id INTEGER PRIMARY KEY REFERENCES staff_users(id) ON DELETE CASCADE,
+          permissions TEXT, version INTEGER NOT NULL CHECK(version>0), updated INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS staff_role_policies (
           role TEXT PRIMARY KEY CHECK(role IN ('administrator','moderator')),
           permissions TEXT NOT NULL, version INTEGER NOT NULL CHECK(version>0), updated INTEGER NOT NULL);

@@ -588,6 +588,7 @@ async function refreshStaff(){
     const protectedRole=s.id===staffActorId||(s.role==='owner'&&s.enabled&&developers<=1);
     const select=Object.entries(STAFF_LABELS).map(([key,label])=>'<option value="'+key+'" '+(s.role===key?'selected':'')+'>'+esc(label)+'</option>').join('');
     return '<article class="admin-order"><b>'+esc(s.email)+'</b><p class="staff-role staff-role-'+esc(s.role)+'">'+esc(s.role_label)+' · '+(s.enabled?'активен':'отключён')+'</p><p>Последний вход: '+(s.last_login?esc(dateTime(s.last_login)):'—')+'</p>'+
+      (DELEGATED_ROLES.includes(s.role)?'<button type="button" class="small secondary" data-staff-permissions="'+s.id+'">Индивидуальные права</button>':'')+
       (protectedRole?'<p>Защищённая учётная запись разработчика.</p>':'<form data-staff-role="'+s.id+'"><label>Роль<select name="role">'+select+'</select></label><button type="submit" class="small">Изменить роль</button></form><button class="small secondary" data-staff-id="'+s.id+'" data-enabled="'+(!s.enabled)+'">'+(s.enabled?'Отключить':'Включить')+'</button>')+'</article>';
   }).join('');
   $('audit-list').innerHTML=audit.events.map(e=>'<article class="admin-order"><b>'+esc(e.actor_email)+' · '+esc(STAFF_LABELS[e.role]||e.role)+'</b><p>'+esc(e.action)+' '+esc(e.resource)+' · HTTP '+e.status+' · '+esc(dateTime(e.created))+'</p></article>').join('')||'<p>Записей пока нет.</p>';
@@ -600,6 +601,8 @@ $('staff-create').onsubmit=async event=>{
  catch(error){if(epoch===authEpoch)$('staff-error').textContent=error.message}
 };
 $('staff-list').onclick=async event=>{
+ const edit=event.target.closest('[data-staff-permissions]');
+ if(edit&&role==='owner')return openStaffIndividual(Number(edit.dataset.staffPermissions));
  const button=event.target.closest('[data-staff-id]');if(!button||role!=='owner')return;
  const epoch=authEpoch;
  try{await api('staff/'+encodeURIComponent(button.dataset.staffId),{method:'PATCH',data:{enabled:button.dataset.enabled==='true'}});if(epoch===authEpoch)await refreshStaff()}
@@ -611,9 +614,49 @@ $('staff-list').onsubmit=async event=>{
  if(!Object.hasOwn(STAFF_LABELS,next)||button.disabled)return;
  if(next==='owner'&&!confirm('Назначить разработчика с полным доступом к магазину?'))return;
  button.disabled=true;
- try{await api('staff/'+encodeURIComponent(form.dataset.staffRole),{method:'PATCH',data:{role:next}});if(epoch===authEpoch){await refreshStaff();$('staff-error').textContent='Роль изменена. Сеансы прежней роли отозваны.';}}
+ try{await api('staff/'+encodeURIComponent(form.dataset.staffRole),{method:'PATCH',data:{role:next}});if(epoch===authEpoch){clearStaffIndividual();await refreshStaff();$('staff-error').textContent='Роль изменена. Сеансы прежней роли отозваны.';}}
  catch(error){if(epoch===authEpoch)$('staff-error').textContent=error.message}finally{button.disabled=false;}
 };
+
+let individualState=null,individualSeq=0,individualBusy=false;
+function clearStaffIndividual(){
+ individualSeq++;individualState=null;individualBusy=false;
+ $('staff-individual-editor').hidden=true;$('staff-individual-form').replaceChildren();$('staff-individual-status').textContent='';
+}
+function renderStaffIndividual(data){
+ if(!DELEGATED_ROLES.includes(data.role)||!Number.isInteger(data.version)||!Array.isArray(data.allowed))throw new Error('Не удалось прочитать полномочия');
+ individualState=data;
+ $('staff-individual-editor').hidden=false;
+ const selected=data.inherit?data.allowed:data.permissions;
+ $('staff-individual-form').innerHTML='<form id="individual-policy-form"><p>Сотрудник № '+esc(data.staff_id)+' · '+esc(STAFF_LABELS[data.role])+'</p>'+
+   '<label class="permission-choice"><input id="individual-inherit" type="checkbox" '+(data.inherit?'checked':'')+'> Наследовать права роли</label>'+
+   '<div class="permission-grid" id="individual-choices">'+data.allowed.map(key=>'<label class="permission-choice"><input name="permissions" type="checkbox" value="'+esc(key)+'" '+(selected.includes(key)?'checked':'')+' '+(data.inherit?'disabled':'')+'>'+esc(data.labels[key]||key)+'</label>').join('')+'</div><p>Действующие права: '+data.effective.map(key=>esc(data.labels[key]||key)).join(', ')+'</p><button class="small" type="submit">Сохранить индивидуальные права</button></form>';
+}
+async function openStaffIndividual(id){
+ if(role!=='owner'||!Number.isSafeInteger(id)||id<1)return;
+ clearStaffIndividual();const seq=individualSeq,epoch=authEpoch;
+ $('staff-individual-editor').hidden=false;$('staff-individual-status').textContent='Загрузка…';
+ try{const data=await api('staff/'+id+'/permissions');if(seq!==individualSeq||epoch!==authEpoch||role!=='owner')return;renderStaffIndividual(data);$('staff-individual-status').textContent='';}
+ catch(e){if(seq===individualSeq&&epoch===authEpoch)$('staff-individual-status').textContent=e.message;}
+}
+$('staff-individual-form').onchange=event=>{
+ if(event.target.id!=='individual-inherit')return;
+ for(const input of $('individual-choices').querySelectorAll('input'))input.disabled=event.target.checked;
+};
+$('staff-individual-form').onsubmit=async event=>{
+ event.preventDefault();if(role!=='owner'||!individualState||individualBusy)return;
+ const form=event.target.closest('#individual-policy-form');if(!form)return;
+ const before=individualState,seq=individualSeq,epoch=authEpoch;
+ const inherit=$('individual-inherit').checked,values=new FormData(form);
+ const data={version:before.version,role:before.role,inherit,permissions:inherit?[]:values.getAll('permissions')};
+ individualBusy=true;const button=form.querySelector('button');button.disabled=true;
+ try{
+  const result=await api('staff/'+before.staff_id+'/permissions',{method:'PUT',data});
+  if(seq===individualSeq&&epoch===authEpoch&&role==='owner'){renderStaffIndividual(result);$('staff-individual-status').textContent='Сохранено.';}
+ }catch(e){if(seq===individualSeq&&epoch===authEpoch){$('staff-individual-status').textContent=e.message+' Откройте карточку заново.';individualState=null;}}
+ finally{if(seq===individualSeq&&epoch===authEpoch)individualBusy=false;}
+};
+$('staff-individual-close').onclick=clearStaffIndividual;
 
 let selectedAdminCase=null,adminCaseVersion=0;
 async function refreshSupportAdmin(){
@@ -730,7 +773,7 @@ $('admin-login').onsubmit = async event => {
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{}); role='';
-  clearUpdates(); clearManagement(); clearRuntime();
+  clearUpdates(); clearManagement(); clearRuntime(); clearStaffIndividual();
   protocolsRequest++; protocolCache = []; $('protocols-list').replaceChildren();
   $('protocols-status').textContent = ''; $('protocols-filter').value = 'all';
   $('protocols-panel').hidden = true; $('protocols-refresh').disabled = false;
