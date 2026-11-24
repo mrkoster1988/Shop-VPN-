@@ -190,6 +190,12 @@ def init_db():
         CREATE TABLE IF NOT EXISTS server_changes (
           id INTEGER PRIMARY KEY, server_id TEXT NOT NULL REFERENCES servers(id), created INTEGER NOT NULL,
           action TEXT NOT NULL, version INTEGER NOT NULL);
+        -- Keep a separate, non-FK record of an owner-confirmed remote revoke.
+        -- It survives permitted local cleanup and prevents accidental purge of
+        -- legacy records marked revoked without a verified panel operation.
+        CREATE TABLE IF NOT EXISTS admin_subscription_revocations (
+          subscription_id TEXT PRIMARY KEY, user_id INTEGER NOT NULL,
+          protocol TEXT NOT NULL, server_id TEXT, revoked_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS subscriptions (
           id TEXT PRIMARY KEY, user_id INTEGER REFERENCES users(id), protocol TEXT NOT NULL,
           expires INTEGER NOT NULL, state TEXT NOT NULL, secret TEXT,
