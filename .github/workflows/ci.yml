@@ -28,10 +28,19 @@ jobs:
           NODE_PATH: ${{ runner.temp }}/panel-ui/node_modules
           PANEL_UI_OUTPUT: ${{ runner.temp }}/panel-ui-screenshots
           HOST_UI_LOG_PREVIEWS: '1'
+          STOREFRONT_UI_OUTPUT: ${{ runner.temp }}/shop-storefront-screenshots
         run: |
           node tests/panel_wizard_browser.cjs
           node tests/updates_browser.cjs
           node tests/storefront_compact_browser.cjs
+      - name: Save synthetic storefront desktop and mobile screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pushok-shop-storefront-screenshots
+          path: ${{ runner.temp }}/shop-storefront-screenshots/
+          if-no-files-found: ignore
+          retention-days: 14
 
   tests:
     runs-on: ubuntu-latest
