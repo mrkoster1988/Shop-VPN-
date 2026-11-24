@@ -242,7 +242,7 @@ function acceptStaffRole(result){
   delegatedPermissions=new Set(Array.isArray(result.permissions)?result.permissions.filter(x=>typeof x==='string'):[]);
 }
 const MANAGEMENT_SECTIONS=[
-  ['shop-settings','store_settings','Настройки'],['appearance-section','store_settings','Оформление'],['sales-controls-section','sales_controls','Продажи'],['notifications-section','notifications','Уведомления'],['updates-panel','developer','Обновления'],
+  ['shop-settings','store_settings','Настройки'],['appearance-section','store_settings','Оформление'],['sales-controls-section','sales_controls','Продажи'],['payment-policy-section','payment_settings','Оплата'],['shop-finance-section','finance_read','Финансы Shop'],['notifications-section','notifications','Уведомления'],['updates-panel','developer','Обновления'],
   ['bot-menu-panel','bot_menu','Меню Telegram'],['staff-management','developer','Сотрудники'],
   ['role-policy-section','developer','Полномочия'],['moderation-section','moderation','Модерация'],
   ['support-admin','support','Поддержка'],['commerce-analytics','analytics','Аналитика'],
@@ -340,6 +340,8 @@ async function refreshDelegated({plans=true}={}){
   if(canGroup('store_settings'))tasks.push(refreshShopSettings(),refreshRuntime('appearance'));
   if(canGroup('sales_controls'))tasks.push(refreshRuntime('sales'));
   if(canGroup('notifications'))tasks.push(refreshRuntime('notifications'));
+  if(canGroup('payment_settings'))tasks.push(refreshPaymentPolicy());else clearPaymentPolicy();
+  if(canGroup('finance_read'))tasks.push(refreshShopFinance());else clearShopFinance();
   if(canGroup('bot_menu'))tasks.push(refreshBotMenu());
   if(canGroup('analytics'))tasks.push(refreshCommerceAnalytics());
   if(canGroup('diagnostics'))tasks.push(refreshDiagnostics());
@@ -519,6 +521,128 @@ for(const group of Object.keys(RUNTIME_GROUPS)){
  $('runtime-'+group+'-form').onsubmit=event=>{event.preventDefault();return saveRuntime(group);};
  $('runtime-'+group+'-refresh').onclick=()=>refreshRuntime(group);
 }
+
+// Платёжная конфигурация не хранит ключи и не изменяет открытые счета.
+let paymentPolicyVersion=null,paymentPolicySeq=0,paymentPolicyBusy=false;
+function clearPaymentPolicy(){
+ paymentPolicySeq++;paymentPolicyVersion=null;paymentPolicyBusy=false;
+ for(const id of ['shop-payment-mode','shop-payment-manual'])$(id).value='';
+ for(const id of ['shop-payment-web','shop-payment-stars'])$(id).checked=false;
+ for(const id of ['shop-payment-readiness','shop-payment-status'])$(id).textContent='';
+ $('shop-payment-save').disabled=true;
+}
+function renderPaymentPolicy(data){
+ if(!Number.isSafeInteger(data.version)||data.version<0||!['inherit','manual','sbp','yookassa'].includes(data.web_mode))throw new Error('Не удалось прочитать политику оплаты');
+ paymentPolicyVersion=data.version;
+ $('shop-payment-mode').value=data.web_mode;$('shop-payment-web').checked=data.web_enabled===true;
+ $('shop-payment-stars').checked=data.stars_enabled===true;$('shop-payment-manual').value=data.manual_text;
+ $('shop-payment-readiness').textContent='Текущий метод: '+data.effective_web_mode+' · Незакрытые счета: '+data.open_web_orders+
+ ' · ЮKassa/СБП (локальные реквизиты и HTTPS): '+(data.merchant_configured?'настроены':'не настроены')+
+ ' · Telegram-бот: '+(data.stars_bot_configured?'настроен':'не настроен')+'. Реальные платежи требуют проверки.';
+ $('shop-payment-save').disabled=false;
+}
+async function refreshPaymentPolicy(){
+ if(!canGroup('payment_settings')){clearPaymentPolicy();return;}
+ if(paymentPolicyBusy)return;
+ const seq=++paymentPolicySeq,epoch=authEpoch;paymentPolicyVersion=null;$('shop-payment-save').disabled=true;
+ try{const data=await api('payment-policy');if(seq===paymentPolicySeq&&epoch===authEpoch&&canGroup('payment_settings')){renderPaymentPolicy(data);$('shop-payment-status').textContent='';}}
+ catch(e){if(seq===paymentPolicySeq&&epoch===authEpoch)$('shop-payment-status').textContent=e.message;}
+}
+$('shop-payment-refresh').onclick=refreshPaymentPolicy;
+$('shop-payment-form').onsubmit=async event=>{
+ event.preventDefault();if(!canGroup('payment_settings')||paymentPolicyVersion===null||paymentPolicyBusy)return;
+ const data={version:paymentPolicyVersion,web_mode:$('shop-payment-mode').value,web_enabled:$('shop-payment-web').checked,stars_enabled:$('shop-payment-stars').checked,manual_text:$('shop-payment-manual').value};
+ const epoch=authEpoch,seq=++paymentPolicySeq;paymentPolicyBusy=true;paymentPolicyVersion=null;$('shop-payment-save').disabled=true;
+ try{const result=await api('payment-policy',{method:'PUT',data});if(epoch===authEpoch&&seq===paymentPolicySeq&&canGroup('payment_settings')){renderPaymentPolicy(result);$('shop-payment-status').textContent='Сохранено.';}}
+ catch(e){if(epoch===authEpoch&&seq===paymentPolicySeq)$('shop-payment-status').textContent=e.message+' Обновите настройки перед повтором.';}
+ finally{if(epoch===authEpoch&&seq===paymentPolicySeq)paymentPolicyBusy=false;}
+};
+
+let shopFinanceSeq=0,shopFinancePage=1,shopFinanceBusy=false,shopFinanceIntent=null,shopFinanceVoidIntents=new Map(),shopFinanceRows=[];
+const financeLabels={expense:'Расход',fee:'Комиссия',refund:'Возврат',server:'Серверы',commission:'Комиссии',marketing:'Маркетинг',tax:'Налоги',other:'Прочее'};
+function financeMoney(amount,currency){
+ return currency==='RUB'?(amount/100).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+' ₽':Number(amount).toLocaleString('ru-RU')+' ★';
+}
+function parseFinanceAmount(raw,currency){
+ const value=String(raw).trim().replace(',','.');
+ if(currency==='XTR'){if(!/^\d{1,11}$/.test(value))return null;const n=Number(value);return n>0&&n<=10000000000?n:null;}
+ const match=/^(\d{1,9})(?:\.(\d{1,2}))?$/.exec(value);
+ if(!match)return null;const n=Number(match[1])*100+Number((match[2]||'').padEnd(2,'0'));return n>0&&n<=10000000000?n:null;
+}
+function clearShopFinance(){
+ shopFinanceSeq++;shopFinancePage=1;shopFinanceBusy=false;shopFinanceIntent=null;shopFinanceVoidIntents.clear();shopFinanceRows=[];
+ for(const id of ['shop-finance-summary','shop-finance-coverage','shop-finance-methods','shop-finance-status','shop-finance-list','shop-finance-page'])$(id).replaceChildren();
+ for(const id of ['shop-finance-start','shop-finance-end','shop-finance-amount','shop-finance-date','shop-finance-order','shop-finance-reference','shop-finance-note'])$(id).value='';
+ $('shop-finance-verified').checked=false;$('shop-finance-kind').value='expense';$('shop-finance-category').value='server';$('shop-finance-currency').value='RUB';$('shop-finance-save').disabled=false;
+ $('shop-finance-prev').disabled=true;$('shop-finance-next').disabled=true;$('shop-finance-entry-form').hidden=true;
+}
+function shopFinanceKind(){
+ const kind=$('shop-finance-kind').value;
+ if(kind==='fee')$('shop-finance-category').value='commission';
+ else if(kind==='refund')$('shop-finance-category').value='refund';
+ else if(['commission','refund'].includes($('shop-finance-category').value))$('shop-finance-category').value='server';
+ $('shop-finance-category').disabled=kind!=='expense';
+ $('shop-finance-order').required=kind==='refund';
+}
+$('shop-finance-kind').onchange=shopFinanceKind;
+async function refreshShopFinance(){
+ if(!canGroup('finance_read')){clearShopFinance();return;}
+ const seq=++shopFinanceSeq,epoch=authEpoch;
+ $('shop-finance-entry-form').hidden=!canGroup('finance_write');
+ try{
+  const query=new URLSearchParams({page:String(shopFinancePage)});
+  const start=$('shop-finance-start').value,end=$('shop-finance-end').value;
+  if(Boolean(start)!==Boolean(end))throw new Error('Укажите обе границы периода');
+  if(start){const a=expenseDate(start),b=expenseDate(end);if(a===null||b===null||a>=b)throw new Error('Проверьте период');query.set('start',String(a));query.set('end',String(b));}
+  const data=await api('shop-finance?'+query);
+  if(seq!==shopFinanceSeq||epoch!==authEpoch||!canGroup('finance_read'))return;
+  shopFinanceRows=data.entries;
+  $('shop-finance-summary').innerHTML=['RUB','XTR'].map(currency=>{
+    const t=data.totals[currency],label=currency==='RUB'?'Рубли':'Stars';
+    return '<article class="admin-order"><h3>'+label+'</h3>'+[['Поступления',t.receipts],['Возвраты',t.refunds],['Комиссии',t.fees],['Расходы',t.expenses],['Разница учтённых сумм',t.net_recorded]].map(([name,n])=>'<p>'+name+': <b>'+esc(financeMoney(n,currency))+'</b></p>').join('')+'</article>';
+  }).join('');
+  $('shop-finance-coverage').textContent='Период '+dateTime(data.period.start)+' — '+dateTime(data.period.end)+'. Старых оплаченных заказов без даты подтверждения: '+data.missing_payment_timestamp+' (не включены в сумму периода).';
+  $('shop-finance-methods').textContent=data.receipts_by_method.map(r=>r.method+': '+financeMoney(r.amount_minor,r.currency)+' ('+r.count+' заказов)').join(' · ');
+  $('shop-finance-list').innerHTML=data.entries.map(e=>'<article class="admin-order"><h3>'+esc(financeLabels[e.kind]||e.kind)+' · '+esc(financeMoney(e.amount_minor,e.currency))+'</h3><p>'+esc(dateTime(e.occurred_at))+' · '+esc(e.reference)+' · '+(e.state==='void'?'Аннулирована в учёте':'Учтена')+'</p><p>'+esc(e.note)+'</p>'+(e.order_id?'<p>Заказ: '+esc(e.order_id)+'</p>':'')+(e.void_reason?'<p>Исправление: '+esc(e.void_reason)+'</p>':'')+(e.state==='recorded'&&canGroup('finance_write')?'<form data-finance-void="'+esc(e.id)+'"><label>Причина исправления<input name="note" maxlength="500" required></label><button type="submit" class="small secondary">Аннулировать запись</button></form>':'')+'</article>').join('')||'<p>Нет записей за период.</p>';
+  $('shop-finance-page').textContent='Страница '+data.page+' · всего '+data.total;
+  $('shop-finance-prev').disabled=data.page<=1;$('shop-finance-next').disabled=data.page*data.page_size>=data.total;
+  $('shop-finance-status').textContent='';
+ }catch(e){if(seq===shopFinanceSeq&&epoch===authEpoch){shopFinanceRows=[];for(const id of ['shop-finance-summary','shop-finance-coverage','shop-finance-methods','shop-finance-list'])$(id).replaceChildren();$('shop-finance-status').textContent=e.message;}}
+}
+$('shop-finance-filter').onsubmit=event=>{event.preventDefault();shopFinancePage=1;return refreshShopFinance();};
+$('shop-finance-prev').onclick=()=>{if(shopFinancePage>1){shopFinancePage--;return refreshShopFinance();}};
+$('shop-finance-next').onclick=()=>{if(!$('shop-finance-next').disabled){shopFinancePage++;return refreshShopFinance();}};
+$('shop-finance-entry-form').onsubmit=async event=>{
+ event.preventDefault();if(!canGroup('finance_write')||shopFinanceBusy)return;
+ const kind=$('shop-finance-kind').value||'expense',currency=$('shop-finance-currency').value||'RUB';
+ const amount=parseFinanceAmount($('shop-finance-amount').value,currency),occurred_at=expenseDate($('shop-finance-date').value);
+ if(amount===null||occurred_at===null||!$('shop-finance-verified').checked){$('shop-finance-status').textContent='Проверьте сумму, дату и подтверждение сверки.';return;}
+ const payload={kind,category:kind==='fee'?'commission':kind==='refund'?'refund':$('shop-finance-category').value,currency,amount_minor:amount,occurred_at,order_id:$('shop-finance-order').value.trim()||null,reference:$('shop-finance-reference').value.trim(),note:$('shop-finance-note').value.trim(),verified:true};
+ const signature=JSON.stringify(payload);
+ if(!shopFinanceIntent||shopFinanceIntent.signature!==signature)shopFinanceIntent={signature,id:crypto.randomUUID()};
+ const intent=shopFinanceIntent,epoch=authEpoch;
+ shopFinanceBusy=true;$('shop-finance-save').disabled=true;
+ try{
+  await api('shop-finance/entries',{method:'POST',data:{...payload,operation_id:intent.id}});
+  if(epoch!==authEpoch||!canGroup('finance_write'))return;
+  shopFinanceIntent=null;event.target.reset();shopFinanceKind();$('shop-finance-verified').checked=false;
+  await refreshShopFinance();if(epoch===authEpoch)$('shop-finance-status').textContent='Операция учтена. Денежный перевод не выполнялся.';
+ }catch(e){if(epoch===authEpoch)$('shop-finance-status').textContent=e.message+' При повторе без изменений используется прежний идентификатор.';}
+ finally{if(epoch===authEpoch){shopFinanceBusy=false;$('shop-finance-save').disabled=false;}}
+};
+$('shop-finance-list').onsubmit=async event=>{
+ event.preventDefault();if(!canGroup('finance_write')||shopFinanceBusy)return;
+ const form=event.target.closest('[data-finance-void]');if(!form)return;
+ const entry=shopFinanceRows.find(e=>e.id===form.dataset.financeVoid);if(!entry||entry.state!=='recorded')return;
+ const note=String(new FormData(form).get('note')||'').trim();if(!note)return;
+ if(!confirm('Аннулировать только ошибочную запись учёта? Деньги и подписка не изменятся.'))return;
+ const sig=JSON.stringify([entry.version,note]);let intent=shopFinanceVoidIntents.get(entry.id);
+ if(!intent||intent.sig!==sig){intent={sig,id:crypto.randomUUID()};shopFinanceVoidIntents.set(entry.id,intent);}
+ const epoch=authEpoch;shopFinanceBusy=true;
+ try{await api('shop-finance/entries/'+encodeURIComponent(entry.id)+'/void',{method:'POST',data:{operation_id:intent.id,version:entry.version,note}});if(epoch===authEpoch){shopFinanceVoidIntents.delete(entry.id);await refreshShopFinance();}}
+ catch(e){if(epoch===authEpoch)$('shop-finance-status').textContent=e.message;}
+ finally{if(epoch===authEpoch)shopFinanceBusy=false;}
+};
 
 // Настройки меню бот получает из базы при отправке очередного /start.
 let botMenuVersion=0,botMenuButtons=[],botMenuRequest=0;
@@ -752,7 +876,7 @@ async function refresh({plans = role==='owner' || canGroup('catalog')} = {}) {
   else if(role==='finance') await Promise.all([refreshAdsAdmin(),refreshOrders(),refreshCommerceAnalytics()]);
   else if(role==='panel_operator') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshServers()]);
   else if(role==='support') await Promise.all([refreshDiagnostics(),refreshOrders(),refreshUsers(),refreshSupportAdmin()]);
-  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates(),refreshRolePolicies(),refreshModeration(),refreshRuntime('appearance'),refreshRuntime('sales'),refreshRuntime('notifications')]);}
+  if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates(),refreshRolePolicies(),refreshModeration(),refreshRuntime('appearance'),refreshRuntime('sales'),refreshRuntime('notifications'),refreshPaymentPolicy(),refreshShopFinance()]);}
   renderManagementNav();
 }
 $('admin-login').onsubmit = async event => {
@@ -773,7 +897,7 @@ $('admin-login').onsubmit = async event => {
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{}); role='';
-  clearUpdates(); clearManagement(); clearRuntime(); clearStaffIndividual();
+  clearUpdates(); clearManagement(); clearRuntime(); clearStaffIndividual(); clearPaymentPolicy(); clearShopFinance();
   protocolsRequest++; protocolCache = []; $('protocols-list').replaceChildren();
   $('protocols-status').textContent = ''; $('protocols-filter').value = 'all';
   $('protocols-panel').hidden = true; $('protocols-refresh').disabled = false;

@@ -61,11 +61,11 @@ def report(worker):
         plans=conn.execute('SELECT count(*) FROM plans WHERE enabled=1').fetchone()[0]
         if plans==0:warn('no_active_plans')
         if not any(p['assignable'] for p in protocols.values()):warn('no_assignable_servers')
-    try:
-        with db() as conn:
+        try:
+            conn.row_factory=sqlite3.Row
             mode=payment_policy.effective_mode(payment_policy.read(conn))
-    except Exception:
-        mode='invalid'
+        except Exception:
+            mode='invalid'
     payment_configured=mode=='manual' or (mode in ('yookassa','sbp') and bool(os.getenv('YOOKASSA_SHOP_ID') and os.getenv('YOOKASSA_SECRET')))
     if not payment_configured:warn('payment_settings_incomplete')
     telegram=bool(c.BOT_TOKEN);stars_ready=bool(telegram and c.BOT_USERNAME and shop_settings.terms_configured())

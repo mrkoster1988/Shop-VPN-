@@ -7,7 +7,7 @@ let miniappCurrentRoute = 'home';
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const statusLabel = {pending:'Ожидает оплаты',checkout:'Оплата не завершена',paid:'Оплачено · готовим VPN',active:'Доступ выдан',canceled:'Отменён'};
 const money=(amount,currency)=>amount.toLocaleString('ru-RU')+' '+(currency==='XTR'?'★':'₽');
-let checkoutQuote=null,quoteRequest=0,promoIntent='';
+let checkoutQuote=null,quoteRequest=0,promoIntent='',checkoutPolicyVersion=null;
 let referralIntents=new Map();
 let adsPolicy=null,adsPage=1,adsRequest=0,adsMutation=0,adsIntent=new Map();
 let passwordOperation=null, logoutPending=false, supportRequest=0, selectedSupportCase=null;
@@ -126,8 +126,8 @@ function renderPlans() {
   renderAppearance();
   $('protocols').innerHTML = catalog.protocols.map(p => `<button class="${p.id===protocol?'chosen':''}" data-protocol="${p.id}" aria-pressed="${p.id===protocol}">${esc(protocolName(p.id))}${p.available?'':' · скоро'}</button>`).join('');
   const selected=catalog.protocols.find(p=>p.id===protocol);
-  const available=!!selected?.available;
-  $('provider-note').textContent = available ? '' : selected?.sales_allowed===false ? (catalog.sale_notice||'Продажи временно приостановлены.') : 'Подключение этого протокола ещё не настроено. Покупки временно недоступны.';
+  const available=!!selected?.available && catalog.payment_available!==false;
+  $('provider-note').textContent = available ? '' : catalog.payment_available===false ? (catalog.payment_notice||'Оплата временно недоступна.') : selected?.sales_allowed===false ? (catalog.sale_notice||'Продажи временно приостановлены.') : 'Подключение этого протокола ещё не настроено. Покупки временно недоступны.';
   $('plan-list').innerHTML = catalog.plans.length ? catalog.plans.map((p,i) => `<article class="plan ${i===1?'featured':''}">${i===1?'<span class="badge">УДОБНЫЙ ВЫБОР</span>':''}<h3>${esc(p.name)}</h3><div class="price">${p.price.toLocaleString('ru-RU')} <small>${catalog.currency==='XTR'?'★':'₽'}</small></div><p>${p.days} дней доступа · ${esc(protocolName(protocol))}</p><ul><li>${esc(profileAllowance(p.device_limit ?? 4))}</li><li>Настройки и QR-код в кабинете</li><li>Продление с сохранением дней</li></ul><button data-plan="${p.id}" ${available?'':'disabled'}>${available?'Выбрать тариф ↗':'Скоро'}</button></article>`).join('') : '<p class="plans-empty">Тарифы временно недоступны. Пожалуйста, обратитесь в поддержку.</p>';
   renderTrial();
 }
@@ -147,7 +147,7 @@ function clearPassword() {
 }
 $('account-dialog').addEventListener('close',clearPassword);
 function clearPayment() {
-  paymentOrder=null;paymentRequest++;paymentBusy=false;$('payment-result').replaceChildren();$('checkout-submit').disabled=false;
+  paymentOrder=null;paymentRequest++;paymentBusy=false;checkoutPolicyVersion=null;$('payment-result').replaceChildren();$('checkout-submit').disabled=false;
 }
 function clearAds() {
   adsRequest++;adsMutation++;adsPolicy=null;adsPage=1;adsIntent.clear();
@@ -258,9 +258,11 @@ async function beginCheckout(id) {
   if (!selectedPlan) throw new Error('Тариф больше недоступен. Выберите другой тариф.');
   if (!me) { show('auth-dialog'); return; }
   if(catalog.protocols.find(p=>p.id===protocol)?.sales_allowed===false)throw new Error(catalog.sale_notice||'Продажи временно приостановлены.');
+  if(catalog.payment_available===false)throw new Error(catalog.payment_notice||'Оплата временно недоступна.');
   $('promo-controls').hidden=false;renderCheckoutAmount();
   if(promoIntent){$('promo-code').value=promoIntent;$('promo-status').textContent='Промокод из ссылки. Нажмите «Применить», чтобы проверить скидку и итоговую цену.';}
   clearPayment(); $('checkout-form').hidden = false;
+  checkoutPolicyVersion=Number.isSafeInteger(catalog.payment_policy_version)?catalog.payment_policy_version:null;
   $('checkout-submit').textContent=catalog.payment_mode==='sbp'?'Создать счёт СБП →':'Оформить заказ →';
   $('terms-text').textContent=catalog.terms; $('accept-terms').checked=false; $('accept-terms').required=catalog.payment_mode==='stars';
   $('receipt-label').hidden = !catalog.receipts; $('receipt-label').querySelector('input').required = catalog.receipts;
@@ -347,7 +349,7 @@ $('auth-form').onsubmit = async event => {
 };
 $('checkout-form').onsubmit = async event => {
   event.preventDefault(); const b=$('checkout-submit'); b.disabled=true; const request=paymentRequest,epoch=sessionEpoch;
-  try { if(!checkoutTrial && $('promo-code').value.trim() && !checkoutQuote)throw new Error('Сначала нажмите «Применить» и проверьте сумму скидки.'); const email=new FormData(event.target).get('receipt_email'); const path=checkoutTrial?'/api/trial':'/api/orders';const payload=checkoutTrial?{protocol:checkoutTrial.protocol,policy_version:checkoutTrial.version,accept_terms:$('accept-terms').checked}:{plan:selectedPlan.id,plan_version:selectedPlan.version,protocol,receipt_email:email||null,accept_terms:$('accept-terms').checked,...(checkoutQuote?{promo_code:checkoutQuote.promo_code,promo_version:checkoutQuote.promo_version,quoted_amount:checkoutQuote.amount,quote_currency:checkoutQuote.currency}:{})};const order=await api(path,payload);if(request!==paymentRequest || epoch!==sessionEpoch || !$('checkout-dialog').open)return;promoIntent='';checkoutTrial=null;paymentResult(order);await refreshMe(); }
+  try { if(!checkoutTrial && $('promo-code').value.trim() && !checkoutQuote)throw new Error('Сначала нажмите «Применить» и проверьте сумму скидки.'); const email=new FormData(event.target).get('receipt_email'); const path=checkoutTrial?'/api/trial':'/api/orders';const payload=checkoutTrial?{protocol:checkoutTrial.protocol,policy_version:checkoutTrial.version,accept_terms:$('accept-terms').checked}:{plan:selectedPlan.id,plan_version:selectedPlan.version,protocol,receipt_email:email||null,accept_terms:$('accept-terms').checked,...(checkoutPolicyVersion===null?{}:{payment_policy_version:checkoutPolicyVersion}),...(checkoutQuote?{promo_code:checkoutQuote.promo_code,promo_version:checkoutQuote.promo_version,quoted_amount:checkoutQuote.amount,quote_currency:checkoutQuote.currency}:{})};const order=await api(path,payload);if(request!==paymentRequest || epoch!==sessionEpoch || !$('checkout-dialog').open)return;promoIntent='';checkoutTrial=null;paymentResult(order);await refreshMe(); }
   catch(e) {
     if(request!==paymentRequest || epoch!==sessionEpoch || !$('checkout-dialog').open)return;
     if (e.status===409) {
