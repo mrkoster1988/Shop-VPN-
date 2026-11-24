@@ -109,8 +109,13 @@ async def fulfill(order_id):
         if order['kind']=='free_renewal':
             current=one('SELECT * FROM subscriptions WHERE user_id=? AND protocol=?',
                 (order['user_id'],order['protocol']))
+            newer_paid=one("""SELECT 1 FROM orders WHERE user_id=? AND protocol=?
+                AND method!='free' AND kind='purchase'
+                AND status IN ('pending','paid','active')
+                AND created>=? LIMIT 1""",
+                (order['user_id'],order['protocol'],order['created']-60))
             plan=one('SELECT enabled,is_free FROM plans WHERE id=?',(order['plan'],))
-            if (not plan or not plan['enabled'] or not plan['is_free'] or
+            if (newer_paid or not plan or not plan['enabled'] or not plan['is_free'] or
                     not current or current['state'] not in ('active','expired') or
                     current['free_plan_id']!=order['plan'] or not current['free_auto_renew'] or
                     current['free_renewals_used']>=current['free_max_renewals']):
@@ -290,6 +295,14 @@ def enqueue_free_renewals(now):
                 ORDER BY created,id LIMIT 1""",
                 (sub['user_id'],sub['protocol'],sub['free_plan_id'])).fetchone()
             if not initial:continue
+            # A newer paid checkout takes precedence over an automatic free
+            # extension, even while that payment/provisioning is still pending.
+            paid=conn.execute("""SELECT 1 FROM orders
+                WHERE user_id=? AND protocol=? AND kind='purchase'
+                  AND method!='free' AND status IN ('pending','paid','active')
+                  AND created>=? LIMIT 1""",
+                (sub['user_id'],sub['protocol'],initial['created'])).fetchone()
+            if paid:continue
             conn.execute("""INSERT INTO orders (
                 id,user_id,protocol,plan,days,amount,created,currency,method,
                 plan_version,plan_name,device_limit,base_amount,discount,
