@@ -109,11 +109,18 @@ async def fulfill(order_id):
         if order['kind']=='free_renewal':
             current=one('SELECT * FROM subscriptions WHERE user_id=? AND protocol=?',
                 (order['user_id'],order['protocol']))
+            # Compare against the original free grant, not an arbitrary
+            # 60-second window: a paid checkout may remain pending for hours.
+            original_free=one("""SELECT created FROM orders
+                WHERE user_id=? AND protocol=? AND plan=? AND method='free'
+                  AND kind='purchase' AND status='active'
+                ORDER BY created,id LIMIT 1""",
+                (order['user_id'],order['protocol'],order['plan']))
             newer_paid=one("""SELECT 1 FROM orders WHERE user_id=? AND protocol=?
                 AND method!='free' AND kind='purchase'
                 AND status IN ('pending','paid','active')
                 AND created>=? LIMIT 1""",
-                (order['user_id'],order['protocol'],order['created']-60))
+                (order['user_id'],order['protocol'],original_free['created'] if original_free else 0))
             plan=one('SELECT enabled,is_free FROM plans WHERE id=?',(order['plan'],))
             if (newer_paid or not plan or not plan['enabled'] or not plan['is_free'] or
                     not current or current['state'] not in ('active','expired') or
