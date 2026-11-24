@@ -36,6 +36,12 @@ def _new_client():
     return httpx.AsyncClient(timeout=12, follow_redirects=False, trust_env=False)
 
 
+async def _download_existing_config(profile, private_key):
+    adapter = wgdashboard.WGDashboard(profile)
+    async with _new_client() as client:
+        return await adapter.download_config(client, private_key)
+
+
 async def _remote_peer(profile, public_key):
     adapter = wgdashboard.WGDashboard(profile)
     async with _new_client() as client:
@@ -169,7 +175,8 @@ async def restore_primary(user_id):
                 raise HTTPException(409, 'Нет сохранённого ключа. Создание нового '
                                     'ключа при восстановлении запрещено.')
             try:
-                public_key = wgdashboard.WGDashboard.identity(c.decrypt(key['private_key']))
+                private_key = c.decrypt(key['private_key'])
+                public_key = wgdashboard.WGDashboard.identity(private_key)
             except Exception:
                 raise HTTPException(409, 'Сохранённый ключ недоступен') from None
 
@@ -179,19 +186,25 @@ async def restore_primary(user_id):
             raise HTTPException(502, 'Не удалось проверить peer на WGDashboard') from None
         if current == 'peer_restricted':
             raise HTTPException(409, 'Пир ограничен на панели: ручная проверка обязательна')
-        if current == 'peer_found':
-            return {'ok': True, 'status': 'already_present'}
-        if current != 'peer_missing':
+        if current not in ('peer_found','peer_missing'):
             raise HTTPException(502, 'Статус пира не подтверждён')
         try:
-            config = await providers.provision({**sub, 'id': identity,
-                                                'expires': sub['expires']})
+            config = (await _download_existing_config(profile, private_key)
+                      if current == 'peer_found' else
+                      await providers.provision({**sub, 'id': identity,
+                                                  'expires': sub['expires']}))
         except Exception:
             raise HTTPException(502, 'WGDashboard не подтвердил повторную выдачу. '
                                 'Ключ и подписка сохранены для повтора.') from None
         if (not isinstance(config, str) or len(config) > 65536
                 or not config.startswith('[Interface]') or '[Peer]' not in config):
             raise HTTPException(502, 'WGDashboard вернул неподдерживаемую конфигурацию')
+        if current == 'peer_found':
+            try:
+                if c.decrypt(sub['secret']) == config:
+                    return {'ok': True, 'status': 'already_present'}
+            except Exception:
+                pass
         with db() as conn:
             conn.execute('BEGIN IMMEDIATE')
             changed = conn.execute(
@@ -203,7 +216,7 @@ async def restore_primary(user_id):
             if changed.rowcount != 1:
                 raise HTTPException(409, 'Состояние подписки изменилось. '
                                     'Подключение необходимо повторно проверить.')
-    return {'ok': True, 'status': 'restored'}
+    return {'ok': True, 'status': 'restored' if current == 'peer_missing' else 'refreshed'}
 
 
 async def retry_pending(user_id):
