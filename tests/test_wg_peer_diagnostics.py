@@ -265,7 +265,7 @@ def test_remote_peer_found_can_refresh_stale_config_without_recreating_peer(clie
     key=wgdashboard.stored_private_key('test-wg', SID)
     initial=one('SELECT expires,secret,server_id FROM subscriptions WHERE id=?',(SID,))
     async def present(profile, public):return 'peer_found'
-    fresh='[Interface]\\nPrivateKey = '+key+'\\nAddress = 10.0.0.2/32\\n[Peer]\\nPublicKey = '+wgdashboard.WGDashboard.identity(key)+'\\nEndpoint = 193.238.155.39:51820\\nAllowedIPs = 0.0.0.0/0\\n'
+    fresh='[Interface]\nPrivateKey = '+key+'\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = '+wgdashboard.WGDashboard.identity(key)+'\nEndpoint = 193.238.155.39:51820\nAllowedIPs = 0.0.0.0/0\n'
     async def downloaded(profile, private):
         assert private==key
         return fresh
