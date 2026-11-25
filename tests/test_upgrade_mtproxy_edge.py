@@ -45,6 +45,7 @@ def simulated_container(root, *, mount="pushok_shop_data"):
         "Config": {"Labels": {
             "com.docker.compose.project": "pushok-shop",
             "com.docker.compose.service": "shop",
+            "com.docker.compose.config-hash": "d" * 64,
             "com.docker.compose.project.config_files":
                 str(root / "compose.mtproxy-edge.yaml") + "," + str(root / "compose.wg-ip.yaml"),
         }},
@@ -67,6 +68,8 @@ def patch_probe(monkeypatch, root, *, compose=None, mount="pushok_shop_data", la
         raise AssertionError(args)
 
     def fake_run(command, **kwargs):
+        if command[-3:] == ["config", "--hash", "shop"]:
+            return "shop " + "d" * 64
         if command[:3] == ["docker", "image", "inspect"]:
             return OLD
         raise AssertionError(command)
@@ -104,6 +107,20 @@ def test_probe_rejects_unsafe_compose(root, monkeypatch, mutation):
         shop["image"] = "someone-else:latest"
     patch_probe(monkeypatch, root, compose=conf)
     with pytest.raises(edge.Rejected):
+        edge.probe(root)
+
+
+def test_probe_rejects_changed_effective_compose_config(root, monkeypatch):
+    patch_probe(monkeypatch, root)
+    original = edge.run
+
+    def changed(command, **kwargs):
+        if command[-3:] == ["config", "--hash", "shop"]:
+            return "shop " + "e" * 64
+        return original(command, **kwargs)
+
+    monkeypatch.setattr(edge, "run", changed)
+    with pytest.raises(edge.Rejected, match="Compose изменён"):
         edge.probe(root)
 
 
