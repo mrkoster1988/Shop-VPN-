@@ -77,7 +77,7 @@ def patch_probe(monkeypatch, root, *, compose=None, mount="pushok_shop_data", la
     monkeypatch.setattr(edge, "docker_json", fake_json)
     monkeypatch.setattr(edge, "run", fake_run)
     monkeypatch.setattr(edge, "internal", lambda path: (
-        {"status": "ok"} if path.endswith("/health") else {"version": "v0.062"}
+        {"status": "ok"} if path.endswith("/health") else {"version": "v0.063"}
     ))
 
 
@@ -86,7 +86,7 @@ def test_probe_accepts_local_wg_overlay_without_installer_metadata(root, monkeyp
     assert not (root / "installer.json").exists()
     assert not (root / "compose.install.json").exists()
     result = edge.probe(root)
-    assert result["runtime_version"] == "v0.062"
+    assert result["runtime_version"] == "v0.063"
     assert result["volume"] == "pushok_shop_data"
     assert result["compose_files"] == ["compose.mtproxy-edge.yaml", "compose.wg-ip.yaml"]
     assert ".env" in result["fingerprint"]
@@ -175,14 +175,14 @@ def test_unfinished_switch_blocks_any_new_attempt(root, monkeypatch):
     monkeypatch.setattr(edge, "status", lambda _: {"state": "recovery_required"})
     monkeypatch.setattr(edge, "probe", lambda _: (_ for _ in ()).throw(AssertionError("must not probe")))
     with pytest.raises(edge.Rejected, match="незавершённое"):
-        edge.apply(root, "v0.063", None)
+        edge.apply(root, "v0.064", None)
 
 
 def test_apply_builds_before_backup_and_only_recreates_shop(root, monkeypatch):
     before = {"container_id": "old", "image_id": OLD, "volume": edge.VOLUME,
               "fingerprint": {"env": "sha"}, "compose_files": ["compose.mtproxy-edge.yaml", "compose.wg-ip.yaml"],
-              "runtime_version": "v0.062"}
-    after = {**before, "container_id": "new", "image_id": NEW, "runtime_version": "v0.063"}
+              "runtime_version": "v0.064"}
+    after = {**before, "container_id": "new", "image_id": NEW, "runtime_version": "v0.064"}
     probes = iter([before, before, before, after])
     events = []
 
@@ -199,7 +199,7 @@ def test_apply_builds_before_backup_and_only_recreates_shop(root, monkeypatch):
         events.append(command)
         return ""
     monkeypatch.setattr(edge, "run", record)
-    result = edge.apply(root, "v0.063", None)
+    result = edge.apply(root, "v0.064", None)
     assert result["state"] == "complete"
     assert events[:3] == ["download", "build", "backup"]
     docker_calls = [x for x in events if isinstance(x, list)]
