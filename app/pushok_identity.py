@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from . import config as c
-from .db import db
+from .db import db, insert_user
 from .security import digest, session, session_user
 
 COOKIE='shop_id_request'
@@ -285,7 +285,7 @@ def finish(data,request):
             raise HTTPException(409,'Привязка конфликтует с существующим аккаунтом. Обратитесь в поддержку.')
         if existing is None:
             if local or not p['allow_new_accounts']:raise HTTPException(409,'Регистрация через Pushok ID пока закрыта')
-            uid=conn.execute('INSERT INTO users(telegram_id,created) VALUES (?,?)',(tg,now)).lastrowid
+            uid=insert_user(conn, telegram_id=tg, created=now)
         else:uid=existing['id']
         by_user=conn.execute('SELECT subject FROM shop_id_links WHERE user_id=?',(uid,)).fetchone()
         if by_user and by_user['subject']!=subject:
