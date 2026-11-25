@@ -31,9 +31,10 @@ def simulated_compose():
             "shop": {
                 "image": edge.IMAGE,
                 "container_name": edge.CONTAINER,
-                "volumes": [{"type": "volume", "source": edge.VOLUME, "target": "/app/data"}],
+                "volumes": [{"type": "volume", "source": "shop_data", "target": "/app/data"}],
             }
-        }
+        },
+        "volumes": {"shop_data": {"name": edge.VOLUME}},
     }
 
 
@@ -103,6 +104,14 @@ def test_probe_rejects_unsafe_compose(root, monkeypatch, mutation):
         shop["image"] = "someone-else:latest"
     patch_probe(monkeypatch, root, compose=conf)
     with pytest.raises(edge.Rejected):
+        edge.probe(root)
+
+
+def test_probe_rejects_misnamed_compose_volume(root, monkeypatch):
+    conf = simulated_compose()
+    conf["volumes"]["shop_data"]["name"] = "different_volume"
+    patch_probe(monkeypatch, root, compose=conf)
+    with pytest.raises(edge.Rejected, match="постоянный том"):
         edge.probe(root)
 
 
