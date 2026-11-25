@@ -45,7 +45,7 @@ def test_disabled_or_pending_grant_does_not_bind_phone_without_config(client, mo
     assert one('SELECT count(*) AS n FROM flow_bridge_devices')['n'] == 0
 
 
-def test_exact_409_reason_distinguishes_replay_and_real_device_conflict(client, monkeypatch):
+def test_exact_409_reason_distinguishes_replay_and_identity_conflict(client, monkeypatch):
     _enabled(monkeypatch)
     service.telegram_account(98455677)
     request = _ticket()
@@ -58,9 +58,14 @@ def test_exact_409_reason_distinguishes_replay_and_real_device_conflict(client, 
             "VALUES ('active',1,'wg','active',?,?)",
             (int(time.time())+3600,c.encrypt(_VALID)))
     assert _call(client, client_id='pfc_'+'a'*43).json()['status'] == 'active'
-    conflict = _call(client, client_id='pfc_'+'z'*43)
-    assert conflict.status_code == 409
-    assert conflict.json()['detail'] == {'code':'FLOW_DEVICE_BOUND'}
+    # A different client_id on the SAME verified account is never a conflict.
+    account = _call(client, client_id='pfc_'+'z'*43)
+    assert account.status_code == 200
+    assert account.json()['status'] == 'active'
+    assert one('SELECT count(*) AS n FROM flow_bridge_devices')['n'] == 0
+    identity = _call(client, ticket=_ticket(sub='12345678-1234-4234-8234-123456789abd'))
+    assert identity.status_code == 409
+    assert identity.json()['detail'] == {'code':'FLOW_IDENTITY_CONFLICT'}
 
 
 def test_owner_only_status_and_release_unused_binding_preserve_identity(client, monkeypatch):
