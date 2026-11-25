@@ -117,14 +117,14 @@ def _bind(proof, client_id):
         if conn.execute('SELECT count(*) FROM flow_bridge_nonces').fetchone()[0] >= 50000:
             raise HTTPException(503, 'Сервис временно перегружен')
         if conn.execute('SELECT 1 FROM flow_bridge_nonces WHERE nonce_hash=?', (proof['nonce_hash'],)).fetchone():
-            raise HTTPException(409, 'Подтверждение уже использовано')
+            raise HTTPException(409, {'code':'FLOW_PROOF_REPLAY'})
         linked=conn.execute('SELECT * FROM flow_bridge_identities WHERE mtproxy_uuid=?',
                             (proof['subject'],)).fetchone()
         other=conn.execute('SELECT * FROM flow_bridge_identities WHERE telegram_id=?',
                            (proof['telegram_id'],)).fetchone()
         if ((linked is not None and linked['telegram_id'] != proof['telegram_id'])
                 or (other is not None and other['mtproxy_uuid'] != proof['subject'])):
-            raise HTTPException(409, 'Для аккаунта требуется проверка привязки')
+            raise HTTPException(409, {'code':'FLOW_IDENTITY_CONFLICT'})
         row=conn.execute('SELECT id FROM users WHERE telegram_id=?', (proof['telegram_id'],)).fetchone()
         if row is None:
             conn.execute('INSERT INTO users(telegram_id,created) VALUES (?,?)',
@@ -132,16 +132,24 @@ def _bind(proof, client_id):
             row=conn.execute('SELECT id FROM users WHERE telegram_id=?', (proof['telegram_id'],)).fetchone()
         uid=row['id']
         if linked is not None and linked['shop_user_id'] != uid:
-            raise HTTPException(409, 'Привязка аккаунтов изменилась')
+            raise HTTPException(409, {'code':'FLOW_IDENTITY_CONFLICT'})
         if linked is None:
             conn.execute('INSERT INTO flow_bridge_identities(mtproxy_uuid,telegram_id,shop_user_id,created) VALUES (?,?,?,?)',
                          (proof['subject'], proof['telegram_id'],uid,now))
         device=conn.execute('SELECT client_hash FROM flow_bridge_devices WHERE shop_user_id=?',(uid,)).fetchone()
         if device is not None and device['client_hash'] != client_hash:
-            raise HTTPException(409, 'Подключение уже привязано к другому устройству')
+            raise HTTPException(409, {'code':'FLOW_DEVICE_BOUND'})
         if device is None:
-            conn.execute('INSERT INTO flow_bridge_devices(shop_user_id,client_hash,created) VALUES (?,?,?)',
-                         (uid,client_hash,now))
+            # Never lock a phone to a Shop identity before Shop has actually
+            # issued an active WireGuard profile. A disabled/pending first
+            # claim must not prevent using a phone when issuance is ready.
+            ready=conn.execute(
+                "SELECT 1 FROM subscriptions WHERE user_id=? AND protocol='wg' "
+                "AND state='active' AND expires>? AND primary_key_state='active' "
+                "AND secret IS NOT NULL LIMIT 1", (uid,now)).fetchone()
+            if ready is not None:
+                conn.execute('INSERT INTO flow_bridge_devices(shop_user_id,client_hash,created) VALUES (?,?,?)',
+                             (uid,client_hash,now))
         conn.execute('INSERT INTO flow_bridge_nonces(nonce_hash,expires,created) VALUES (?,?,?)',
                      (proof['nonce_hash'],proof['expires'],now))
         return uid

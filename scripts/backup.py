@@ -178,15 +178,27 @@ def verify(path,password):
     return {**report,'release':manifest['release'],'created':manifest['created']}
 
 
+def invalidate_restored_wireguard_links(conn, *, preserve=False):
+    """Do not resurrect bearer links from an older snapshot; retain revision history."""
+    if preserve:
+        return
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if 'flow_wireguard_links' in tables:
+        # Legacy primary-link columns are NOT NULL. The old value stays encrypted
+        # but is not usable; the next explicit enable generates a fresh token.
+        conn.execute("UPDATE flow_wireguard_links SET enabled=0,version=version+1 WHERE enabled=1")
+    if 'flow_wireguard_device_links' in tables:
+        conn.execute("""UPDATE flow_wireguard_device_links SET enabled=0,token_hash=NULL,
+            token_secret=NULL,version=version+1 WHERE enabled=1""")
+
+
 def restore(path,password,target,*,preserve_device_links=False):
     files,manifest=read_archive(path,password)
     with tempfile.TemporaryDirectory(prefix='pushok-restore-') as temp:
         database=Path(temp)/'shop.db';database.write_bytes(files['shop.db']);report=validate(database,files['.env'])
         with closing(sqlite3.connect(database)) as conn:
-            # Snapshot recovery must never resurrect a previously disabled bearer URL.
-            if not preserve_device_links and conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='flow_wireguard_device_links'").fetchone():
-                conn.execute("""UPDATE flow_wireguard_device_links SET enabled=0,token_hash=NULL,
-                    token_secret=NULL,version=version+1 WHERE enabled=1""")
+            # Backward-compatible flag used only for a verified stopped-source upgrade.
+            invalidate_restored_wireguard_links(conn, preserve=preserve_device_links)
             # Pending SSO approvals and their locally issued sessions must never resurrect.
             for table in ('shop_id_requests','shop_id_sessions'):
                 if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():

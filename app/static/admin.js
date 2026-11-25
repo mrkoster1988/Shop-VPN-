@@ -1300,7 +1300,7 @@ async function loadUser(page) {
     profilePage = data.orders_page;
     const user = data.user;
     $('user-title').textContent = 'Пользователь № ' + user.id;
-    $('user-details').innerHTML = `<p>Email: ${esc(user.email || '—')}</p><p>Telegram ID: ${esc(user.telegram_id ?? '—')}</p><p>Регистрация: ${esc(dateTime(user.created))}</p>`;
+    $('user-details').innerHTML = `<p>Email: ${esc(user.email || '—')}</p><p>Telegram ID: ${esc(user.telegram_id ?? '—')}</p><p>Регистрация: ${esc(dateTime(user.created))}</p>` + (role==='owner' ? '<div class="record-actions"><button type="button" class="secondary" data-flow-binding-check="1">Проверить привязку Flow</button></div><div class="record-note" id="flow-binding-status" role="status" aria-live="polite"></div>' : '');
     $('user-subscriptions').innerHTML = data.subscriptions.length ? data.subscriptions.map(sub => {
       const status = sub.access_active ? 'Активна' : sub.state === 'pending' ? 'Готовится'
         : sub.state === 'revoked' ? 'Доступ отозван' : 'Неактивна';
@@ -1327,6 +1327,44 @@ async function loadUser(page) {
     $('user-error').textContent = '';
   } catch (error) { if (request === profileRequest && selectedUser === userId) $('user-error').textContent = error.message; }
 }
+// This owner-only recovery never rotates a live key, changes a subscription,
+// or exposes the secret Flow client identifier. Server controls final safety.
+$('user-details').onclick = async event => {
+  const check=event.target.closest('[data-flow-binding-check]');
+  const release=event.target.closest('[data-flow-binding-release]');
+  if ((!check && !release) || role!=='owner' || selectedUser===null) return;
+  const panel=$('flow-binding-status');
+  if (!panel) return;
+  const uid=selectedUser, epoch=authEpoch;
+  const current=()=>selectedUser===uid && authEpoch===epoch && $('user-dialog').open;
+  if (check) {
+    panel.textContent='Проверяем привязку Flow без просмотра ключей…';
+    try {
+      const state=await api('users/'+encodeURIComponent(uid)+'/flow/device');
+      if (!current()) return;
+      panel.textContent=!state.bound
+        ? 'Flow ещё не закреплял телефон за этим аккаунтом.'
+        : state.can_release
+          ? 'Привязка есть, но WG-ключ ещё не выдавался. Возможен безопасный сброс.'
+          : 'Сохранена привязка Flow. Автоматический сброс заблокирован: возможен выданный или создаваемый пир; требуется проверка и перевыпуск ключа.';
+      if (state.can_release && Number.isSafeInteger(state.binding_created)) {
+        panel.innerHTML+='<div class="record-actions"><button type="button" class="secondary" data-flow-binding-release="'+state.binding_created+'">Сбросить неиспользованную привязку</button></div>';
+      }
+    } catch (error) { if (current()) panel.textContent=error.message; }
+  } else {
+    const created=Number(release.dataset.flowBindingRelease);
+    if (!Number.isSafeInteger(created) || created<1) return;
+    if (!confirm('Снять только неиспользованную привязку Flow? При наличии выданного WireGuard-ключа Shop запретит сброс. Действие не переносит подписки и не создаёт новый пир.')) return;
+    release.disabled=true;
+    panel.textContent='Проверяем безопасность сброса на сервере…';
+    try {
+      await api('users/'+encodeURIComponent(uid)+'/flow/device/release', {
+        method:'POST', data:{binding_created:created,confirm:'RELEASE_UNUSED_FLOW_BINDING'}
+      });
+      if (current()) panel.textContent='Неиспользованная привязка освобождена. На телефоне повторите «Получить конфиг».';
+    } catch (error) { if (current()) panel.textContent=error.message; }
+  }
+};
 // Destructive actions require the developer role and explicit confirmation.
 // Server failure never removes the card or pretends the peer was revoked.
 const PEER_STATUS_LABELS = {
