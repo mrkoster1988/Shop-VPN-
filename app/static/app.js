@@ -12,6 +12,7 @@ let referralIntents=new Map();
 let adsPolicy=null,adsPage=1,adsRequest=0,adsMutation=0,adsIntent=new Map();
 let passwordOperation=null, logoutPending=false, supportRequest=0, selectedSupportCase=null;
 let paymentOrder=null,paymentRequest=0,paymentBusy=false;
+let paidRenewal = new URLSearchParams(location.search).get('renew') === 'wg';
 let catalog, me, protocol = 'xui', selectedPlan, checkoutTrial=null, register = false, toastTimer;
 let linkSubscription=null, linkDeviceId=null, linkProtocol=null, linkRequest=0, linkState=null, flowLaunchUrl=null;
 let sessionEpoch = 0, meRequest = 0, connectionRequest = 0, connection = null, connectionTimer;
@@ -140,7 +141,8 @@ function renderPlans() {
   const available=!!selected?.available && selected?.sales_allowed!==false;
   const paymentReady=catalog.payment_available!==false;
   $('provider-note').textContent = available && (paymentReady || catalog.plans.some(p=>p.price===0)) ? '' : !paymentReady && available ? (catalog.payment_notice||'Оплата временно недоступна. Бесплатные тарифы доступны.') : selected?.sales_allowed===false ? (catalog.sale_notice||'Продажи временно приостановлены.') : 'Подключение этого протокола ещё не настроено. Покупки временно недоступны.';
-  $('plan-list').innerHTML = catalog.plans.length ? catalog.plans.map((p,i) => `<article class="plan ${i===1?'featured':''}">${i===1?'<span class="badge">УДОБНЫЙ ВЫБОР</span>':''}<h3>${esc(p.name)}</h3><div class="price">${p.price===0?'Бесплатно':p.price.toLocaleString('ru-RU')}${p.price===0?'':' <small>'+(catalog.currency==='XTR'?'★':'₽')+'</small>'}</div><p>${p.days} дней доступа · ${esc(protocolName(protocol))}</p><ul><li>${esc(profileAllowance(p.device_limit ?? 4))}</li><li>Настройки и QR-код в кабинете</li><li>${p.price===0?(p.free_auto_renew?'Автопродление: '+p.free_max_renewals+' раз(а)':'Без автоматического продления'):'Продление с сохранением дней'}</li>${p.price===0&&p.free_traffic_gb?'<li>Лимит '+p.free_traffic_gb+' ГБ на профиль 3x-ui</li>':''}${p.price===0&&p.free_activation_limit?'<li>Всего активаций: '+p.free_activation_limit+'</li>':''}</ul><button data-plan="${p.id}" ${available&&(paymentReady||p.price===0)&&!(p.price===0&&p.free_traffic_gb>0&&!['xui','vmess'].includes(protocol))?'':'disabled'}>${p.price===0&&p.free_traffic_gb>0&&!['xui','vmess'].includes(protocol)?'Только для 3x-ui':available&&(paymentReady||p.price===0)?(p.price===0?'Получить бесплатно ↗':'Выбрать тариф ↗'):'Скоро'}</button></article>`).join('') : '<p class="plans-empty">Тарифы временно недоступны. Пожалуйста, обратитесь в поддержку.</p>';
+  const visiblePlans = paidRenewal ? catalog.plans.filter(plan => plan.price > 0) : catalog.plans;
+  $('plan-list').innerHTML = visiblePlans.length ? visiblePlans.map((p,i) => `<article class="plan ${i===1?'featured':''}">${i===1?'<span class="badge">УДОБНЫЙ ВЫБОР</span>':''}<h3>${esc(p.name)}</h3><div class="price">${p.price===0?'Бесплатно':p.price.toLocaleString('ru-RU')}${p.price===0?'':' <small>'+(catalog.currency==='XTR'?'★':'₽')+'</small>'}</div><p>${p.days} дней доступа · ${esc(protocolName(protocol))}</p><ul><li>${esc(profileAllowance(p.device_limit ?? 4))}</li><li>Настройки и QR-код в кабинете</li><li>${p.price===0?(p.free_auto_renew?'Автопродление: '+p.free_max_renewals+' раз(а)':'Без автоматического продления'):'Продление с сохранением дней'}</li>${p.price===0&&p.free_traffic_gb?'<li>Лимит '+p.free_traffic_gb+' ГБ на профиль 3x-ui</li>':''}${p.price===0&&p.free_activation_limit?'<li>Всего активаций: '+p.free_activation_limit+'</li>':''}</ul><button data-plan="${p.id}" ${available&&(paymentReady||p.price===0)&&!(p.price===0&&p.free_traffic_gb>0&&!['xui','vmess'].includes(protocol))?'':'disabled'}>${p.price===0&&p.free_traffic_gb>0&&!['xui','vmess'].includes(protocol)?'Только для 3x-ui':available&&(paymentReady||p.price===0)?(p.price===0?'Получить бесплатно ↗':'Выбрать тариф ↗'):'Скоро'}</button></article>`).join('') : '<p class="plans-empty">Тарифы временно недоступны. Пожалуйста, обратитесь в поддержку.</p>';
   renderTrial();
 }
 function clearConnection() {
@@ -366,7 +368,7 @@ async function refreshPaymentOrder(silent=false) {
   } catch(e){if(!silent && request===paymentRequest && epoch===sessionEpoch && $('checkout-dialog').open)toast(e.message);}
   finally {if(request===paymentRequest)paymentBusy=false;}
 }
-$('protocols').onclick = event => { const b=event.target.closest('[data-protocol]'); if(b) { protocol=b.dataset.protocol; renderPlans(); } };
+$('protocols').onclick = event => { const b=event.target.closest('[data-protocol]'); if(b) { paidRenewal=false; protocol=b.dataset.protocol; renderPlans(); } };
 $('plan-list').onclick = event => { const b=event.target.closest('[data-plan]'); if(b) beginCheckout(b.dataset.plan).catch(e=>toast(e.message)); };
 document.querySelectorAll('[data-close]').forEach(button => button.onclick=()=>$(button.dataset.close).close());
 // В браузер поступает только случайный номер запроса. Подпись приходит от ID на сервер Shop.
@@ -665,7 +667,7 @@ async function applyPromo() {
 $('promo-apply').onclick=()=>applyPromo();
 function renderTrial() {
   const trial=catalog.trial;
-  $('trial-offer').hidden=!trial || (!trial.enabled&&!trial.claim);
+  $('trial-offer').hidden=paidRenewal || !trial || (!trial.enabled&&!trial.claim);
   if(!trial)return;
   const available=trialProtocolAvailable();
   const messages={telegram_required:catalog.mtproxy_login?'Войдите через MTProxy, чтобы попробовать VPN.':'Войдите через Telegram, чтобы попробовать VPN.',existing_customer:'Пробный доступ доступен аккаунтам без прежних заказов и подписок.',limit_reached:'Пробные активации временно недоступны.',not_configured:'Пробный доступ готовится к запуску.',disabled:'Пробный доступ отключён.'};
@@ -680,6 +682,7 @@ function renderTrial() {
 }
 async function startMtproxyLogin() {
   await api('/api/auth/mtproxy/start', {});
+  if (paidRenewal) { try { sessionStorage.setItem('shop-paid-wg-return', JSON.stringify({plan:selectedPlan?.id || '',at:Date.now()})); } catch {} }
   location.assign('/?shop_login=1#login');
 }
 $('auth-mtproxy').onclick=async()=>{
@@ -948,7 +951,15 @@ $('logout').onclick = async () => {
 };
 (async () => {
   try {
-    catalog=await api('/api/catalog'); protocol=catalog.protocols.find(p=>p.available)?.id || 'xui'; renderPlans(); $('support').textContent=catalog.support;
+    let resumed = null;
+    if (new URLSearchParams(location.search).get('view') === 'account') {
+      try {
+        const saved = JSON.parse(sessionStorage.getItem('shop-paid-wg-return'));
+        sessionStorage.removeItem('shop-paid-wg-return');
+        if (saved && Date.now()-saved.at >= 0 && Date.now()-saved.at < 15*60*1000) { paidRenewal=true; resumed=saved.plan; }
+      } catch {}
+    }
+    catalog=await api('/api/catalog'); protocol=paidRenewal?'wg':catalog.protocols.find(p=>p.available)?.id || 'xui'; renderPlans(); $('support').textContent=catalog.support;
     $('auth-mtproxy').hidden=!catalog.mtproxy_login;
     $('auth-methods').textContent=catalog.mtproxy_login?'Подтвердите вход в кабинете MTProxy или войдите по email.':catalog.bot_username?'Войдите по email или откройте магазин из Telegram-бота.':'Войдите по email.';
     if(catalog.bot_username) { for(const id of ['bot-link','auth-bot']) { $(id).href='https://t.me/'+encodeURIComponent(catalog.bot_username); $(id).hidden=false; } }
@@ -965,7 +976,10 @@ $('logout').onclick = async () => {
     }
     await refreshMe();
     // Переход из уведомления не даёт прав: вход уже проверен выше.
-    if(new URLSearchParams(location.search).get('view')==='account')show(me?'account-dialog':'auth-dialog');
+    if (paidRenewal) {
+      $('plans').scrollIntoView({block:'start'});
+      if (resumed && me && catalog.plans.some(p=>p.id===resumed && p.price>0)) await beginCheckout(resumed);
+    } else if(new URLSearchParams(location.search).get('view')==='account')show(me?'account-dialog':'auth-dialog');
     // Ссылка передаёт только код: процент и право на скидку проверяет сервер после явного применения.
     const incomingPromos=new URLSearchParams(location.search).getAll('promo');
     const incomingPromo=incomingPromos.length===1?incomingPromos[0].trim().toUpperCase():'';

@@ -55,7 +55,10 @@ async def snapshot():
         if _cached is not None and time.monotonic() < _until:
             return _cached
         subscriptions = all_rows("""SELECT s.id,s.server_id,s.user_id,s.protocol,s.credential_id,s.wg_configuration,
-            s.expires,s.state,s.primary_key_state,b.mtproxy_uuid FROM subscriptions s
+            s.expires,s.state,s.device_limit,s.primary_key_state,b.mtproxy_uuid,
+            x.request_id,x.days,x.before_expires,x.target_expires FROM subscriptions s
+            LEFT JOIN flow_owner_extensions x ON x.subscription_id=s.id AND x.status='pending'
+                AND x.reason LIKE 'Кабинет MTProxy · %'
             JOIN flow_bridge_identities b ON b.shop_user_id=s.user_id WHERE s.protocol='wg'""")
         now = int(time.time())
         accounts, nodes = {}, {}
@@ -65,7 +68,12 @@ async def snapshot():
             if state == 'active' and int(sub['expires'] or 0) <= now:
                 state = 'expired'
             accounts[subject] = {'state': state, 'expires_at': sub['expires'] or None,
+                'subscription_id': sub['id'], 'device_limit': sub['device_limit'],
                 'online': None, 'last_seen': None, 'received': None, 'sent': None}
+            if sub['request_id']:
+                accounts[subject]['pending_change'] = {'request_id': sub['request_id'], 'value': sub['days'],
+                    'before': sub['before_expires'],
+                    'action': 'shorten' if sub['target_expires'] < sub['before_expires'] else 'extend'}
             if state != 'active' or sub['primary_key_state'] != 'active':
                 continue
             try:
