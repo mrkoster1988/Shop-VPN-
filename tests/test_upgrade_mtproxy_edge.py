@@ -181,7 +181,7 @@ def test_unfinished_switch_blocks_any_new_attempt(root, monkeypatch):
 def test_apply_builds_before_backup_and_only_recreates_shop(root, monkeypatch):
     before = {"container_id": "old", "image_id": OLD, "volume": edge.VOLUME,
               "fingerprint": {"env": "sha"}, "compose_files": ["compose.mtproxy-edge.yaml", "compose.wg-ip.yaml"],
-              "runtime_version": "v0.064"}
+              "runtime_version": "v0.063"}
     after = {**before, "container_id": "new", "image_id": NEW, "runtime_version": "v0.064"}
     probes = iter([before, before, before, after])
     events = []
