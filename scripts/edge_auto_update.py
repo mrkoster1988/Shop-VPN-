@@ -129,7 +129,7 @@ def plan(root, fetch=update_source.download):
     prior = edge.status(root)
     if prior["state"] not in ALLOWED_PREVIOUS:
         raise edge.Rejected("Незавершённое обновление Shop требует ручной диагностики")
-    latest = discover(fetch(URL, 256 * 1024), before["runtime_version"])
+    latest = discover(fetch(URL, 2 * 1024 * 1024), before["runtime_version"])
     return {"state": "upgrade_available" if latest else "current",
             "installed": before["runtime_version"], "next_release": latest,
             "volume": before["volume"], "scope": "shop_only"}
