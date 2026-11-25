@@ -1120,6 +1120,7 @@ $('admin-login').onsubmit = async event => {
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{}); role='';
+  flowExtensionAttempts.clear();
   clearUpdates(); clearManagement(); clearRuntime(); clearStaffIndividual(); clearPaymentPolicy(); clearShopFinance(); clearRouting(); clearIdPolicy();
   protocolsRequest++; protocolCache = []; $('protocols-list').replaceChildren();
   $('protocols-status').textContent = ''; $('protocols-filter').value = 'all';
