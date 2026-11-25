@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import tempfile
 
 VERSION = r'(0|[1-9][0-9]*)\.([0-9]{3})'
 TAG = re.compile(r'v' + VERSION + r'$')
@@ -72,9 +73,14 @@ def plan(text, releases):
 
 
 def github(args, payload=None):
-    result = subprocess.run(['gh', 'api', *args],
-                            input=json.dumps(payload, ensure_ascii=False) if payload is not None else None,
-                            text=True, capture_output=True)
+    if payload is None:
+        result = subprocess.run(['gh', 'api', *args], text=True, capture_output=True)
+    else:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as body:
+            json.dump(payload, body, ensure_ascii=False)
+            body.flush()
+            result = subprocess.run(['gh', 'api', *args, '--input', body.name],
+                                    text=True, capture_output=True)
     if result.returncode:
         raise RuntimeError('GitHub API failed: ' + result.stderr.strip())
     return json.loads(result.stdout)
@@ -100,7 +106,7 @@ def main():
     if args.dry_run:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
         return
-    result = github(['--method', 'POST', f'repos/{repo}/releases', '--input', '-'], payload)
+    result = github(['--method', 'POST', f'repos/{repo}/releases'], payload)
     print('Published: ' + result['html_url'])
     summary = os.environ.get('GITHUB_STEP_SUMMARY')
     if summary:
