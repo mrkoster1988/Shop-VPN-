@@ -85,7 +85,9 @@ def test_old_admin_requests_preserve_limit_and_audit_includes_change(client):
 
 def test_old_database_defaults_keep_four_profiles(issued):
     client,issue,_=issued;sub=issue();before=one('SELECT secret FROM subscriptions')['secret']
+    from test_shop import remove_cabinet_notice_triggers
     with db() as conn:
+        remove_cabinet_notice_triggers(conn)
         for table in ('plans','orders','subscriptions'):conn.execute('ALTER TABLE '+table+' DROP COLUMN device_limit')
     init_db();init_db()
     for table in ('plans','orders','subscriptions'):assert one('SELECT device_limit FROM '+table)['device_limit']==4

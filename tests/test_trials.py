@@ -201,7 +201,9 @@ def test_trial_cannot_be_processed_as_stars_payment(trial_env):
 def test_old_database_marks_existing_orders_and_access_as_purchase(issued):
     from app.db import db
     client,issue,_=issued;sub=issue();original=client.get('/api/subscriptions/'+sub['id']+'/config').json()
+    from test_shop import remove_cabinet_notice_triggers
     with db() as conn:
+        remove_cabinet_notice_triggers(conn)
         # В старой схеме не было журнала этапов и его триггеров.
         for trigger in ('order_paid_insert','order_paid_update','order_issued_insert','order_issued_update'):
             conn.execute('DROP TRIGGER IF EXISTS '+trigger)

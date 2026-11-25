@@ -1228,3 +1228,10 @@ def test_rendered_assets_use_content_fingerprints(client,page,script):
     if page=='/admin':
         assert 'class="shop-admin-ui"' in response.text
         assert 'background:#fff!important' in client.get('/static/style.css').text
+
+
+def remove_cabinet_notice_triggers(conn):
+    # These triggers did not exist in the historical schemas recreated by migration tests.
+    triggers = conn.execute("SELECT name FROM sqlite_master WHERE type='trigger' AND name GLOB 'cabinet_notice_*'").fetchall()
+    for row in triggers:
+        conn.execute('DROP TRIGGER "' + row[0].replace('"', '""') + '"')

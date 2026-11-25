@@ -113,7 +113,9 @@ def test_primary_rotation_under_shop_prefix(issued,monkeypatch):
 def test_legacy_primary_migration_keeps_config_and_identity(issued):
     from app.db import db
     client,_,_,sub,_=prepared(issued);original=client.get('/api/subscriptions/'+sub['id']+'/config').json()
+    from test_shop import remove_cabinet_notice_triggers
     with db() as conn:
+        remove_cabinet_notice_triggers(conn)
         for name in ('credential_id','primary_key_state','rotation_error'):conn.execute('ALTER TABLE subscriptions DROP COLUMN '+name)
     init_db();init_db();row=one('SELECT * FROM subscriptions')
     assert row['primary_key_state']=='active' and service.primary_identity(row)==sub['id']
