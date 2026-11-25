@@ -85,7 +85,7 @@ class WGDashboard:
             raise PanelError('WGDashboardOperationFailed')
         return body.get('data')
 
-    async def peer(self, client, public_key):
+    async def peer_rows(self, client):
         data = await self.request(client, 'GET', 'getWireguardConfigurationInfo',
             params={'configurationName': self.profile['configuration']})
         if not isinstance(data, dict):
@@ -94,12 +94,17 @@ class WGDashboard:
         if (not isinstance(info, dict) or info.get('Name') != self.profile['configuration']
                 or info.get('Protocol') != 'wg'):
             raise PanelError('WGDashboardInterfaceMismatch')
-        matches = []
+        groups = []
         for field in ('configurationPeers', 'configurationRestrictedPeers'):
             rows = data.get(field)
             if not isinstance(rows, list) or any(not isinstance(row, dict) or not isinstance(row.get('id'), str) for row in rows):
                 raise PanelError('UnsupportedWGDashboardSchema')
-            matches.extend((field, row) for row in rows if row['id'] == public_key)
+            groups.append((field, rows))
+        return groups
+
+    async def peer(self, client, public_key):
+        groups = await self.peer_rows(client)
+        matches = [(field, row) for field, rows in groups for row in rows if row['id'] == public_key]
         if len(matches) > 1:
             raise PanelError('AmbiguousWGDashboardPeer')
         return matches[0] if matches else None

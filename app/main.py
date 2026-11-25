@@ -1159,6 +1159,13 @@ async def flow_auto_policy_update(data: flow_auto_provision.PolicyUpdate):
 
 # Public only in the sense that it needs no Shop cookie: every request must
 # carry a valid one-minute signed MTProxy proof, consumed exactly once.
+@app.get('/api/flow/cabinet-presence')
+async def flow_cabinet_presence(request: Request):
+    from . import flow_presence
+    flow_presence.authorize(request.headers.get('X-Pushok-Presence'))
+    return JSONResponse(await flow_presence.snapshot(), headers=flow_identity_bridge.headers())
+
+
 @app.post('/api/flow/bridge/exchange')
 async def flow_bridge_exchange(data: flow_identity_bridge.ExchangeRequest):
     async with service.lock:
