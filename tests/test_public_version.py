@@ -5,7 +5,7 @@ from test_shop import client
 def test_deployed_version_only_exposes_public_constant(client):
     response = client.get('/api/version')
     assert response.status_code == 200
-    assert response.json() == {'version': 'v0.063', 'flow_binding': 'account'}
+    assert response.json() == {'version': 'v0.064', 'flow_binding': 'account'}
     assert response.headers['cache-control'] == 'no-store'
     assert response.headers['pragma'] == 'no-cache'
     assert response.headers['x-robots-tag'] == 'noindex, nofollow'
