@@ -31,6 +31,7 @@ from . import shop_settings, runtime_settings, payment_policy, shop_finance, pla
 from . import config as c, providers, service, servers, server_routing, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows, insert_user
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
+from . import flow_guests
 from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, flow_bridge_recovery, flow_owner_extension, pushok_identity, flow_wireguard_devices, admin_cleanup, admin_user_cleanup, wg_peer_diagnostics, mtproxy_web_login
 
 logging.basicConfig(level=logging.INFO)
@@ -1164,6 +1165,13 @@ async def flow_cabinet_presence(request: Request):
     from . import flow_presence
     flow_presence.authorize(request.headers.get('X-Pushok-Presence'))
     return JSONResponse(await flow_presence.snapshot(), headers=flow_identity_bridge.headers())
+
+
+@app.post('/api/flow/guest')
+def flow_guest_claim(data: flow_guests.GuestRequest, request: Request):
+    reply = flow_guests.claim(data.device, request.headers.get('authorization', ''),
+                              request.client.host if request.client else 'unknown')
+    return JSONResponse(reply, headers=flow_identity_bridge.headers())
 
 
 @app.post('/api/flow/bridge/exchange')

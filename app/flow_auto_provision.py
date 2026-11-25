@@ -132,16 +132,21 @@ def enqueue(user_id: int) -> str:
         node = _node(conn)
         if node is None:
             return 'unavailable'
-        sid = str(uuid.uuid4())
-        target = now + int(setting['days']) * 86400
-        conn.execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state,"
-                     "server_id,device_limit,access_source) VALUES (?,?,'wg',0,'pending',?,0,'trial')",
-                     (sid, user_id, node['id']))
-        conn.execute("INSERT INTO flow_auto_grants(user_id,subscription_id,target_expires,"
-                     "policy_version,state,created,next_attempt,attempts) "
-                     "VALUES (?,?,?,?,'pending',?,?,0)",
-                     (user_id, sid, target, setting['version'], now, now))
+        reserve(conn, user_id, node, setting, now, int(setting['days']))
         return 'pending'
+
+
+def reserve(conn, user_id, node, setting, now, days):
+    """Reserve the subscription and its worker job inside the caller's transaction."""
+    sid = str(uuid.uuid4())
+    target = now + days * 86400
+    conn.execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state,"
+                 "server_id,device_limit,access_source) VALUES (?,?,'wg',0,'pending',?,0,'trial')",
+                 (sid, user_id, node['id']))
+    conn.execute("INSERT INTO flow_auto_grants(user_id,subscription_id,target_expires,"
+                 "policy_version,state,created,next_attempt,attempts) "
+                 "VALUES (?,?,?,?,'pending',?,?,0)",
+                 (user_id, sid, target, setting['version'], now, now))
 
 
 def after_login(user_id: int):

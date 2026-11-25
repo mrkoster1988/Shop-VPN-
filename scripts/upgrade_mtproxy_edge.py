@@ -344,7 +344,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(description="Безопасное обновление Shop рядом с MTProxy")
     p.add_argument("command", choices=("plan", "apply", "status"))
     p.add_argument("--dir", type=Path, default=ROOT)
-    p.add_argument("--release", default="v2.004")
+    p.add_argument("--release", default="v2.005")
     p.add_argument("--password-file")
     p.add_argument("--confirm-edge-upgrade", action="store_true")
     args = p.parse_args(argv)

@@ -281,6 +281,11 @@ def init_db():
           created INTEGER NOT NULL, next_attempt INTEGER NOT NULL,
           attempts INTEGER NOT NULL DEFAULT 0);
         CREATE INDEX IF NOT EXISTS flow_auto_queue ON flow_auto_grants(state,next_attempt,created);
+        CREATE TABLE IF NOT EXISTS flow_guest_trials (
+          device_hash TEXT PRIMARY KEY, secret_hash TEXT NOT NULL UNIQUE,
+          user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE SET NULL,
+          network_hash TEXT NOT NULL, created INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS flow_guest_network ON flow_guest_trials(network_hash,created);
         CREATE TABLE IF NOT EXISTS flow_owner_extensions (
           request_id TEXT PRIMARY KEY,
           user_id INTEGER NOT NULL REFERENCES users(id),

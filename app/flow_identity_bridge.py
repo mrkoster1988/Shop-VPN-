@@ -154,6 +154,10 @@ def exchange(ticket, client_id=None):
     proof=verify(ticket)
     uid=_bind(proof)
     queued=flow_auto_provision.after_login(uid)
+    return subscription_reply(uid, queued)
+
+
+def subscription_reply(uid, queued):
     discovered=flow_wireguard.discover(uid)['subscriptions']
     if not any(sub['ready'] for sub in discovered) and one(
             "SELECT 1 FROM orders WHERE user_id=? AND protocol='wg' "
