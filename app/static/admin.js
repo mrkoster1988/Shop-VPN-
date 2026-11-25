@@ -1465,6 +1465,16 @@ $('user-subscriptions').onclick = async event => {
     let request=flowExtensionAttempts.get(key);
     extend.disabled=true;
     try {
+      if(!request) {
+        const pending=await api('users/'+encodeURIComponent(uid)+'/wireguard/extend/pending');
+        if(uid!==selectedUser || epoch!==authEpoch || !$('user-dialog').open)return;
+        if(pending.request) {
+          if(pending.request.subscription_id!==sid)
+            throw new Error('Незавершённое продление относится к другой подписке.');
+          request=pending.request;
+          flowExtensionAttempts.set(key,request);
+        }
+      }
       if(request) {
         if(!confirm('Предыдущее продление могло быть принято WGDashboard. '
           +'Повторить ТОТ ЖЕ запрос без начисления дополнительных дней?'))return;
