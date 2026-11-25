@@ -1375,3 +1375,15 @@ test('a dashboard data failure is not a login failure',async()=>{
   assert.equal(page.element('dashboard').hidden,false);
   assert.match(page.element('error').textContent,/offline/);
 });
+
+test('owner can remove an active subscription in one action; delegated administrator cannot',async()=>{
+  const response={user:{id:1,email:'fixture@example.invalid',created:1},
+    subscriptions:[{id:'sid-1',protocol:'wg',state:'active',access_active:true,expires:2000000000,can_delete:false}],
+    orders:[],orders_page:1,orders_page_size:20,orders_total:0};
+  for(const name of ['owner','administrator']){
+    const page=adminPage();page.element('user-dialog').open=true;
+    const pending=page.run("role='"+name+"';selectedUser=1;loadUser(1)");
+    page.reply(response);await pending;
+    assert.equal(page.element('user-subscriptions').innerHTML.includes('data-subscription-remove="sid-1"'),name==='owner');
+  }
+});
