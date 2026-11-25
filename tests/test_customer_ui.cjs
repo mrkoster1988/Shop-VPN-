@@ -33,7 +33,7 @@ async function customerPage(options={}) {
     return {ok,status,json:async()=>body};
   };
   const context=vm.createContext({document:{getElementById:element,querySelector:()=>({content:'/shop'}),querySelectorAll:()=>[],createElement:tag=>element('created-'+tag+'-'+(++elementId))},
-    fetch,URL,URLSearchParams,FormData:class {constructor(form){this.fields=form.fields;}get(name){return this.fields[name];}},crypto:require('node:crypto').webcrypto,Date:class extends Date { static now(){return clock.now;} },
+    fetch,AbortController,URL,URLSearchParams,FormData:class {constructor(form){this.fields=form.fields;}get(name){return this.fields[name];}},crypto:require('node:crypto').webcrypto,Date:class extends Date { static now(){return clock.now;} },
     navigator:{platform:'Linux x86_64',userAgent:'Android',clipboard:{writeText:async value=>state.copied.push(value)}},
     window:{confirm:()=>true,open:(...args)=>state.opened.push(args),...(options.telegram?{Telegram:{WebApp:telegram}}:{})},location:{assign:url=>state.opened.push([url]),search:options.search || '',origin:options.origin || 'https://shop.example'},history:{replaceState(){}},
     setTimeout:(fn,delay)=>{const id=++timerId;timers.set(id,{fn,delay});return id;},clearTimeout:id=>timers.delete(id),setInterval:fn=>{intervals.push(fn);return intervals.length;}});
@@ -42,6 +42,7 @@ async function customerPage(options={}) {
   await tick();
   return {state,element,calls,timers,clock,intervals,telegram,run:code=>vm.runInContext(code,context),
     defer(path){let resolve;overrides.set(path,()=>new Promise(r=>resolve=r));return (body,status=200)=>resolve({ok:status<400,status,json:async()=>body});},
+    hangUntilAbort(path){overrides.set(path,(_url,opts)=>new Promise((_resolve,reject)=>opts.signal.addEventListener('abort',()=>reject(new Error('aborted')),{once:true})));},
     respond(path,body,status=200){overrides.set(path,async()=>({ok:status<400,status,json:async()=>body}));}};
 }
 
@@ -944,4 +945,25 @@ test('ready WireGuard card shows Flow, manual configuration and management separ
  assert.match(markup,/<details class="subscription-options" data-subscription-options="sub-a"/);
  p.state.customer.subscriptions[0].state='pending';await p.run('refreshMe()');
  assert.doesNotMatch(p.element('subscriptions').innerHTML,/data-link="sub-a"|data-config="sub-a"/);
+});
+
+test('MTProxy login gives feedback inside the dialog and permits retry after a slow response',async()=>{
+  const page=await customerPage({anonymous:true}), path='/shop/api/auth/mtproxy/start';
+  page.element('auth-dialog').showModal();
+  page.hangUntilAbort(path);
+  const button=page.element('auth-mtproxy'), pending=button.onclick();
+  assert.equal(button.disabled,true);
+  await button.onclick();
+  assert.equal(page.calls.filter(item=>item.url===path).length,1);
+  const request=page.calls.find(item=>item.url===path);
+  const timer=[...page.timers.values()].find(item=>item.delay===15000);
+  timer.fn();
+  assert.equal(request.opts.signal.aborted,true);
+  await pending;
+  assert.equal(button.disabled,false);
+  assert.equal(page.element('auth-status').hidden,false);
+  assert.match(page.element('auth-status').textContent,/долго отвечает/);
+  assert.equal(page.state.opened.length,0);
+  page.respond(path,{ok:true});await button.onclick();
+  assert.deepEqual(page.state.opened,[['/?shop_login=1#login']]);
 });

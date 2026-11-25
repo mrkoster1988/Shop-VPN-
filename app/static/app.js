@@ -18,9 +18,18 @@ let sessionEpoch = 0, meRequest = 0, connectionRequest = 0, connection = null, c
 let deviceSubscription=null, deviceRequest=0, deviceIntent=null, deviceCache=[], rotationIntents=new Map(), primaryRotationIntents=new Map();
 async function api(path, data, method) {
   const epoch = sessionEpoch;
-  const response = await fetch(basePath + path, {method:method || (data ? 'POST':'GET'), credentials:'same-origin',
-    headers:data ? {'Content-Type':'application/json'} : {}, body:data ? JSON.stringify(data) : undefined});
-  const result = await response.json();
+  const loginRead = path==='/api/me' || path==='/api/catalog' || path.startsWith('/api/auth/');
+  const controller = loginRead ? new AbortController() : null;
+  const timer = controller && setTimeout(()=>controller.abort(), 15000);
+  let response, result;
+  try {
+    response = await fetch(basePath + path, {method:method || (data ? 'POST':'GET'), credentials:'same-origin',
+      signal:controller?.signal, headers:data ? {'Content-Type':'application/json'} : {}, body:data ? JSON.stringify(data) : undefined});
+    result = await response.json();
+  } catch(error) {
+    if(controller?.signal.aborted)throw new Error('Сервер долго отвечает. Проверьте соединение и повторите.');
+    throw error;
+  } finally { if(controller)clearTimeout(timer); }
   if (epoch !== sessionEpoch) throw new Error('Сессия изменилась. Повторите действие.');
   if (!response.ok) throw Object.assign(new Error(typeof result.detail === 'string' ? result.detail : 'Проверьте введённые данные'), {status:response.status});
   return result;
@@ -484,10 +493,16 @@ $('forgot-form').onsubmit=async event=>{
  finally{button.disabled=false}
 };
 $('auth-switch').onclick = () => { register=!register; $('auth-title').textContent=register?'Добро пожаловать.':'С возвращением.'; $('auth-submit').textContent=register?'Создать аккаунт →':'Войти →'; $('auth-switch').textContent=register?'Уже есть аккаунт? Войти':'Создать аккаунт'; $('auth-form').password.autocomplete=register?'new-password':'current-password'; $('forgot-open').hidden=register; };
+function authFeedback(text) {
+  const status=$('auth-status');
+  status.textContent=text;
+  status.hidden=!text;
+}
+$('auth-dialog').addEventListener('close',()=>authFeedback(''));
 $('auth-form').onsubmit = async event => {
-  event.preventDefault(); if(logoutPending || passwordOperation)return; const b=$('auth-submit'); b.disabled=true;
+  event.preventDefault(); if(logoutPending || passwordOperation)return; const b=$('auth-submit'); if(b.disabled)return; b.disabled=true;authFeedback(register?'Создаём аккаунт…':'Проверяем вход…');
   try { const form=new FormData(event.target); await api('/api/auth/'+(register?'register':'login'),Object.fromEntries(form)); sessionEpoch++; $('auth-form').reset(); $('auth-dialog').close(); await refreshMe(); if(selectedPlan) await beginCheckout(selectedPlan.id); else {setShopAccountPane(defaultAccountPane());show('account-dialog');} }
-  catch(e) { toast(e.message); } finally { b.disabled=false; }
+  catch(e) { if($('auth-dialog').open)authFeedback(e.message);else toast(e.message); } finally { b.disabled=false; }
 };
 $('checkout-form').onsubmit = async event => {
   event.preventDefault(); const b=$('checkout-submit'); b.disabled=true; const request=paymentRequest,epoch=sessionEpoch;
@@ -665,7 +680,14 @@ async function startMtproxyLogin() {
   await api('/api/auth/mtproxy/start', {});
   location.assign('/?shop_login=1#login');
 }
-$('auth-mtproxy').onclick=()=>startMtproxyLogin().catch(e=>toast(e.message));
+$('auth-mtproxy').onclick=async()=>{
+  const button=$('auth-mtproxy');
+  if(button.disabled)return;
+  button.disabled=true;authFeedback('Открываем кабинет MTProxy…');
+  try { await startMtproxyLogin(); }
+  catch(e) { authFeedback(e.message); }
+  finally { button.disabled=false; }
+};
 async function beginTrial() {
   selectedPlan=null;checkoutTrial=null;resetQuote();
   await refreshMe();const trial=catalog.trial;

@@ -47,7 +47,8 @@ async function runShop(browser,engine,width,height,telegram,guest){
  if(telegram)await page.addInitScript(()=>{window.Telegram={WebApp:{initData:'fixture',colorScheme:'dark',ready(){},expand(){},onEvent(){},BackButton:{onClick(){},show(){},hide(){}}}};});
  await page.route('**/*',async route=>{
   const request=route.request(),url=new URL(request.url()),p=url.pathname;
-  if(url.href==='https://telegram.org/js/telegram-web-app.js')return route.fulfill({contentType:'text/javascript',body:''});
+  if(url.pathname===base+'/static/vendor/telegram-web-app.baa788a6f686.js' && url.hostname==='pushok.test')
+      return route.fulfill({contentType:'text/javascript',body:telegram?'':fs.readFileSync(root+'/app/static/vendor/telegram-web-app.baa788a6f686.js')});
   if(url.hostname==='fonts.googleapis.com')return route.fulfill({contentType:'text/css',body:''});
   if(url.origin!==origin){unexpected.push(url.origin+p);return route.abort();}
   if(await staticResponse(route,url))return;
