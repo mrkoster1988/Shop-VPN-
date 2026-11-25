@@ -1344,6 +1344,7 @@ async function loadUser(page) {
           ${sub.protocol==='wg' ? '<button type="button" class="secondary" data-peer-check="'+esc(sub.id)+'">Проверить пир</button>' : ''}
           ${sub.protocol==='wg' && ['active','expired'].includes(sub.state) ? '<button type="button" class="secondary" data-wg-extend="'+esc(sub.id)+'">Продлить WireGuard</button>' : ''}
           ${sub.state!=='revoked' ? '<button type="button" class="danger-action" data-subscription-revoke="'+esc(sub.id)+'">Отозвать доступ</button>' : ''}
+          ${sub.state!=='revoked' ? '<button type="button" class="danger-action" data-subscription-remove="'+esc(sub.id)+'">Удалить подписку</button>' : ''}
           ${sub.state==='revoked' && sub.can_delete ? '<button type="button" class="danger-action" data-subscription-delete="'+esc(sub.id)+'">Удалить запись</button>' : ''}
           </div>
           ${sub.protocol==='wg' ? '<div class="record-note" role="status" aria-live="polite" data-peer-status="'+esc(sub.id)+'"></div>' : ''}
@@ -1512,23 +1513,25 @@ $('user-subscriptions').onclick = async event => {
   }
   const revoke=event.target.closest('[data-subscription-revoke]');
   const erase=event.target.closest('[data-subscription-delete]');
-  const button=revoke || erase;
+  const remove=event.target.closest('[data-subscription-remove]');
+  const button=revoke || erase || remove;
   if(!button || role!=='owner' || selectedUser===null)return;
-  const sid=revoke?revoke.dataset.subscriptionRevoke:erase.dataset.subscriptionDelete;
+  const sid=revoke?revoke.dataset.subscriptionRevoke:erase?erase.dataset.subscriptionDelete:remove.dataset.subscriptionRemove;
   if(typeof sid!=='string' || !sid)return;
   const question=revoke
     ? 'Отозвать подключение пользователя на сервере? История оплат сохранится.'
+    : remove ? 'Удалить подписку? Shop сначала отключит доступ на сервере. Если запись связана с историей, она останется отозванной.'
     : 'Удалить запись подписки после подтверждённого отзыва пиров?';
   if(!confirm(question))return;
-  if(erase && prompt('Для удаления записи введите УДАЛИТЬ','')!=='УДАЛИТЬ')return;
+  if((erase || remove) && prompt('Для удаления записи введите УДАЛИТЬ','')!=='УДАЛИТЬ')return;
   button.disabled=true;
   const uid=selectedUser, epoch=authEpoch;
   try{
-    await api('subscriptions/'+encodeURIComponent(sid)+(revoke?'/revoke':''),
-      {method:revoke?'POST':'DELETE'});
+    const result=await api('subscriptions/'+encodeURIComponent(sid)+(revoke?'/revoke':remove?'/remove':''),
+      {method:revoke||remove?'POST':'DELETE'});
     if(uid===selectedUser && epoch===authEpoch){
       await loadUser(profilePage);
-      $('user-error').textContent=revoke?'Подключение отозвано.':'Запись подписки удалена.';
+      $('user-error').textContent=revoke?'Подключение отозвано.':result.status==='revoked_retained'?'Доступ отозван, запись сохранена в истории. '+(result.reason||''):'Запись подписки удалена.';
     }
   }catch(error){
     if(uid===selectedUser && epoch===authEpoch)$('user-error').textContent=error.message;
