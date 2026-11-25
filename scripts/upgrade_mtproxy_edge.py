@@ -112,7 +112,13 @@ def probe(root):
         raise Rejected("Образ, контейнер или сеть Shop отличаются от проверенной схемы")
     mounts = [item for item in service.get("volumes", [])
               if item.get("target") == "/app/data"]
-    if len(mounts) != 1 or mounts[0].get("type") != "volume" or mounts[0].get("source") != VOLUME:
+    if len(mounts) != 1 or mounts[0].get("type") != "volume":
+        raise Rejected("Compose не использует ожидаемый постоянный том Shop")
+    source_name = mounts[0].get("source")
+    volumes = conf.get("volumes") or {}
+    declared_volume = volumes.get(source_name) if isinstance(volumes, dict) else None
+    resolved_name = declared_volume.get("name") if isinstance(declared_volume, dict) else None
+    if source_name != VOLUME and resolved_name != VOLUME:
         raise Rejected("Compose не использует ожидаемый постоянный том Shop")
     containers = docker_json("inspect", CONTAINER)
     if len(containers) != 1:
