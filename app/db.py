@@ -279,6 +279,18 @@ def init_db():
           created INTEGER NOT NULL, next_attempt INTEGER NOT NULL,
           attempts INTEGER NOT NULL DEFAULT 0);
         CREATE INDEX IF NOT EXISTS flow_auto_queue ON flow_auto_grants(state,next_attempt,created);
+        CREATE TABLE IF NOT EXISTS flow_owner_extensions (
+          request_id TEXT PRIMARY KEY,
+          user_id INTEGER NOT NULL REFERENCES users(id),
+          subscription_id TEXT NOT NULL,
+          before_expires INTEGER NOT NULL, target_expires INTEGER NOT NULL,
+          days INTEGER NOT NULL CHECK(days BETWEEN 1 AND 365),
+          reason TEXT NOT NULL,
+          status TEXT NOT NULL CHECK(status IN ('pending','applied')),
+          created INTEGER NOT NULL, updated INTEGER NOT NULL,
+          staff_id INTEGER);
+        CREATE UNIQUE INDEX IF NOT EXISTS flow_owner_extensions_pending
+          ON flow_owner_extensions(subscription_id) WHERE status='pending';
         CREATE TABLE IF NOT EXISTS flow_wireguard_links (
           subscription_id TEXT PRIMARY KEY REFERENCES subscriptions(id) ON DELETE CASCADE,
           token_hash TEXT NOT NULL UNIQUE, token_secret TEXT NOT NULL,
