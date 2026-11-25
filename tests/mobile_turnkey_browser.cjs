@@ -33,7 +33,9 @@ async function layout(page,id){
  if(id){assert.ok(data.width>=data.viewport-2,'Not full-width '+JSON.stringify(data));assert.ok(data.height<=data.vh+2,'Dialog exceeds viewport '+JSON.stringify(data));}
 }
 async function close(page,id){
- const button=page.locator('#'+id+' > [data-close="'+id+'"]');
+ const selector=id==='user-dialog'?'#user-close':id==='server-dialog'?'#server-close':'#'+id+' > [data-close="'+id+'"]';
+ const button=page.locator(selector);
+ await button.waitFor({state:'visible'});
  assert.ok((await button.boundingBox()).height>=43,'Close control too small');
  await button.click();await page.locator('#'+id).waitFor({state:'hidden'});
 }
