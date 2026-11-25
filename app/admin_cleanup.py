@@ -67,6 +67,9 @@ async def revoke_subscription(sid: str):
             if not found:
                 raise HTTPException(404, 'Подписка не найдена')
             sub = dict(found)
+            if conn.execute("SELECT 1 FROM flow_owner_extensions WHERE subscription_id=? AND status='pending'",
+                            (sid,)).fetchone():
+                raise HTTPException(409, 'Есть незавершённое продление WireGuard. Сначала выполните сверку.')
             if _blocked_orders(conn, sub['user_id'], sub['protocol']):
                 raise HTTPException(409, 'Есть незавершённый заказ этого протокола. '
                                     'Сначала завершите оплату или разберите заказ.')
@@ -230,6 +233,37 @@ def purge_subscription(sid: str):
             raise HTTPException(409, 'Запись связана с другими данными. '
                                 'Для защиты истории оставлена в архиве.') from None
     return {'ok': True, 'status': 'deleted'}
+
+
+async def remove_subscription(sid: str):
+    """One owner action: revoke on the pinned panel, then purge if allowed.
+
+    Financial records, grant history and key-rotation history stay intact.
+    A retained revoked record is not reported as a successful physical deletion.
+    """
+    with db() as conn:
+        if conn.execute("SELECT 1 FROM subscriptions WHERE id=?", (sid,)).fetchone() is None:
+            if conn.execute("SELECT 1 FROM admin_subscription_revocations WHERE subscription_id=?",
+                            (sid,)).fetchone():
+                return {'ok': True, 'status': 'deleted'}
+            raise HTTPException(404, 'Подписка не найдена')
+    await revoke_subscription(sid)
+    async with service.lock:
+        with db() as conn:
+            row = conn.execute('SELECT * FROM subscriptions WHERE id=?', (sid,)).fetchone()
+            if row is None:
+                return {'ok': True, 'status': 'deleted'}
+            if row['state'] != 'revoked':
+                raise HTTPException(409, 'Состояние подписки изменилось. Обновите карточку.')
+            reason = purge_blocker(conn, dict(row))
+        if reason:
+            return {'ok': True, 'status': 'revoked_retained', 'reason': reason}
+        try:
+            return purge_subscription(sid)
+        except HTTPException as exc:
+            if exc.status_code != 409:
+                raise
+            return {'ok': True, 'status': 'revoked_retained', 'reason': exc.detail}
 
 
 def delete_unused_plan(plan_id: str):
