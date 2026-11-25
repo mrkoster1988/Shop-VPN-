@@ -1,7 +1,8 @@
-"""Short-lived MTProxy identity proof for one Shop WireGuard primary device.
+"""Short-lived MTProxy identity proof for an account-owned Shop WireGuard entitlement.
 
-Only a server-verified Telegram ID may identify a Shop account. No MTProxy
-session, Shop cookie, WGDashboard token or administrative permission is shared.
+A verified Telegram ID identifies the Shop account. No device binding, phone
+count or client-ID comparison controls access. One-time tickets and Shop owner
+identity still gate every exchange; no session or administrative token is shared.
 """
 import base64
 import binascii
@@ -21,7 +22,6 @@ from .db import db
 
 _KEY = re.compile(r'[a-f0-9]{64}')
 _TICKET = re.compile(r'psb1\.([A-Za-z0-9_-]{20,720})\.([a-f0-9]{64})')
-_CLIENT = re.compile(r'pfc_[A-Za-z0-9_-]{43}')
 _JTI = re.compile(r'[A-Za-z0-9_-]{32}')
 _DOMAIN = b'pushok-flow-shop-v1\0'
 _MAX_TG = 2**52
@@ -32,7 +32,9 @@ _HEADERS = {'Cache-Control':'private, no-store', 'Pragma':'no-cache',
 class ExchangeRequest(BaseModel):
     model_config = {'extra':'forbid'}
     ticket: str = Field(min_length=100, max_length=900)
-    client_id: str = Field(min_length=47, max_length=47)
+    # Accepted and ignored for compatibility with released Flow <=0.61.
+    # Account membership is determined solely by the authenticated ticket.
+    client_id: str | None = Field(default=None, max_length=47)
 
 
 def headers():
@@ -103,13 +105,10 @@ def verify(ticket, *, now=None):
             'expires':expiry, 'nonce_hash':hashlib.sha256(claims['jti'].encode('ascii')).hexdigest()}
 
 
-def _bind(proof, client_id):
-    if not isinstance(client_id,str) or not _CLIENT.fullmatch(client_id):
-        raise HTTPException(422, 'Недопустимое устройство')
+def _bind(proof):
     if not c.SECURE_COOKIE or not c.PUBLIC_URL.startswith('https://'):
         raise HTTPException(503, 'Личный доступ требует HTTPS')
     now=int(time.time())
-    client_hash=hashlib.sha256(client_id.encode('ascii')).hexdigest()
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
         conn.execute('DELETE FROM flow_bridge_nonces WHERE expires<=?', (now,))
@@ -136,29 +135,18 @@ def _bind(proof, client_id):
         if linked is None:
             conn.execute('INSERT INTO flow_bridge_identities(mtproxy_uuid,telegram_id,shop_user_id,created) VALUES (?,?,?,?)',
                          (proof['subject'], proof['telegram_id'],uid,now))
-        device=conn.execute('SELECT client_hash FROM flow_bridge_devices WHERE shop_user_id=?',(uid,)).fetchone()
-        if device is not None and device['client_hash'] != client_hash:
-            raise HTTPException(409, {'code':'FLOW_DEVICE_BOUND'})
-        if device is None:
-            # Never lock a phone to a Shop identity before Shop has actually
-            # issued an active WireGuard profile. A disabled/pending first
-            # claim must not prevent using a phone when issuance is ready.
-            ready=conn.execute(
-                "SELECT 1 FROM subscriptions WHERE user_id=? AND protocol='wg' "
-                "AND state='active' AND expires>? AND primary_key_state='active' "
-                "AND secret IS NOT NULL LIMIT 1", (uid,now)).fetchone()
-            if ready is not None:
-                conn.execute('INSERT INTO flow_bridge_devices(shop_user_id,client_hash,created) VALUES (?,?,?)',
-                             (uid,client_hash,now))
+        # Older deployments can contain flow_bridge_devices rows. Ignore
+        # them deliberately: they are legacy metadata, not access controls.
+        # Do not delete them during a login or change any WG peer.
         conn.execute('INSERT INTO flow_bridge_nonces(nonce_hash,expires,created) VALUES (?,?,?)',
                      (proof['nonce_hash'],proof['expires'],now))
         return uid
 
 
-def exchange(ticket, client_id):
-    """Synchronous because profile creation is queued, never done in a request."""
+def exchange(ticket, client_id=None):
+    """Account-only exchange; client_id is an ignored legacy field."""
     proof=verify(ticket)
-    uid=_bind(proof,client_id)
+    uid=_bind(proof)
     queued=flow_auto_provision.after_login(uid)
     discovered=flow_wireguard.discover(uid)['subscriptions']
     if not discovered:
