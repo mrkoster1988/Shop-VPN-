@@ -28,7 +28,7 @@ cd /opt/pushok-shop
 git status --short
 git pull --ff-only origin main
 python3 scripts/upgrade_mtproxy_edge.py plan \
-  --dir /opt/pushok-shop --release v0.064
+  --dir /opt/pushok-shop --release v0.065
 ```
 
 `git pull --ff-only` меняет отслеживаемые исходники, но не перезапускает
@@ -61,7 +61,7 @@ python3 scripts/upgrade_mtproxy_edge.py plan \
 cd /opt/pushok-shop
 sudo python3 scripts/upgrade_mtproxy_edge.py apply \
   --dir /opt/pushok-shop \
-  --release v0.064 \
+  --release v0.065 \
   --confirm-edge-upgrade
 ```
 
@@ -103,7 +103,7 @@ curl --fail --silent --show-error https://pushok.shop/shop/health
 curl --fail --silent --show-error https://pushok.shop/shop/api/version
 ```
 
-После успешного обновления `/shop/api/version` должен вернуть `v0.064`.
+После успешного обновления `/shop/api/version` должен вернуть `v0.065`.
 Проверка health не заменяет тест выдачи нового пира в WGDashboard,
 работы WireGuard, входа через Telegram, продления, отзыва и платежей.
 

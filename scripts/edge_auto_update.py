@@ -192,6 +192,10 @@ WantedBy=timers.target
 def install(root, *, run_now=False):
     check_root(root)
     plan(root)  # Fail before writing any unit or secret if the Shop deployment is unsafe.
+    for path in (UNIT, TIMER):
+        if path.is_symlink() or (path.exists() and
+              (not path.is_file() or not path.read_text().startswith(MARK))):
+            raise edge.Rejected("Чужой systemd unit не будет перезаписан: " + path.name)
     STATE.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     if STATE.parent.is_symlink():
         raise edge.Rejected("Каталог /etc/pushok не должен быть ссылкой")
@@ -207,9 +211,6 @@ def install(root, *, run_now=False):
             output.flush()
             os.fsync(output.fileno())
     for path, content in ((UNIT, unit_contents()), (TIMER, timer_contents())):
-        if path.is_symlink() or (path.exists() and
-              (not path.is_file() or not path.read_text().startswith(MARK))):
-            raise edge.Rejected("Чужой systemd unit не будет перезаписан: " + path.name)
         write_private(path, content.encode())
         path.chmod(0o644)
     subprocess.run(["systemctl", "daemon-reload"], check=True, timeout=30)

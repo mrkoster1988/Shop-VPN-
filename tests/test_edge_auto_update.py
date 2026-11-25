@@ -91,11 +91,11 @@ def test_installer_never_overwrites_foreign_systemd_units(tmp_path, monkeypatch)
     root.mkdir()
     sysroot = tmp_path / "systemd"
     sysroot.mkdir()
-    existing = sysroot / "pushok-shop-edge-autoupdate.service"
+    existing = sysroot / "pushok-shop-edge-autoupdate.timer"
     existing.write_text("[Service]\nExecStart=/unrelated\n")
     monkeypatch.setattr(auto, "ROOT", root)
-    monkeypatch.setattr(auto, "UNIT", existing)
-    monkeypatch.setattr(auto, "TIMER", sysroot / "pushok-shop-edge-autoupdate.timer")
+    monkeypatch.setattr(auto, "UNIT", sysroot / "pushok-shop-edge-autoupdate.service")
+    monkeypatch.setattr(auto, "TIMER", existing)
     monkeypatch.setattr(auto, "STATE", tmp_path / "config" / "shop")
     monkeypatch.setattr(auto, "PASSWORD", auto.STATE / "backup-password")
     monkeypatch.setattr(auto, "check_root", lambda *a, **k: root)
@@ -103,6 +103,8 @@ def test_installer_never_overwrites_foreign_systemd_units(tmp_path, monkeypatch)
     monkeypatch.setattr(auto.subprocess, "run", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("systemctl must not run")))
     with pytest.raises(auto.edge.Rejected, match="Чужой"):
         auto.install(root)
+    assert not auto.UNIT.exists()
+    assert not auto.STATE.exists()
     assert existing.read_text() == "[Service]\nExecStart=/unrelated\n"
 
 
