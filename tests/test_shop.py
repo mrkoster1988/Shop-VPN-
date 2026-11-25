@@ -1016,7 +1016,9 @@ def test_icon_sprite_served_at_configured_prefix(client, monkeypatch, base):
         assert page.status_code == 200
         assert '__BASE_PATH__' not in page.text
         uses = re.findall(r'<use href="([^"]+)"', page.text)
-        assert len(uses) == 6
+        # Hero and desktop account plus four icons in each of two navigations.
+        assert len(uses) == 10
+        assert {u.split('#')[1] for u in uses} == {'pi-user', 'pi-price', 'pi-home', 'pi-support'}
         sprite = shop.get(base + '/static/pushok-icons.svg')
         assert sprite.status_code == 200
         assert sprite.headers['content-type'].startswith('image/svg+xml')
