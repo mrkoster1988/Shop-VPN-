@@ -833,3 +833,10 @@ body.shop-admin-ui{
   .shop-public-ui .hero #guest-note:empty{display:none}
   .shop-public-ui .hero .hero-note{margin-top:8px}
 }
+
+@media(max-width:420px){
+  .shop-public-ui .hero{padding-block:12px}
+  .shop-public-ui .hero h1{font-size:clamp(30px,9vw,38px);line-height:1.04;margin:0 0 8px}
+  .shop-public-ui .hero .lead{margin-block:6px;line-height:1.35}
+  .shop-public-ui .hero .hero-note{display:none}
+}
