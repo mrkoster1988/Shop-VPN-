@@ -257,6 +257,9 @@ def build(source, name, logfile):
 def apply(root, target, password_file):
     update_source.version(target)
     with exclusive(root):
+        previous = status(root)
+        if previous["state"] in {"recovery_required", "switching", "downloading", "building", "backing_up"}:
+            raise Rejected("Есть незавершённое edge-обновление; сначала проверьте его журнал вручную")
         before = probe(root)
         if before["runtime_version"] == target:
             return {"state": "already_current", "version": target, "container_restarted": False}
@@ -338,6 +341,7 @@ def main(argv=None):
     if args.command == "status":
         result = status(root)
     elif args.command == "plan":
+        update_source.version(args.release)
         result = {"state": "ready_for_edge_plan", **probe(root),
                   "target": args.release, "does_not_modify_server": True}
     else:
