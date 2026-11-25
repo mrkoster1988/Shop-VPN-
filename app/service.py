@@ -8,7 +8,7 @@ from decimal import Decimal, InvalidOperation
 from urllib.parse import parse_qsl, urlencode, urlsplit
 import httpx
 from . import config as c, providers, servers, referrals, shop_settings, runtime_settings, bot_menu as menu_editor
-from .db import db, one, all_rows, execute
+from .db import db, one, all_rows, execute, insert_user
 from .security import digest
 from .pushok_button_icons import without_icons
 
@@ -34,8 +34,12 @@ async def worker_iteration():
 
 def telegram_account(tg_id):
     with db() as conn:
-        conn.execute('INSERT OR IGNORE INTO users(telegram_id,created) VALUES (?,?)', (tg_id, int(time.time())))
-        user = dict(conn.execute('SELECT * FROM users WHERE telegram_id=?', (tg_id,)).fetchone())
+        conn.execute('BEGIN IMMEDIATE')
+        row = conn.execute('SELECT * FROM users WHERE telegram_id=?', (tg_id,)).fetchone()
+        if row is None:
+            uid = insert_user(conn, telegram_id=tg_id, created=int(time.time()))
+            row = conn.execute('SELECT * FROM users WHERE id=?', (uid,)).fetchone()
+        user = dict(row)
     from . import flow_auto_provision
     flow_auto_provision.after_login(user['id'])
     return user
