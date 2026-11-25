@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import hmac
+import ipaddress
 import math
 import os
 import re
@@ -29,6 +30,31 @@ def authorize(header):
     expected = hmac.new(bytes.fromhex(secret), f'{DOMAIN}:{match[1]}'.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, match[2]):
         raise HTTPException(401)
+
+
+def peer_addresses(peer):
+    # WGDashboard allowed_ip contains the addresses routed to this peer.
+    # endpoint is the last WireGuard source endpoint, which may be behind NAT.
+    tunnel = []
+    allowed = peer.get('allowed_ip')
+    for value in allowed.split(',') if isinstance(allowed, str) else ():
+        try:
+            ip = ipaddress.ip_interface(value.strip())
+        except ValueError:
+            continue
+        if ip.network.prefixlen == ip.max_prefixlen and not ip.ip.is_unspecified and str(ip.ip) not in tunnel:
+            tunnel.append(str(ip.ip))
+    endpoint = peer.get('endpoint')
+    match = re.fullmatch(r'(?:\[([a-fA-F0-9:._]+)\]|([0-9.]+)):([0-9]{1,5})', endpoint or '') if isinstance(endpoint, str) else None
+    source = None
+    if match and 0 < int(match[3]) <= 65535:
+        try:
+            address = ipaddress.ip_address(match[1] or match[2])
+            if not address.is_unspecified:
+                source = str(address)
+        except ValueError:
+            pass
+    return {'tunnel_ips': tunnel, 'endpoint_ip': source}
 
 
 def metrics(peer, sampled_at):
@@ -82,7 +108,7 @@ async def snapshot():
                 public_key = wgdashboard.WGDashboard.identity(key)
             except Exception:
                 continue
-            nodes.setdefault((node['id'], profile.get('configuration')), (profile, {}))[1][public_key] = subject
+            nodes.setdefault((node['id'], profile.get('configuration')), (profile, {}))[1][public_key] = accounts[subject]
         async def observe(client, profile, owners):
             try:
                 peers = await wgdashboard.WGDashboard(profile).peer_rows(client)
@@ -90,7 +116,9 @@ async def snapshot():
                     if field == 'configurationPeers':
                         for peer in rows:
                             if peer['id'] in owners:
-                                accounts[owners[peer['id']]].update(metrics(peer, now))
+                                row = owners[peer['id']]
+                                row.update(metrics(peer, now))
+                                row.update(peer_addresses(peer))
             except (httpx.HTTPError, ValueError, wgdashboard.PanelError):
                 return
         async with httpx.AsyncClient(timeout=4, follow_redirects=False, trust_env=False) as client:
