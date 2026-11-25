@@ -29,9 +29,9 @@ from . import ads_bookings as bookings, ads_finance as finance
 from . import support as support_cases
 from . import shop_settings, runtime_settings, payment_policy, shop_finance, platforms, protocols, bot_menu as menu_editor, payment_events
 from . import config as c, providers, service, servers, server_routing, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
-from .db import init_db, db, one, execute, all_rows
+from .db import init_db, db, one, execute, all_rows, insert_user
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, flow_bridge_recovery, flow_owner_extension, pushok_identity, flow_wireguard_devices, admin_cleanup, wg_peer_diagnostics
+from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, flow_bridge_recovery, flow_owner_extension, pushok_identity, flow_wireguard_devices, admin_cleanup, admin_user_cleanup, wg_peer_diagnostics
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -610,13 +610,15 @@ async def admin_ads_placement(rid:UUID,action:Literal['start','pause','resume','
 @app.post('/api/auth/register')
 async def register(data: Credentials):
     email = email_address(data.email)
+    encoded = await asyncio.to_thread(password_hash, data.password)
+    response = JSONResponse({'ok': True})
     try:
-        uid = execute('INSERT INTO users(email,password,created) VALUES (?,?,?)',
-                      (email, await asyncio.to_thread(password_hash, data.password), int(time.time())))
+        with db() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            uid = insert_user(conn, email=email, password=encoded, created=int(time.time()))
+            session(response, uid, conn)
     except sqlite3.IntegrityError:
         raise HTTPException(409, 'Этот email уже зарегистрирован')
-    response = JSONResponse({'ok': True})
-    session(response, uid)
     flow_auto_provision.after_login(uid)
     return response
 
@@ -1383,6 +1385,24 @@ async def admin_flow_extend(
     _developer_only(actor)
     async with service.lock:
         return await flow_owner_extension.extend(user_id, data, actor.get('id'))
+
+
+@app.get('/api/admin/users/{user_id}/delete/preview')
+async def admin_user_delete_preview(
+        user_id: int = APIPath(ge=1, le=9223372036854775807),
+        actor=Depends(admin)):
+    _developer_only(actor)
+    return admin_user_cleanup.preview(user_id)
+
+
+@app.post('/api/admin/users/{user_id}/delete')
+async def admin_user_delete(
+        data: admin_user_cleanup.DeleteUser,
+        user_id: int = APIPath(ge=1, le=9223372036854775807),
+        actor=Depends(admin)):
+    _developer_only(actor)
+    async with service.lock:
+        return admin_user_cleanup.remove(user_id, data)
 
 
 @app.post('/api/admin/subscriptions/{sid}/revoke')
