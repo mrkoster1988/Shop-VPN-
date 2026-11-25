@@ -18,7 +18,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from . import config as c, flow_auto_provision, flow_wireguard
-from .db import db
+from .db import db, insert_user
 
 _KEY = re.compile(r'[a-f0-9]{64}')
 _TICKET = re.compile(r'psb1\.([A-Za-z0-9_-]{20,720})\.([a-f0-9]{64})')
@@ -126,9 +126,8 @@ def _bind(proof):
             raise HTTPException(409, {'code':'FLOW_IDENTITY_CONFLICT'})
         row=conn.execute('SELECT id FROM users WHERE telegram_id=?', (proof['telegram_id'],)).fetchone()
         if row is None:
-            conn.execute('INSERT INTO users(telegram_id,created) VALUES (?,?)',
-                         (proof['telegram_id'],now))
-            row=conn.execute('SELECT id FROM users WHERE telegram_id=?', (proof['telegram_id'],)).fetchone()
+            uid = insert_user(conn, telegram_id=proof['telegram_id'], created=now)
+            row=conn.execute('SELECT id FROM users WHERE id=?', (uid,)).fetchone()
         uid=row['id']
         if linked is not None and linked['shop_user_id'] != uid:
             raise HTTPException(409, {'code':'FLOW_IDENTITY_CONFLICT'})
