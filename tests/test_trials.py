@@ -150,10 +150,14 @@ def test_trial_precedes_paid_purchase_even_when_timestamps_and_uuid_sort_collide
     assert len(calls)==2 and any(text.startswith('Пробный') for text in messages)
 
 
-def test_enabling_requires_real_bot_settings_and_policy_versions(trial_env,monkeypatch):
+def test_trial_uses_verified_telegram_account_without_local_bot_token(trial_env,monkeypatch):
     client,_,_=trial_env;monkeypatch.setattr(c,'BOT_TOKEN','')
+    execute("UPDATE store_settings SET terms_text='' WHERE id=1")
     assert policy(client,enabled=True).status_code==409
-    monkeypatch.setattr(c,'BOT_TOKEN','123:test');assert policy(client,enabled=True).status_code==200
+    execute("UPDATE store_settings SET terms_text='Trial terms' WHERE id=1")
+    assert policy(client,enabled=True).status_code==200
+    telegram(client)
+    assert claim(client).status_code==200
     assert client.put('/api/admin/trial',json={'enabled':False,'days':1,'max_claims':100,'version':1},headers=admin_headers()).status_code==409
     assert one('SELECT count(*) AS n FROM trial_policy_changes')['n']==1
 

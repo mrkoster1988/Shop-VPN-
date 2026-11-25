@@ -1,12 +1,11 @@
 """One accepted trial per Telegram account. Policy edits never reset claims."""
 import json
-import os
 import time
 import uuid
 from fastapi import HTTPException
 from pydantic import BaseModel,Field
 from typing import Literal
-from . import config as c,servers,shop_settings,protocols
+from . import servers,shop_settings,protocols
 from .db import db,one
 
 class PolicyUpdate(BaseModel):
@@ -23,10 +22,6 @@ class Claim(BaseModel):
     accept_terms: bool=Field(default=False,strict=True)
 
 
-def configured():
-    return bool(c.BOT_TOKEN and c.BOT_USERNAME and shop_settings.terms_configured())
-
-
 def policy():
     row=one('SELECT * FROM trial_policy WHERE id=1')
     row['enabled']=bool(row['enabled'])
@@ -36,7 +31,7 @@ def policy():
 
 
 def update(data):
-    if data.enabled and not configured():raise HTTPException(409,'Сначала настройте бота, его имя и условия продажи')
+    if data.enabled and not shop_settings.terms_configured():raise HTTPException(409,'Заполните условия продажи в настройках магазина.')
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
         before=dict(conn.execute('SELECT * FROM trial_policy WHERE id=1').fetchone())
@@ -56,7 +51,7 @@ def offer(user):
         claim=one('SELECT o.id,o.protocol,o.status,o.days FROM trial_claims t JOIN orders o ON o.id=t.order_id WHERE t.user_id=?',(user['id'],))
     if claim:reason='already_claimed'
     elif p['enabled']:
-        if not configured():reason='not_configured'
+        if not shop_settings.terms_configured():reason='not_configured'
         elif not user or not user['telegram_id']:reason='telegram_required'
         elif one('SELECT 1 AS n FROM orders WHERE user_id=? UNION ALL SELECT 1 FROM subscriptions WHERE user_id=? LIMIT 1',(user['id'],user['id'])):reason='existing_customer'
         elif p['remaining']==0:reason='limit_reached'
@@ -74,7 +69,7 @@ def claim(user,data):
             if previous['protocol']!=data.protocol:raise HTTPException(409,'Пробный доступ уже выбран для другого протокола')
             return previous['order_id']
         p=dict(conn.execute('SELECT * FROM trial_policy WHERE id=1').fetchone())
-        if not p['enabled'] or not configured():raise HTTPException(409,'Пробный доступ сейчас недоступен')
+        if not p['enabled'] or not shop_settings.terms_configured():raise HTTPException(409,'Пробный доступ сейчас недоступен')
         if p['version']!=data.policy_version:raise HTTPException(409,'Условия пробного доступа изменились. Обновите каталог.')
         if not data.accept_terms:raise HTTPException(422,'Подтвердите условия пробного доступа')
         if conn.execute('SELECT 1 FROM orders WHERE user_id=? UNION ALL SELECT 1 FROM subscriptions WHERE user_id=? LIMIT 1',(user['id'],user['id'])).fetchone():

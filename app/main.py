@@ -1609,7 +1609,18 @@ async def reject(oid: str):
 
 @app.post('/api/admin/orders/{oid}/retry', dependencies=[Depends(admin)])
 async def retry(oid: str):
-    execute("UPDATE orders SET next_attempt=0 WHERE id=? AND status='paid'", (oid,))
+    with db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        order = conn.execute("SELECT user_id,protocol,status FROM orders WHERE id=?", (oid,)).fetchone()
+        if not order:
+            raise HTTPException(404, 'Заказ не найден')
+        if order['status'] != 'paid':
+            raise HTTPException(409, 'Повтор доступен только в очереди выдачи')
+        # The worker processes a single subscription in trial-first, then FIFO order.
+        first = conn.execute("SELECT id FROM orders WHERE user_id=? AND protocol=? AND status='paid' "
+                             "ORDER BY (kind='trial') DESC,created,id LIMIT 1",
+                             (order['user_id'],order['protocol'])).fetchone()
+        conn.execute("UPDATE orders SET next_attempt=0 WHERE id IN (?,?)", (first['id'],oid))
     return {'ok': True}
 
 app.mount('/static', StaticFiles(directory=STATIC), name='static')

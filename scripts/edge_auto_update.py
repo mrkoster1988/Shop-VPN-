@@ -176,11 +176,12 @@ ExecStart=/usr/bin/python3 /opt/pushok-shop/scripts/edge_auto_update.py run
 
 def timer_contents():
     return MARK + "\n" + """[Unit]
-Description=Check published Pushok Shop release hourly
+Description=Check published Pushok Shop release every five minutes
 
 [Timer]
-OnCalendar=hourly
-RandomizedDelaySec=300
+OnCalendar=*-*-* *:00/5:00
+AccuracySec=10s
+RandomizedDelaySec=10
 Persistent=true
 Unit=pushok-shop-edge-autoupdate.service
 

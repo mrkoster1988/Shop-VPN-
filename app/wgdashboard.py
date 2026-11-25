@@ -3,6 +3,34 @@ from .servers import WGDashboardProfile
 from .panel import PanelError
 
 
+# Only these local adapter codes may be shown in order diagnostics.
+ORDER_ERROR_CODES = frozenset({
+    'AmbiguousWGDashboardPeer',
+    'InvalidSubscriptionIdentity',
+    'InvalidWGDashboardPeerName',
+    'InvalidWireGuardPrivateKey',
+    'InvalidWireGuardPublicKey',
+    'UnsupportedWGDashboardConfig',
+    'UnsupportedWGDashboardJobsSchema',
+    'UnsupportedWGDashboardSchema',
+    'WGDashboardConfigMismatch',
+    'WGDashboardExpiryAmbiguousLocalTime',
+    'WGDashboardExpiryInvalid',
+    'WGDashboardExpiryMismatch',
+    'WGDashboardExpiryNotConfigured',
+    'WGDashboardExpiryWriteNotConfirmed',
+    'WGDashboardInterfaceMismatch',
+    'WGDashboardInterfaceUnavailable',
+    'WGDashboardOperationFailed',
+    'WGDashboardPeerDeleteNotConfirmed',
+    'WGDashboardPeerRestricted',
+    'WGDashboardPeerUnavailable',
+    'WGDashboardPeerWriteNotConfirmed',
+    'WGDashboardStoredKeyMissing',
+    'WireGuardServerRequired',
+})
+
+
 class CheckProfile(WGDashboardProfile):
     pass
 

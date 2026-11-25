@@ -43,3 +43,34 @@ def test_progress_cannot_be_read_by_other_account_or_after_logout(client):
     register(client,'other@example.com')
     assert client.get('/api/orders/'+purchase['id']).status_code==404
     assert client.get('/api/me').json()['orders']==[]
+
+
+def test_retry_later_paid_order_wakes_head_of_its_queue(client):
+    from app.db import one
+    from test_shop import add_admin_order, admin_headers
+    register(client)
+    for oid, protocol in [('first','wg'), ('second','wg'), ('separate','xui')]:
+        add_admin_order(1, oid, status='paid', protocol=protocol)
+    execute("UPDATE orders SET next_attempt=9000")
+    assert client.post('/api/admin/orders/second/retry', headers=admin_headers()).status_code == 200
+    assert one("SELECT sum(next_attempt) AS n FROM orders WHERE protocol='wg'")['n'] == 0
+    assert one("SELECT next_attempt FROM orders WHERE id='separate'")['next_attempt'] == 9000
+
+
+@pytest.mark.parametrize('code,stored', [
+    ('WGDashboardPeerRestricted','WGDashboardPeerRestricted'),
+    ('private-token-or-provider-response','PanelError'),
+])
+def test_wg_retry_records_only_known_error_codes(client, monkeypatch, code, stored):
+    import asyncio
+    from app import service, providers
+    from app.panel import PanelError
+    from app.db import one
+    from test_shop import add_admin_order
+    register(client)
+    add_admin_order(1, 'target', status='paid', protocol='wg')
+    async def fail(sub):
+        raise PanelError(code)
+    monkeypatch.setattr(providers, 'provision', fail)
+    asyncio.run(service.fulfill('target'))
+    assert one("SELECT error FROM orders WHERE id='target'")['error'] == stored

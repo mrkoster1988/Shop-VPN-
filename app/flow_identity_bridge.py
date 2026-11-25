@@ -18,7 +18,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from . import config as c, flow_auto_provision, flow_wireguard
-from .db import db, insert_user
+from .db import db, insert_user, one
 
 _KEY = re.compile(r'[a-f0-9]{64}')
 _TICKET = re.compile(r'psb1\.([A-Za-z0-9_-]{20,720})\.([a-f0-9]{64})')
@@ -148,6 +148,10 @@ def exchange(ticket, client_id=None):
     uid=_bind(proof)
     queued=flow_auto_provision.after_login(uid)
     discovered=flow_wireguard.discover(uid)['subscriptions']
+    if not any(sub['ready'] for sub in discovered) and one(
+            "SELECT 1 FROM orders WHERE user_id=? AND protocol='wg' "
+            "AND kind='purchase' AND status='paid' LIMIT 1", (uid,)):
+        return {'status':'pending','subscription_url':None}
     if not discovered:
         # The owner has not configured a free or paid entitlement.
         return {'status':'disabled' if queued == 'disabled' else 'unavailable',

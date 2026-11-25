@@ -221,3 +221,16 @@ def test_flow_account_status_is_redacted_and_independent_of_legacy_phone(client,
     execute("UPDATE subscriptions SET state='expired',expires=1 WHERE id='account-owned'")
     assert client.get(url,headers=headers).json()['access']=='expired'
     assert client.get('/api/admin/users/999/flow/account',headers=headers).status_code==404
+
+
+def test_paid_wg_queue_precedes_old_revocation_for_same_account_only(client, monkeypatch):
+    from app import service
+    from test_shop import add_admin_order
+    _enabled(monkeypatch)
+    uid = service.telegram_account(98455677)['id']
+    execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state) VALUES ('old',?,'wg',0,'revoked')", (uid,))
+    other = service.telegram_account(77344)['id']
+    add_admin_order(other, 'other-purchase', status='paid', protocol='wg')
+    assert _call(client).json()['status'] == 'revoked'
+    add_admin_order(uid, 'paid-purchase', status='paid', protocol='wg')
+    assert _call(client).json() == {'status':'pending','subscription_url':None}

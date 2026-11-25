@@ -114,7 +114,7 @@ def test_generated_service_never_calls_down_or_prints_password():
     assert "ExecStart=/usr/bin/python3 /opt/pushok-shop/scripts/edge_auto_update.py run" in service
     assert "down" not in service
     assert "pushok_shop_data" not in service
-    assert "OnCalendar=hourly" in timer
+    assert "OnCalendar=*-*-* *:00/5:00" in timer
     assert "Persistent=true" in timer
     assert "backup-password" not in service
 

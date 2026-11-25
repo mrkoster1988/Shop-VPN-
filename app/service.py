@@ -11,6 +11,8 @@ from . import config as c, providers, servers, referrals, shop_settings, runtime
 from .db import db, one, all_rows, execute, insert_user
 from .security import digest
 from .pushok_button_icons import without_icons
+from .panel import PanelError
+from .wgdashboard import ORDER_ERROR_CODES
 
 log = logging.getLogger('pushok')
 lock = asyncio.Lock()
@@ -173,11 +175,16 @@ async def fulfill(order_id):
                 conn.execute("UPDATE orders SET status='active',error=NULL WHERE id=?", (order_id,))
         except Exception as exc:
             # Do not persist remote responses, URLs, private keys or credentials in logs.
+            error_code = type(exc).__name__
+            if (order['protocol'] == 'wg' and isinstance(exc, PanelError)
+                    and len(exc.args) == 1 and isinstance(exc.args[0], str)
+                    and exc.args[0] in ORDER_ERROR_CODES):
+                error_code = exc.args[0]
             attempts = order['attempts'] + 1
             execute('UPDATE orders SET attempts=?,next_attempt=?,error=? WHERE id=?',
                     (attempts, int(time.time()) + min(1800, 10 * 2 ** min(attempts, 8)),
-                     type(exc).__name__, order_id))
-            log.warning('Provisioning retry order=%s error=%s', order_id, type(exc).__name__)
+                     error_code, order_id))
+            log.warning('Provisioning retry order=%s error=%s', order_id, error_code)
 
 
 async def process_primary_rotations_locked():
