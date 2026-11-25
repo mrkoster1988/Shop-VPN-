@@ -4,7 +4,7 @@ import time
 from uuid import uuid4
 
 import pytest
-from app import config as c, providers
+from app import config as c, providers, wgdashboard
 from app.db import db, one, execute
 from test_shop import client
 from test_wg_peer_diagnostics import setup_user, profile, owner, SID
@@ -19,6 +19,7 @@ def prepared(client):
     setup_user(client)
     execute("UPDATE servers SET settings=?,state='active',health='ok' WHERE id='test-wg'",
             (c.encrypt(json.dumps(profile(schedule_expiry=True))),))
+    wgdashboard.stored_private_key('test-wg', SID)
     plan=client.get(path()+'/plan?days=30',headers=owner())
     assert plan.status_code==200,plan.text
     return plan.json()
@@ -77,12 +78,15 @@ def test_panel_error_retains_pending_exact_request_and_retries_safely(client, mo
     assert one('SELECT expires FROM subscriptions WHERE id=?',(SID,))['expires']==plan['before_expires']
     assert one('SELECT status FROM flow_owner_extensions')['status']=='pending'
     assert client.get(path()+'/plan?days=30',headers=owner()).status_code==409
+    assert client.get(path()+'/pending').status_code==401
+    recovered=client.get(path()+'/pending',headers=owner()).json()['request']
+    assert recovered==data
     assert client.post(path(),headers=owner(),json=request(plan)).status_code==409
     async def succeed(sub):
         calls.append(sub['expires'])
         return _VALID
     monkeypatch.setattr(providers,'provision',succeed)
-    retry=client.post(path(),headers=owner(),json=data)
+    retry=client.post(path(),headers=owner(),json=recovered)
     assert retry.status_code==200,retry.text
     assert calls==[plan['target_expires'],plan['target_expires']]
     assert one('SELECT expires FROM subscriptions WHERE id=?',(SID,))['expires']==plan['target_expires']
@@ -135,3 +139,53 @@ def test_owner_approval_and_plan_version_are_required(client, monkeypatch):
     assert client.post(path(),headers=owner(),json={**body,'target_expires':plan['target_expires']+86400}).status_code==409
     assert client.post(path(),headers=owner(),json={**body,'before_expires':plan['before_expires']+60}).status_code==409
     assert one('SELECT count(*) AS n FROM flow_owner_extensions')['n']==0
+
+def test_missing_existing_key_never_provisions_or_records_intent(client, monkeypatch):
+    plan=prepared(client)
+    execute("DELETE FROM wgdashboard_keys WHERE credential_id=?", (SID,))
+    async def forbidden(sub):
+        raise AssertionError('Missing key must fail before panel I/O')
+    monkeypatch.setattr(providers,'provision',forbidden)
+    assert client.get(path()+'/plan',headers=owner()).status_code==409
+    assert client.post(path(),headers=owner(),json=request(plan)).status_code==409
+    assert one('SELECT count(*) AS n FROM flow_owner_extensions')['n']==0
+    assert one('SELECT count(*) AS n FROM wgdashboard_keys')['n']==0
+
+
+def test_extension_updates_existing_device_and_primary_with_same_target(client, monkeypatch):
+    plan=prepared(client)
+    device=str(uuid4())
+    wgdashboard.stored_private_key('test-wg', device)
+    execute("INSERT INTO devices(id,subscription_id,request_id,name,state,expires,secret,created) "
+            "VALUES (?,?,?,'Phone','active',?,?,1)",
+            (device,SID,str(uuid4()),plan['before_expires'],c.encrypt(_VALID)))
+    calls=[]
+    async def provision(sub):
+        assert sub['require_existing_wg_key'] is True
+        calls.append((sub['id'],sub['expires']))
+        return _VALID
+    monkeypatch.setattr(providers,'provision',provision)
+    result=client.post(path(),headers=owner(),json=request(plan))
+    assert result.status_code==200,result.text
+    assert calls==[(SID,plan['target_expires']),(device,plan['target_expires'])]
+    assert one('SELECT expires FROM devices WHERE id=?',(device,))['expires']==plan['target_expires']
+    assert client.get(path()+'/pending',headers=owner()).json()=={'request':None}
+
+
+def test_failed_device_extension_preserves_local_expiry_and_recoverable_request(client, monkeypatch):
+    plan=prepared(client)
+    device=str(uuid4())
+    wgdashboard.stored_private_key('test-wg',device)
+    execute("INSERT INTO devices(id,subscription_id,request_id,name,state,expires,secret,created) "
+            "VALUES (?,?,?,'Phone','active',?,?,1)",
+            (device,SID,str(uuid4()),plan['before_expires'],c.encrypt(_VALID)))
+    async def provision(sub):
+        if sub['id']==device:
+            raise TimeoutError()
+        return _VALID
+    monkeypatch.setattr(providers,'provision',provision)
+    body=request(plan)
+    assert client.post(path(),headers=owner(),json=body).status_code==502
+    assert one('SELECT expires FROM subscriptions WHERE id=?',(SID,))['expires']==plan['before_expires']
+    assert one('SELECT expires FROM devices WHERE id=?',(device,))['expires']==plan['before_expires']
+    assert client.get(path()+'/pending',headers=owner()).json()['request']==body
