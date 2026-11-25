@@ -55,7 +55,9 @@ def discover(releases, current):
         return None
     ordered = sorted(set(candidates))
     selected, tag = ordered[0]
-    if selected[0] != cur[0] or selected[1] != cur[1] + 1:
+    # 2.000 is the direct successor of 0.068 in the published Shop series.
+    next_minor = selected == (cur[0], cur[1] + 1)
+    if not next_minor and (current, tag) != ('v0.068', 'v2.000'):
         raise edge.Rejected("Пропущена версия Shop. Нужна ручная проверка миграций")
     return tag
 

@@ -651,9 +651,9 @@ function renderTrial() {
   $('trial-offer').hidden=!trial || (!trial.enabled&&!trial.claim);
   if(!trial)return;
   const available=trialProtocolAvailable();
-  const messages={telegram_required:'Войдите через Telegram, чтобы попробовать VPN.',existing_customer:'Пробный доступ доступен аккаунтам без прежних заказов и подписок.',limit_reached:'Пробные активации временно недоступны.',not_configured:'Пробный доступ готовится к запуску.',disabled:'Пробный доступ отключён.'};
+  const messages={telegram_required:catalog.mtproxy_login?'Войдите через MTProxy, чтобы попробовать VPN.':'Войдите через Telegram, чтобы попробовать VPN.',existing_customer:'Пробный доступ доступен аккаунтам без прежних заказов и подписок.',limit_reached:'Пробные активации временно недоступны.',not_configured:'Пробный доступ готовится к запуску.',disabled:'Пробный доступ отключён.'};
   $('trial-info').textContent=trial.claim?'Пробный доступ уже выбран: '+protocolName(trial.claim.protocol)+'. Статус и настройки — в кабинете.':trial.eligible?trial.days+' дн. · '+protocolName(protocol)+' · только основной профиль.':messages[trial.reason] || 'Пробный доступ уже использован.';
-  $('trial-start').textContent=trial.claim?'Открыть кабинет':trial.reason==='telegram_required'?'Войти через Telegram':'Попробовать бесплатно';
+  $('trial-start').textContent=trial.claim?'Открыть кабинет':trial.reason==='telegram_required'?(catalog.mtproxy_login?'Войти через MTProxy':'Войти через Telegram'):'Попробовать бесплатно';
   const loginAvailable=Boolean(catalog.mtproxy_login || catalog.bot_username);
   if(!trial.claim && trial.reason==='telegram_required' && !loginAvailable){
     $('trial-info').textContent='Магазин пока не подключил вход через Telegram.';

@@ -28,6 +28,15 @@ def test_discovers_only_next_stable_release_in_numerical_order():
     assert auto.discover(releases, "v0.067") is None
 
 
+def test_major_rename_is_one_specific_upgrade():
+    releases = [rel("v2.001"), rel("v2.000"), rel("v0.068")]
+    assert auto.discover(releases, "v0.067") == "v0.068"
+    assert auto.discover(releases, "v0.068") == "v2.000"
+    assert auto.discover(releases, "v2.000") == "v2.001"
+    with pytest.raises(auto.edge.Rejected):
+        auto.discover([rel("v2.001")], "v0.068")
+
+
 def test_prevents_skipped_migrations_and_invalid_releases():
     with pytest.raises(auto.edge.Rejected, match="Пропущена"):
         auto.discover([rel("v0.067")], "v0.063")
