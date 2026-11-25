@@ -522,6 +522,24 @@ def init_db():
         END;
         """)
 
+def reserve_deleted_user_id(conn, user_id):
+    # Older databases use INTEGER PRIMARY KEY without AUTOINCREMENT.
+    # Retain a monotonic high-water mark in the existing backed-up meta table.
+    conn.execute("""INSERT INTO meta(key,value) VALUES ('deleted_user_id_highwater',?)
+        ON CONFLICT(key) DO UPDATE SET value=CAST(MAX(CAST(meta.value AS INTEGER),
+        CAST(excluded.value AS INTEGER)) AS TEXT)""", (str(user_id),))
+
+
+def insert_user(conn, *, created, email=None, password=None, telegram_id=None):
+    # Explicit ID allocation in one SQLite write statement: every production
+    # account creation path uses this helper. Never reuse a removed user ID.
+    return conn.execute("""INSERT INTO users(id,email,password,telegram_id,created)
+        SELECT MAX(COALESCE((SELECT MAX(id) FROM users),0),
+          COALESCE((SELECT CAST(value AS INTEGER) FROM meta
+                    WHERE key='deleted_user_id_highwater'),0))+1,?,?,?,?""",
+        (email, password, telegram_id, created)).lastrowid
+
+
 def one(sql, args=()):
     with db() as conn:
         row = conn.execute(sql, args).fetchone()
