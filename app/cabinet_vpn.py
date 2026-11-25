@@ -28,12 +28,12 @@ class Command(BaseModel):
     value: int = Field(ge=0, le=365, strict=True)
 
 
-def authorize(body, proof):
+def authorize(body, proof, domain=DOMAIN):
     key = os.getenv('FLOW_SHOP_BRIDGE_SECRET', '')
     match = re.fullmatch(r'(\d{10}):([0-9a-f]{64})', proof)
     if not re.fullmatch('[0-9a-f]{64}', key) or not match or abs(time.time()-int(match[1])) > 45:
         raise HTTPException(403)
-    signature = hmac.digest(bytes.fromhex(key), DOMAIN + match[1].encode() + b':' + body, 'sha256')
+    signature = hmac.digest(bytes.fromhex(key), domain + match[1].encode() + b':' + body, 'sha256')
     if not hmac.compare_digest(signature.hex(), match[2]):
         raise HTTPException(403)
 

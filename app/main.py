@@ -31,7 +31,7 @@ from . import shop_settings, runtime_settings, payment_policy, shop_finance, pla
 from . import config as c, providers, service, servers, server_routing, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows, insert_user
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import cabinet_vpn, flow_guests
+from . import cabinet_vpn, cabinet_notices, flow_guests
 from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, flow_bridge_recovery, flow_owner_extension, pushok_identity, flow_wireguard_devices, admin_cleanup, admin_user_cleanup, wg_peer_diagnostics, mtproxy_web_login
 
 logging.basicConfig(level=logging.INFO)
@@ -743,6 +743,7 @@ async def pushok_id_revoke(request:Request,user=Depends(current_user)):
 app.include_router(mtproxy_web_login.router)
 app.include_router(flow_guests.router)
 app.include_router(cabinet_vpn.router)
+app.include_router(cabinet_notices.router)
 
 @app.post('/api/auth/telegram')
 async def tg_login(data: TgAuth):

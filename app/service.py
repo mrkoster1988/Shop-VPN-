@@ -371,7 +371,7 @@ async def notify_customers(now):
         log.warning('Notification settings unavailable: %s',type(exc).__name__)
         return
     if policy['order_ready_enabled']:
-        for order in all_rows("SELECT o.*,u.telegram_id FROM orders o JOIN users u ON u.id=o.user_id WHERE o.status='active' AND o.notified=0 AND u.telegram_id IS NOT NULL"):
+        for order in all_rows("SELECT o.*,u.telegram_id FROM orders o JOIN users u ON u.id=o.user_id WHERE o.status='active' AND o.notified=0 AND u.telegram_id IS NOT NULL AND NOT (o.protocol='wg' AND EXISTS (SELECT 1 FROM flow_bridge_identities b WHERE b.shop_user_id=o.user_id))"):
             message=policy['trial_text'] if order['kind']=='trial' else policy['bonus_text'] if order['kind']=='referral' else policy['purchase_text']
             try:
                 await send(order['telegram_id'],message,reply_markup=notification_button('Открыть кабинет'))
@@ -379,7 +379,7 @@ async def notify_customers(now):
             except Exception:
                 pass
     if policy['expiry_enabled']:
-        for sub in all_rows("SELECT s.*,u.telegram_id FROM subscriptions s JOIN users u ON u.id=s.user_id WHERE s.state='active' AND s.expires>? AND s.expires<? AND s.reminder=0 AND u.telegram_id IS NOT NULL",(now,now+policy['expiry_hours']*3600)):
+        for sub in all_rows("SELECT s.*,u.telegram_id FROM subscriptions s JOIN users u ON u.id=s.user_id WHERE s.state='active' AND s.expires>? AND s.expires<? AND s.reminder=0 AND u.telegram_id IS NOT NULL AND NOT (s.protocol='wg' AND EXISTS (SELECT 1 FROM flow_bridge_identities b WHERE b.shop_user_id=s.user_id))",(now,now+policy['expiry_hours']*3600)):
             try:
                 await send(sub['telegram_id'],policy['expiry_text'],reply_markup=notification_button('Продлить VPN'))
                 # Не отмечаем напоминание нового срока, если подписку продлили во время отправки.

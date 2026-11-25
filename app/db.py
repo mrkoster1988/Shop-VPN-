@@ -545,6 +545,10 @@ def init_db():
         END;
         """)
 
+        from . import cabinet_notices
+        cabinet_notices.install(conn)
+
+
 def reserve_deleted_user_id(conn, user_id):
     # Older databases use INTEGER PRIMARY KEY without AUTOINCREMENT.
     # Retain a monotonic high-water mark in the existing backed-up meta table.
