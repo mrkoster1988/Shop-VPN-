@@ -71,12 +71,13 @@ def test_existing_shop_telegram_user_no_free_grant_default_and_replay(client, mo
     assert first.json()=={'status':'disabled','subscription_url':None}
     assert first.headers['cache-control']=='no-store'
     assert _call(client,request).status_code==409
-    # No WG peer was ever issued; do not prematurely bind the first phone.\n    assert one('SELECT count(*) AS n FROM flow_bridge_devices')['n']==0
+    # Signing in never binds a phone, regardless of WG entitlement.
+    assert one('SELECT count(*) AS n FROM flow_bridge_devices')['n']==0
     assert one('SELECT count(*) AS n FROM flow_auto_grants')['n']==0
     assert one('SELECT count(*) AS n FROM flow_bridge_identities')['n']==1
 
 
-def test_issued_peer_is_returned_only_to_bound_phone(client,monkeypatch):
+def test_account_receives_same_entitlement_independent_of_phone(client,monkeypatch):
     _enabled(monkeypatch)
     # Simulate a previously purchased/provisioned WireGuard entitlement.
     from app import service
@@ -95,14 +96,45 @@ def test_issued_peer_is_returned_only_to_bound_phone(client,monkeypatch):
     assert len(res)==2
     assert 'PrivateKey' not in first.text and 'token' not in first.text
     assert _call(client,client_id=phone).json()==res
-    assert _call(client,client_id='pfc_'+'y'*43).status_code==409
+    assert _call(client,client_id='pfc_'+'y'*43).json()==res
+    assert client.post(PATH,json={'ticket':_ticket()}).json()==res
+    assert one('SELECT count(*) AS n FROM flow_bridge_devices')['n']==0
     assert _call(client,_ticket(TWO,98455677),client_id=phone).status_code==409
     assert _call(client,_ticket(ONE,98455678),client_id=phone).status_code==409
-    # The personal bearer endpoint itself returns only its device's feed.
+    # The personal bearer feed is account-owned, never device-scoped.
     token=res['subscription_url'].rsplit('/',1)[-1]
     feed=client.get('/flow/wireguard/'+token)
     assert feed.status_code==200 and feed.json()['schema']=='pushok-flow-subscription'
     assert feed.json()['profiles'][0]['config']==_VALID
+
+
+
+def test_legacy_phone_binding_does_not_limit_verified_account(client,monkeypatch):
+    _enabled(monkeypatch)
+    from app import service
+    service.telegram_account(98455677)
+    expires=int(time.time())+86400
+    with db() as conn:
+        conn.execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state,secret,access_source) "
+                     "VALUES ('owned',1,'wg',?,'active',?,'purchase')",
+                     (expires,c.encrypt(_VALID)))
+        # Old installations retained a device hash. It is historical data,
+        # never an authorization check or a reason to delete valid peers.
+        conn.execute("INSERT INTO flow_bridge_devices(shop_user_id,client_hash,created) "
+                     "VALUES (1,?,?)", ('f'*64,123456))
+    older = _call(client,client_id='pfc_'+'a'*43)
+    assert older.status_code == 200,older.text
+    newer = _call(client,client_id='pfc_'+'b'*43)
+    assert newer.status_code == 200,newer.text
+    without = client.post(PATH,json={'ticket':_ticket()})
+    assert without.status_code == 200,without.text
+    assert older.json() == newer.json() == without.json()
+    assert one('SELECT client_hash FROM flow_bridge_devices WHERE shop_user_id=1')['client_hash']=='f'*64
+    assert one('SELECT count(*) AS n FROM flow_bridge_nonces')['n']==3
+    # Account security still rejects a different signed identity.
+    conflict = _call(client,_ticket(TWO,98455677))
+    assert conflict.status_code == 409
+    assert conflict.json()['detail']=={'code':'FLOW_IDENTITY_CONFLICT'}
 
 
 def test_pending_and_server_expiry_then_link_respects_manual_disable(client,monkeypatch):
@@ -150,8 +182,42 @@ def test_failed_token_cannot_pollute_global_binds_and_no_login_cookie_needed(cli
     assert _call(client,expired).status_code==401
     assert one('SELECT count(*) AS n FROM flow_bridge_nonces')['n']==0
     assert one('SELECT count(*) AS n FROM flow_bridge_devices')['n']==0
+    # No device identifier is required. The authenticated proof remains mandatory.
     wrong=_ticket()
-    assert _call(client,wrong,client_id='pfc_'+'z'*42).status_code==422
-    ok=_call(client,wrong)
+    ok=client.post(PATH,json={'ticket':wrong})
     assert ok.status_code==200
     assert one('SELECT count(*) AS n FROM flow_bridge_nonces')['n']==1
+
+
+def test_flow_account_status_is_redacted_and_independent_of_legacy_phone(client, monkeypatch):
+    _enabled(monkeypatch)
+    from app import service
+    service.telegram_account(98455677)
+    headers={'Authorization':'Bearer '+c.ADMIN_TOKEN}
+    url='/api/admin/users/1/flow/account'
+    assert client.get(url).status_code==401
+    assert client.get(url+'?client_id=private').status_code==401
+    initial=client.get(url,headers=headers)
+    assert initial.status_code==200
+    assert initial.json()=={
+        'account_linked':False,'access':'none','expires_at':None,
+        'binding_scope':'account'}
+    assert _call(client).status_code==200
+    assert client.get(url,headers=headers).json()['account_linked'] is True
+    expiry=int(time.time())+3600
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO subscriptions(id,user_id,protocol,state,expires,secret) "
+            "VALUES ('account-owned',1,'wg','active',?,?)",
+            (expiry,c.encrypt(_VALID)))
+        conn.execute("INSERT INTO flow_bridge_devices(shop_user_id,client_hash,created) "
+                     "VALUES (1,?,?)",('f'*64,123))
+    status=client.get(url,headers=headers)
+    assert status.status_code==200
+    assert status.json()=={
+        'account_linked':True,'access':'active','expires_at':expiry,
+        'binding_scope':'account'}
+    assert 'f'*64 not in status.text and 'pfc_' not in status.text
+    execute("UPDATE subscriptions SET state='expired',expires=1 WHERE id='account-owned'")
+    assert client.get(url,headers=headers).json()['access']=='expired'
+    assert client.get('/api/admin/users/999/flow/account',headers=headers).status_code==404

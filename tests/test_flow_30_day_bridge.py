@@ -55,6 +55,9 @@ def test_mtproxy_existing_account_gets_one_free_30_day_wireguard(client, monkeyp
     assert one('SELECT count(*) AS n FROM flow_auto_grants')['n'] == 1
     assert one('SELECT target_expires FROM flow_auto_grants')['target_expires'] == claim['target_expires']
 
-    # A different phone is never allowed to fetch this device's private key.
+    # The entitlement belongs to the verified account, not a phone.
     other = _call(client, client_id='pfc_' + 'e' * 43)
-    assert other.status_code == 409
+    assert other.status_code == 200
+    assert other.json() == active.json()
+    assert len(calls) == 1
+    assert one('SELECT count(*) AS n FROM flow_bridge_devices')['n'] == 0

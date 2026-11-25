@@ -31,7 +31,7 @@ from . import shop_settings, runtime_settings, payment_policy, shop_finance, pla
 from . import config as c, providers, service, servers, server_routing, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, flow_bridge_recovery, pushok_identity, flow_wireguard_devices, admin_cleanup, wg_peer_diagnostics
+from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, flow_bridge_recovery, flow_owner_extension, pushok_identity, flow_wireguard_devices, admin_cleanup, wg_peer_diagnostics
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -1364,6 +1364,27 @@ def _developer_only(actor):
         raise HTTPException(403, 'Удаление доступно только разработчику')
 
 
+# Account-scoped WG renewals: only the Developer can grant days without
+# a paid order. The remote WGDashboard expiration must be verified first.
+@app.get('/api/admin/users/{user_id}/wireguard/extend/plan')
+async def admin_flow_extend_plan(
+        user_id: int = APIPath(ge=1, le=9223372036854775807),
+        days: int = Query(default=30, ge=1, le=365),
+        actor=Depends(admin)):
+    _developer_only(actor)
+    return flow_owner_extension.proposal(user_id, days)
+
+
+@app.post('/api/admin/users/{user_id}/wireguard/extend')
+async def admin_flow_extend(
+        data: flow_owner_extension.Extension,
+        user_id: int = APIPath(ge=1, le=9223372036854775807),
+        actor=Depends(admin)):
+    _developer_only(actor)
+    async with service.lock:
+        return await flow_owner_extension.extend(user_id, data, actor.get('id'))
+
+
 @app.post('/api/admin/subscriptions/{sid}/revoke')
 async def admin_subscription_revoke(sid: str = APIPath(min_length=1,max_length=100),
                                     actor=Depends(admin)):
@@ -1393,6 +1414,16 @@ async def admin_server_delete(sid: str = APIPath(min_length=1,max_length=100),
     _developer_only(actor)
     async with service.lock:
         return admin_cleanup.delete_unused_server(sid)
+
+
+# The Flow bridge entitlement is account-scoped; no device hash is read
+# or exposed. The legacy phone recovery endpoint remains for old admin URLs.
+@app.get('/api/admin/users/{user_id}/flow/account')
+async def admin_flow_account_status(
+        user_id: int = APIPath(ge=1, le=9223372036854775807),
+        actor=Depends(admin)):
+    _developer_only(actor)
+    return flow_identity_bridge.account_status(user_id)
 
 
 # Developer-only Flow phone-binding diagnostics. No private identifiers are read

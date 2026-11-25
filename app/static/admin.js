@@ -473,6 +473,7 @@ async function refreshDelegated({plans=true}={}){
 }
 
 let selectedUser = null, profilePage = 1, profileRequest = 0;
+let flowExtensionAttempts = new Map();
 let serverCache = [], editingServer = null;
 let serverWizardStep = 3, serverDialogEpoch = 0, serverSubmitting = false;
 let credentialsServer = null, credentialsEpoch = 0, credentialsSubmitting = false;
@@ -1174,6 +1175,7 @@ $('admin-login').onsubmit = async event => {
 };
 $('reload').onclick = () => refresh().catch(error => $('error').textContent = error.message);
 $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{}); role='';
+  flowExtensionAttempts.clear();
   clearUpdates(); clearManagement(); clearRuntime(); clearStaffIndividual(); clearPaymentPolicy(); clearShopFinance(); clearRouting(); clearIdPolicy();
   protocolsRequest++; protocolCache = []; $('protocols-list').replaceChildren();
   $('protocols-status').textContent = ''; $('protocols-filter').value = 'all';
@@ -1333,13 +1335,14 @@ async function loadUser(page) {
     profilePage = data.orders_page;
     const user = data.user;
     $('user-title').textContent = 'Пользователь № ' + user.id;
-    $('user-details').innerHTML = `<p>Email: ${esc(user.email || '—')}</p><p>Telegram ID: ${esc(user.telegram_id ?? '—')}</p><p>Регистрация: ${esc(dateTime(user.created))}</p>` + (role==='owner' ? '<div class="record-actions"><button type="button" class="secondary" data-flow-binding-check="1">Проверить привязку Flow</button></div><div class="record-note" id="flow-binding-status" role="status" aria-live="polite"></div>' : '');
+    $('user-details').innerHTML = `<p>Email: ${esc(user.email || '—')}</p><p>Telegram ID: ${esc(user.telegram_id ?? '—')}</p><p>Регистрация: ${esc(dateTime(user.created))}</p>` + (role==='owner' ? '<div class="record-actions"><button type="button" class="secondary" data-flow-account-check="1">Проверить аккаунт Flow</button></div><div class="record-note" id="flow-binding-status" role="status" aria-live="polite"></div>' : '');
     $('user-subscriptions').innerHTML = data.subscriptions.length ? data.subscriptions.map(sub => {
       const status = sub.access_active ? 'Активна' : sub.state === 'pending' ? 'Готовится'
         : sub.state === 'revoked' ? 'Доступ отозван' : 'Неактивна';
       const tools = role==='owner'
         ? `<div class="record-actions">
           ${sub.protocol==='wg' ? '<button type="button" class="secondary" data-peer-check="'+esc(sub.id)+'">Проверить пир</button>' : ''}
+          ${sub.protocol==='wg' && ['active','expired'].includes(sub.state) ? '<button type="button" class="secondary" data-wg-extend="'+esc(sub.id)+'">Продлить WireGuard</button>' : ''}
           ${sub.state!=='revoked' ? '<button type="button" class="danger-action" data-subscription-revoke="'+esc(sub.id)+'">Отозвать доступ</button>' : ''}
           ${sub.state==='revoked' && sub.can_delete ? '<button type="button" class="danger-action" data-subscription-delete="'+esc(sub.id)+'">Удалить запись</button>' : ''}
           </div>
@@ -1349,7 +1352,8 @@ async function loadUser(page) {
         : '';
       return `<article class="subscription"><b>${esc(protocolLabel(sub.protocol))}</b>
         <p>${esc(status)} · Срок: ${esc(dateTime(sub.expires))}</p>
-        <p>Дополнительных профилей: ${sub.device_limit ?? 4}</p>
+        ${sub.protocol==='wg' ? '<p>Доступ закреплён за аккаунтом Pushok — без привязки к телефону.</p>'
+          : '<p>Дополнительных профилей: '+(sub.device_limit ?? 4)+'</p>'}
         ${tools}</article>`;
     }).join('') : '<p>Подписок пока нет.</p>';
     $('user-orders').innerHTML = data.orders.length ? data.orders.map(order => `<article class="admin-order"><b>${esc(order.plan_name || order.plan)} · ${order.days} дней · ${order.method==='referral'?'Бонус · '+order.days+' дней':order.amount+' '+(order.currency === 'XTR' ? '★' : '₽')}</b><p>${esc(protocolLabel(order.protocol))} · ${esc(orderStatus[order.status] || order.status)}</p><p>Заказ: ${esc(order.id)}</p>${order.promo_code?`<p>Код ${esc(order.promo_code)} · скидка ${order.discount} ${order.currency==='XTR'?'★':'₽'} от ${order.base_amount}</p>`:''}<p>${esc(dateTime(order.created))} · ${esc(order.method==='referral'?'Бонусное продление':order.method==='trial'?'Пробный доступ':order.method)}</p>${order.error ? `<p>Ошибка выдачи: ${esc(order.error)} · Попыток: ${order.attempts}</p>` : ''}</article>`).join('') : '<p>Заказов пока нет.</p>';
@@ -1360,42 +1364,24 @@ async function loadUser(page) {
     $('user-error').textContent = '';
   } catch (error) { if (request === profileRequest && selectedUser === userId) $('user-error').textContent = error.message; }
 }
-// This owner-only recovery never rotates a live key, changes a subscription,
-// or exposes the secret Flow client identifier. Server controls final safety.
+// Account identity is checked from the signed MTProxy proof, not a phone.
+// This read-only admin view deliberately exposes no device hashes or keys.
 $('user-details').onclick = async event => {
-  const check=event.target.closest('[data-flow-binding-check]');
-  const release=event.target.closest('[data-flow-binding-release]');
-  if ((!check && !release) || role!=='owner' || selectedUser===null) return;
+  const check=event.target.closest('[data-flow-account-check]');
+  if (!check || role!=='owner' || selectedUser===null) return;
   const panel=$('flow-binding-status');
   if (!panel) return;
   const uid=selectedUser, epoch=authEpoch;
-  const current=()=>selectedUser===uid && authEpoch===epoch && $('user-dialog').open;
-  if (check) {
-    panel.textContent='Проверяем привязку Flow без просмотра ключей…';
-    try {
-      const state=await api('users/'+encodeURIComponent(uid)+'/flow/device');
-      if (!current()) return;
-      panel.textContent=!state.bound
-        ? 'Flow ещё не закреплял телефон за этим аккаунтом.'
-        : state.can_release
-          ? 'Привязка есть, но WG-ключ ещё не выдавался. Возможен безопасный сброс.'
-          : 'Сохранена привязка Flow. Автоматический сброс заблокирован: возможен выданный или создаваемый пир; требуется проверка и перевыпуск ключа.';
-      if (state.can_release && Number.isSafeInteger(state.binding_created)) {
-        panel.innerHTML+='<div class="record-actions"><button type="button" class="secondary" data-flow-binding-release="'+state.binding_created+'">Сбросить неиспользованную привязку</button></div>';
-      }
-    } catch (error) { if (current()) panel.textContent=error.message; }
-  } else {
-    const created=Number(release.dataset.flowBindingRelease);
-    if (!Number.isSafeInteger(created) || created<1) return;
-    if (!confirm('Снять только неиспользованную привязку Flow? При наличии выданного WireGuard-ключа Shop запретит сброс. Действие не переносит подписки и не создаёт новый пир.')) return;
-    release.disabled=true;
-    panel.textContent='Проверяем безопасность сброса на сервере…';
-    try {
-      await api('users/'+encodeURIComponent(uid)+'/flow/device/release', {
-        method:'POST', data:{binding_created:created,confirm:'RELEASE_UNUSED_FLOW_BINDING'}
-      });
-      if (current()) panel.textContent='Неиспользованная привязка освобождена. На телефоне повторите «Получить конфиг».';
-    } catch (error) { if (current()) panel.textContent=error.message; }
+  panel.textContent='Проверяем доступ аккаунта Pushok…';
+  try {
+    const state=await api('users/'+encodeURIComponent(uid)+'/flow/account');
+    if(uid!==selectedUser || epoch!==authEpoch || !$('user-dialog').open)return;
+    const names={active:'активен',pending:'создаётся',expired:'срок истёк',revoked:'отозван',none:'не выдан'};
+    panel.textContent=(state.account_linked?'Аккаунт подтверждён через Telegram.':'Связь с Telegram ещё не подтверждена.')
+      +' Доступ WireGuard: '+(names[state.access]||'неизвестен')+'.'
+      +' Привязка к телефону не применяется.';
+  }catch(error){
+    if(uid===selectedUser && epoch===authEpoch && $('user-dialog').open)panel.textContent=error.message;
   }
 };
 // Destructive actions require the developer role and explicit confirmation.
@@ -1469,6 +1455,59 @@ $('user-subscriptions').onclick = async event => {
     }catch(error){
       if(uid===selectedUser && epoch===authEpoch && panel.isConnected!==false)panel.textContent=error.message;
     }finally{button.disabled=false}
+    return;
+  }
+  const extend=event.target.closest('[data-wg-extend]');
+  if(extend && role==='owner' && selectedUser!==null) {
+    const uid=selectedUser, epoch=authEpoch, sid=extend.dataset.wgExtend;
+    if(!sid)return;
+    const key=uid+':'+sid;
+    let request=flowExtensionAttempts.get(key);
+    extend.disabled=true;
+    try {
+      if(request) {
+        if(!confirm('Предыдущее продление могло быть принято WGDashboard. '
+          +'Повторить ТОТ ЖЕ запрос без начисления дополнительных дней?'))return;
+      } else {
+        const daysInput=prompt('Продлить WireGuard на сколько дней? (1–365)', '30');
+        if(daysInput===null)return;
+        const days=Number(daysInput);
+        if(!Number.isInteger(days)||days<1||days>365){
+          $('user-error').textContent='Укажите целое количество дней от 1 до 365.';
+          return;
+        }
+        const reason=prompt('Причина продления (сохраняется в журнале)', 'Ручное продление разработчиком');
+        if(reason===null)return;
+        if(reason.trim().length<5 || reason.length>240){
+          $('user-error').textContent='Причина должна содержать от 5 до 240 символов.';
+          return;
+        }
+        const plan=await api('users/'+encodeURIComponent(uid)+'/wireguard/extend/plan?days='+days);
+        if(uid!==selectedUser || epoch!==authEpoch || !$('user-dialog').open)return;
+        if(plan.subscription_id!==sid)throw new Error('Подписка изменилась. Обновите карточку.');
+        if(!confirm('Продлить доступ аккаунта до '+dateTime(plan.target_expires)+
+          '? Shop должен подтвердить новый срок на прежнем WGDashboard.'))return;
+        request={
+          request_id:crypto.randomUUID(),subscription_id:sid,
+          before_expires:plan.before_expires,target_expires:plan.target_expires,
+          days:plan.days,reason:reason.trim(),confirm:'EXTEND_ACCOUNT_WIREGUARD'
+        };
+        flowExtensionAttempts.set(key,request);
+      }
+      const result=await api('users/'+encodeURIComponent(uid)+'/wireguard/extend',{
+        method:'POST',data:request
+      });
+      flowExtensionAttempts.delete(key);
+      if(uid===selectedUser && epoch===authEpoch && $('user-dialog').open){
+        await loadUser(profilePage);
+        $('user-error').textContent='Срок WireGuard продлён до '+dateTime(result.expires_at)+'.';
+      }
+    }catch(error){
+      if(uid===selectedUser && epoch===authEpoch){
+        $('user-error').textContent=error.message+
+          ' При повторе кнопки будет использован тот же идентификатор, чтобы не начислить дни дважды.';
+      }
+    }finally{extend.disabled=false}
     return;
   }
   const revoke=event.target.closest('[data-subscription-revoke]');
