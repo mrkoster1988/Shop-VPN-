@@ -14,8 +14,10 @@ spec.loader.exec_module(auto)
 
 
 def rel(tag, **kwargs):
-    return dict(tag_name=tag, draft=False, prerelease=False,
-                published_at="2026-11-25T09:30:00Z", **kwargs)
+    value = dict(tag_name=tag, draft=False, prerelease=False,
+                 published_at="2026-11-25T09:30:00Z")
+    value.update(kwargs)
+    return value
 
 
 def test_discovers_only_next_stable_release_in_numerical_order():
