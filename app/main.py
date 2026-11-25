@@ -1411,6 +1411,16 @@ async def admin_server_delete(sid: str = APIPath(min_length=1,max_length=100),
         return admin_cleanup.delete_unused_server(sid)
 
 
+# The Flow bridge entitlement is account-scoped; no device hash is read
+# or exposed. The legacy phone recovery endpoint remains for old admin URLs.
+@app.get('/api/admin/users/{user_id}/flow/account')
+async def admin_flow_account_status(
+        user_id: int = APIPath(ge=1, le=9223372036854775807),
+        actor=Depends(admin)):
+    _developer_only(actor)
+    return flow_identity_bridge.account_status(user_id)
+
+
 # Developer-only Flow phone-binding diagnostics. No private identifiers are read
 # by the admin panel, and release is restricted to never-issued WireGuard.
 @app.get('/api/admin/users/{user_id}/flow/device')
