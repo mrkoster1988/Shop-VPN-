@@ -121,10 +121,17 @@ def quote(data,user):
         return quote_locked(conn,data,user)[0]
 
 
-def make_order(data,user,method,email):
+def make_order(data,user,method,email,*,order_id=None):
     code=normalize(data.promo_code)
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
+        if order_id is not None:
+            old=conn.execute('SELECT * FROM orders WHERE id=?',(order_id,)).fetchone()
+            if old:
+                expected=(user['id'],data.protocol,data.plan,data.plan_version,method,data.quoted_amount,data.quote_currency)
+                if tuple(old[k] for k in ('user_id','protocol','plan','plan_version','method','amount','currency'))!=expected:
+                    raise HTTPException(409,'Условия заказа изменились')
+                return dict(old)
         if code:
             previous=conn.execute('SELECT o.* FROM coupon_uses u JOIN coupons c ON c.id=u.coupon_id JOIN orders o ON o.id=u.order_id WHERE u.user_id=? AND c.code=?',(user['id'],code)).fetchone()
             if previous:
@@ -140,7 +147,7 @@ def make_order(data,user,method,email):
         if code and data.promo_version!=result['promo_version']:raise HTTPException(409,'Условия промокода изменились. Рассчитайте скидку заново.')
         if data.quoted_amount is not None and data.quoted_amount!=result['amount']:raise HTTPException(409,'Итоговая сумма изменилась. Рассчитайте стоимость заново.')
         if data.quote_currency is not None and data.quote_currency!=result['currency']:raise HTTPException(409,'Валюта изменилась. Рассчитайте стоимость заново.')
-        if not code:
+        if not code and order_id is None:
             if data.promo_version is not None:raise HTTPException(422,'Версия промокода указана без кода')
             previous=conn.execute("SELECT * FROM orders WHERE user_id=? AND protocol=? AND plan=? AND method=? AND plan_version=? AND promo_id IS NULL AND kind='purchase' AND status='pending' AND created>? ORDER BY created DESC,id LIMIT 1",
                 (user['id'],data.protocol,data.plan,method,data.plan_version,int(time.time())-1800)).fetchone()
@@ -165,7 +172,7 @@ def make_order(data,user,method,email):
             if existing:raise HTTPException(409,'Бесплатный тариф уже получен. Проверьте подписку в кабинете.')
         else:
             payment_policy.require_new(conn,user,method,getattr(data,'payment_policy_version',None))
-        oid=str(uuid.uuid4());now=int(time.time())
+        oid=order_id or str(uuid.uuid4());now=int(time.time())
         conn.execute('INSERT INTO orders(id,user_id,protocol,plan,days,amount,created,receipt_email,currency,method,plan_version,plan_name,device_limit,base_amount,discount,promo_id,promo_code,promo_version,promo_percent,status,free_traffic_gb,free_auto_renew,free_max_renewals) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
             (oid,user['id'],data.protocol,data.plan,result['days'],result['amount'],now,email,result['currency'],method,result['plan_version'],result['plan_name'],result['device_limit'],result['base_amount'],result['discount'],coupon['id'] if coupon else None,code,result['promo_version'],result['promo_percent'],'paid' if method=='free' else 'pending',result['free_traffic_gb'],result['free_auto_renew'],result['free_max_renewals']))
         if coupon:conn.execute('INSERT INTO coupon_uses(coupon_id,user_id,order_id,created) VALUES (?,?,?,?)',(coupon['id'],user['id'],oid,now))

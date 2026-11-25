@@ -31,7 +31,7 @@ from . import shop_settings, runtime_settings, payment_policy, shop_finance, pla
 from . import config as c, providers, service, servers, server_routing, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows, insert_user
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import cabinet_stars, cabinet_vpn, cabinet_notices, flow_guests
+from . import miniapp_vpn, cabinet_stars, cabinet_vpn, cabinet_notices, flow_guests
 from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, flow_bridge_recovery, flow_owner_extension, pushok_identity, flow_wireguard_devices, admin_cleanup, admin_user_cleanup, wg_peer_diagnostics, mtproxy_web_login
 
 logging.basicConfig(level=logging.INFO)
@@ -802,6 +802,10 @@ async def referral_policy_update(data: referrals.PolicyUpdate):
 
 @app.post('/api/orders')
 async def purchase(data: Purchase, user=Depends(current_user)):
+    return await purchase_for_user(data,user)
+
+
+async def purchase_for_user(data, user, *, order_id=None):
     if not providers.available(data.protocol, user['id']):
         raise HTTPException(503, 'Этот способ подключения ещё не настроен')
     async with service.lock:
@@ -818,7 +822,7 @@ async def purchase(data: Purchase, user=Depends(current_user)):
         email = email_address(data.receipt_email) if data.receipt_email else user['email']
         if not is_free and method in ('yookassa', 'sbp') and os.getenv('YOOKASSA_RECEIPTS') == 'true' and not email:
             raise HTTPException(422, 'Укажите email для чека')
-        order = promos.make_order(data,user,method,email)
+        order = promos.make_order(data,user,method,email,order_id=order_id)
         method = order['method']
         if method == 'stars' and order['status']=='pending' and not order['payment_url']:
             try:
@@ -850,6 +854,8 @@ async def order_status(order_id: str, user=Depends(current_user)):
         'progress': order_progress.public(order),
         'instructions': payment_policy.manual_instructions()
         if order['method'] == 'manual' and order['status'] in ('pending','checkout') else ''}
+
+app.include_router(miniapp_vpn.router_for(Purchase,purchase_for_user,order_status))
 
 @app.post('/api/payments/yookassa/notify')
 async def yookassa_notify(request: Request):
