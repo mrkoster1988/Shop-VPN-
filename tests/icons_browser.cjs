@@ -44,12 +44,14 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
     try{
      await page.goto('http://pushok.test'+base+'/');
      await page.waitForFunction(()=>typeof me!=='undefined' && catalog && document.querySelector('#plan-list button'));
-     assert.equal(await page.locator('.pushok-icon').count(),6,'Все значки сохранены после загрузки аккаунта');
+     assert.equal(await page.locator('.pushok-icon').count(),10,'Все значки сохранены после загрузки аккаунта');
      assert.ok(sprites.length>0,'Браузер запросил внешний SVG');
      assert.ok(sprites.every(p=>p===base+'/static/pushok-icons.svg'));
      const visible=page.locator('.pushok-icon:visible');
-     // В Mini App верхняя кнопка кабинета штатно скрыта: её заменяет нижняя.
-     assert.equal(await visible.count(),theme==='browser'?2:5);
+     // Desktop: 2; mobile browser: 2 + 4; Mini App: hero + its own 4.
+     assert.equal(await visible.count(),theme==='browser'?(width<=680?6:2):5);
+     assert.equal(await page.locator('#shop-mobile-nav').isVisible(),theme==='browser'&&width<=680);
+     assert.equal(await page.locator('#miniapp-nav').isVisible(),theme!=='browser');
      assert.equal(await page.locator('#account-btn').isVisible(),theme==='browser');
      for(const icon of await visible.all()){
       assert.equal(await icon.getAttribute('aria-hidden'),'true');
