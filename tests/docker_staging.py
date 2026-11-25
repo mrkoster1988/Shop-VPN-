@@ -161,12 +161,12 @@ class Staging:
                      'store_settings','support_cases','support_messages','partner_events',
                      'order_history_state','order_milestones','bot_menu_settings','wgdashboard_keys',
                      'wgdashboard_expirations','hysteria2_credentials','tuic_credentials','update_checker',
-                     'cabinet_vpn_limits','cabinet_vpn_notices',
+                     'cabinet_vpn_limits','cabinet_vpn_notices','sqlite_sequence',
                      'flow_wireguard_versions','flow_wireguard_links',
                      'flow_wireguard_device_versions','flow_wireguard_device_links',
                      'flow_auto_policy','flow_auto_grants','flow_guest_trials','flow_owner_extensions','flow_bridge_identities','flow_bridge_devices','flow_bridge_nonces','staff_role_assignments','staff_role_policies','shop_runtime_settings','staff_permission_limits','shop_payment_policy','shop_finance_entries','shop_finance_actions','server_routing_policy','server_routing_nodes','server_probe_history','shop_id_policy','shop_id_links','shop_id_requests','shop_id_sessions','mtproxy_web_requests'}
         added=sorted(set(new)-set(old))
-        for table in ('cabinet_vpn_limits','cabinet_vpn_notices'):
+        for table in ('cabinet_vpn_limits','cabinet_vpn_notices','sqlite_sequence'):
             check(table not in added or current['counts'].get(table)==0,
                   'Unexpected VPN change or notification during migration')
         for table in ('flow_wireguard_device_links','flow_wireguard_device_versions'):
