@@ -168,3 +168,28 @@ def exchange(ticket, client_id=None):
     if not link['enabled'] or not isinstance(link['url'],str) or not link['url'].startswith('https://'):
         raise HTTPException(503, 'Личная ссылка временно недоступна')
     return {'status':'active','subscription_url':link['url']}
+
+
+def account_status(user_id: int) -> dict:
+    """Developer-only caller: verified account and entitlement, no device data."""
+    with db() as conn:
+        if conn.execute('SELECT 1 FROM users WHERE id=?', (user_id,)).fetchone() is None:
+            raise HTTPException(404, 'Пользователь не найден')
+        bound = conn.execute(
+            'SELECT 1 FROM flow_bridge_identities WHERE shop_user_id=?',
+            (user_id,)).fetchone() is not None
+        sub = conn.execute(
+            "SELECT state,expires,primary_key_state,secret FROM subscriptions "
+            "WHERE user_id=? AND protocol='wg'", (user_id,)).fetchone()
+    now = int(time.time())
+    active = bool(sub and sub['state']=='active' and
+                  sub['primary_key_state']=='active' and sub['expires']>now and sub['secret'])
+    return {
+        'account_linked': bound,
+        'access': 'active' if active else (
+            'none' if sub is None else
+            'pending' if sub['state']=='pending' else
+            'revoked' if sub['state']=='revoked' else 'expired'),
+        'expires_at': int(sub['expires']) if sub is not None else None,
+        'binding_scope': 'account',
+    }
