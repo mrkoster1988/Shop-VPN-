@@ -5,7 +5,8 @@ import os
 from pathlib import Path
 import re
 import subprocess
-import tempfile
+import urllib.error
+import urllib.request
 
 VERSION = r'(0|[1-9][0-9]*)\.([0-9]{3})'
 TAG = re.compile(r'v' + VERSION + r'$')
@@ -73,14 +74,20 @@ def plan(text, releases):
 
 
 def github(args, payload=None):
-    if payload is None:
-        result = subprocess.run(['gh', 'api', *args], text=True, capture_output=True)
-    else:
-        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8') as body:
-            json.dump(payload, body, ensure_ascii=False)
-            body.flush()
-            result = subprocess.run(['gh', 'api', *args, '--input', body.name],
-                                    text=True, capture_output=True)
+    if payload is not None:
+        url = 'https://api.github.com/' + args[-1]
+        request = urllib.request.Request(url, method='POST',
+            data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
+            headers={'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                     'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json',
+                     'User-Agent': 'pushok-shop-release'})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as error:
+            message = error.read(4096).decode('utf-8', 'replace')
+            raise RuntimeError(f'GitHub release POST returned HTTP {error.code}: {message}') from error
+    result = subprocess.run(['gh', 'api', *args], text=True, capture_output=True)
     if result.returncode:
         raise RuntimeError('GitHub API failed: ' + result.stderr.strip())
     return json.loads(result.stdout)
