@@ -108,6 +108,35 @@ def test_account_receives_same_entitlement_independent_of_phone(client,monkeypat
     assert feed.json()['profiles'][0]['config']==_VALID
 
 
+
+def test_legacy_phone_binding_does_not_limit_verified_account(client,monkeypatch):
+    _enabled(monkeypatch)
+    from app import service
+    service.telegram_account(98455677)
+    expires=int(time.time())+86400
+    with db() as conn:
+        conn.execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state,secret,access_source) "
+                     "VALUES ('owned',1,'wg',?,'active',?,'purchase')",
+                     (expires,c.encrypt(_VALID)))
+        # Old installations retained a device hash. It is historical data,
+        # never an authorization check or a reason to delete valid peers.
+        conn.execute("INSERT INTO flow_bridge_devices(shop_user_id,client_hash,created) "
+                     "VALUES (1,?,?)", ('f'*64,123456))
+    older = _call(client,client_id='pfc_'+'a'*43)
+    assert older.status_code == 200,older.text
+    newer = _call(client,client_id='pfc_'+'b'*43)
+    assert newer.status_code == 200,newer.text
+    without = client.post(PATH,json={'ticket':_ticket()})
+    assert without.status_code == 200,without.text
+    assert older.json() == newer.json() == without.json()
+    assert one('SELECT client_hash FROM flow_bridge_devices WHERE shop_user_id=1')['client_hash']=='f'*64
+    assert one('SELECT count(*) AS n FROM flow_bridge_nonces')['n']==3
+    # Account security still rejects a different signed identity.
+    conflict = _call(client,_ticket(TWO,98455677))
+    assert conflict.status_code == 409
+    assert conflict.json()['detail']=={'code':'FLOW_IDENTITY_CONFLICT'}
+
+
 def test_pending_and_server_expiry_then_link_respects_manual_disable(client,monkeypatch):
     _enabled(monkeypatch)
     from app import service
