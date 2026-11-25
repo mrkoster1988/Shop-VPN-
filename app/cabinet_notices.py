@@ -22,7 +22,7 @@ FIELDS = ('state','expires','device_limit','primary_key_state','free_traffic_gb'
 def install(conn):
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS cabinet_vpn_notices(
-          id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
           subscription_id TEXT, kind TEXT NOT NULL, payload TEXT NOT NULL, expiry INTEGER,
           created INTEGER NOT NULL DEFAULT (unixepoch()), delivered INTEGER, lease TEXT,
           next_attempt INTEGER NOT NULL DEFAULT 0, attempts INTEGER NOT NULL DEFAULT 0);
@@ -83,6 +83,8 @@ def message(row, policy):
     elif kind == 'order':
         lines = ['Оплата подтверждена.' if data['status']=='paid' else 'Заказ на подписку отменён.',
                  f"Сумма заказа {data['amount']} {data['currency']}."]
+    elif kind == 'refund':
+        lines = [f"Telegram подтвердил возврат {data['amount']} ⭐ за VPN-подписку."]
     elif kind == 'device':
         lines = ['Дополнительный профиль готов.' if data['state']=='active' else 'Дополнительный профиль отозван.']
     elif kind == 'link':

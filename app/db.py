@@ -286,6 +286,8 @@ def init_db():
           user_id INTEGER UNIQUE REFERENCES users(id) ON DELETE SET NULL,
           network_hash TEXT NOT NULL, created INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS flow_guest_network ON flow_guest_trials(network_hash,created);
+        CREATE TABLE IF NOT EXISTS cabinet_vpn_invoices (
+          order_id TEXT PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE, refunded INTEGER);
         CREATE TABLE IF NOT EXISTS cabinet_vpn_limits (
           request_id TEXT PRIMARY KEY, digest TEXT NOT NULL, actor TEXT NOT NULL,
           subscription_id TEXT NOT NULL, previous_limit INTEGER NOT NULL,

@@ -526,7 +526,7 @@ html[data-telegram-theme] body.shop-public-ui .miniapp-nav [aria-current=page]{
   .shop-public-ui dialog .close{top:8px;right:9px}
 }
 @media (max-width:340px){
-  .shop-public-ui .hero .actions{grid-template-columns:1fr}
+  .shop-public-ui .hero .actions{grid-template-columns:minmax(0,1.1fr) minmax(0,1fr)}
   .shop-public-ui .plan{grid-template-columns:minmax(0,1fr) 105px}
   .shop-public-ui .plan h3{padding-right:105px}
 }
@@ -825,4 +825,11 @@ body.shop-admin-ui{
 }
 @media(prefers-reduced-motion:reduce){
  .shop-public-ui dialog,.shop-admin-ui dialog,.shop-admin-ui .management-mobile-nav,.shop-public-ui .shop-mobile-nav{scroll-behavior:auto!important;transition:none!important}
+}
+
+@media (max-width:680px){
+  .shop-public-ui .hero .eyebrow{display:none}
+  .shop-public-ui .hero #guest-home{margin:8px 0}
+  .shop-public-ui .hero #guest-note:empty{display:none}
+  .shop-public-ui .hero .hero-note{margin-top:8px}
 }
