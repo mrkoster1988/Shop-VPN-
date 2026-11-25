@@ -1335,7 +1335,7 @@ async function loadUser(page) {
     profilePage = data.orders_page;
     const user = data.user;
     $('user-title').textContent = 'Пользователь № ' + user.id;
-    $('user-details').innerHTML = `<p>Email: ${esc(user.email || '—')}</p><p>Telegram ID: ${esc(user.telegram_id ?? '—')}</p><p>Регистрация: ${esc(dateTime(user.created))}</p>` + (role==='owner' ? '<div class="record-actions"><button type="button" class="secondary" data-flow-account-check="1">Проверить аккаунт Flow</button></div><div class="record-note" id="flow-binding-status" role="status" aria-live="polite"></div>' : '');
+    $('user-details').innerHTML = `<p>Email: ${esc(user.email || '—')}</p><p>Telegram ID: ${esc(user.telegram_id ?? '—')}</p><p>Регистрация: ${esc(dateTime(user.created))}</p>` + (role==='owner' ? '<div class="record-actions"><button type="button" class="secondary" data-flow-account-check="1">Проверить аккаунт Flow</button><button type="button" class="danger-action" data-user-delete="1">Удалить пользователя</button></div><div class="record-note" id="user-delete-status" role="status" aria-live="polite"></div><div class="record-note" id="flow-binding-status" role="status" aria-live="polite"></div>' : '');
     $('user-subscriptions').innerHTML = data.subscriptions.length ? data.subscriptions.map(sub => {
       const status = sub.access_active ? 'Активна' : sub.state === 'pending' ? 'Готовится'
         : sub.state === 'revoked' ? 'Доступ отозван' : 'Неактивна';
@@ -1368,6 +1368,42 @@ async function loadUser(page) {
 // Account identity is checked from the signed MTProxy proof, not a phone.
 // This read-only admin view deliberately exposes no device hashes or keys.
 $('user-details').onclick = async event => {
+  const remove=event.target.closest('[data-user-delete]');
+  if(remove && role==='owner' && selectedUser!==null) {
+    const uid=selectedUser,epoch=authEpoch;
+    const status=$('user-delete-status');
+    const current=()=>uid===selectedUser && epoch===authEpoch && $('user-dialog').open;
+    remove.disabled=true;
+    if(status)status.textContent='Проверяем связанные записи…';
+    try {
+      const plan=await api('users/'+encodeURIComponent(uid)+'/delete/preview');
+      if(!current())return;
+      if(plan.user_id!==uid)throw new Error('Карточка пользователя изменилась.');
+      if(!plan.can_delete){
+        if(status)status.textContent='Удаление недоступно: '+plan.blockers.map(item=>item.label+' ('+item.count+')').join(', ')+'. История сохранена.';
+        return;
+      }
+      if(status)status.textContent='Связанных бизнес-записей нет. Сессии и ссылки входа будут отозваны.';
+      if(!confirm('Удалить пользователя № '+uid+' из Shop? Это удалит учётную запись и все её сессии. Другие проекты Pushok не изменятся.'))return;
+      if(prompt('Для удаления введите УДАЛИТЬ','')!=='УДАЛИТЬ')return;
+      const result=await api('users/'+encodeURIComponent(uid)+'/delete',{
+        method:'POST',data:{revision:plan.revision,confirm:'DELETE_UNUSED_CUSTOMER'}
+      });
+      if(!current())return;
+      if(result.status!=='deleted'||result.user_id!==uid)throw new Error('Удаление не подтверждено.');
+      $('user-dialog').close();
+      usersPage=1;
+      try {
+        await refreshUsers();
+        if(epoch===authEpoch)$('users-state').textContent='Пользователь № '+uid+' удалён из Shop.';
+      }catch(error){
+        if(epoch===authEpoch)$('users-state').textContent='Пользователь № '+uid+' удалён. Не удалось обновить список.';
+      }
+    } catch(error) {
+      if(current() && status)status.textContent=error.message;
+    } finally {remove.disabled=false;}
+    return;
+  }
   const check=event.target.closest('[data-flow-account-check]');
   if (!check || role!=='owner' || selectedUser===null) return;
   const panel=$('flow-binding-status');
