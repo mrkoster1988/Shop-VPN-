@@ -23,7 +23,7 @@ class Extension(BaseModel):
     target_expires: int = Field(ge=1, strict=True)
     days: int = Field(ge=1, le=365, strict=True)
     reason: str = Field(min_length=5, max_length=240)
-    confirm: Literal['EXTEND_ACCOUNT_WIREGUARD']
+    confirm: Literal['EXTEND_ACCOUNT_WIREGUARD', 'SHORTEN_ACCOUNT_WIREGUARD']
 
 
 def _require_stored_key(conn, server_id, identity):
@@ -121,10 +121,19 @@ def pending(user_id):
             (user_id,)).fetchone()
         if row is None:
             return {'request': None}
-        return {'request': {**dict(row), 'confirm': 'EXTEND_ACCOUNT_WIREGUARD'}}
+        return {'request': {**dict(row), 'confirm': ('SHORTEN_ACCOUNT_WIREGUARD' if row['target_expires'] < row['before_expires'] else 'EXTEND_ACCOUNT_WIREGUARD')}}
 
 
-def proposal(user_id, days):
+def target_expiry(before, days, shorten, now):
+    if not shorten:
+        return max(now, before) + days * 86400
+    target = before - days * 86400
+    if target <= now:
+        raise HTTPException(422, 'Новый срок должен быть в будущем. Для отключения используйте отзыв подписки.')
+    return target
+
+
+def proposal(user_id, days, shorten=False):
     if type(days) is not int or not 1 <= days <= 365:
         raise HTTPException(422, 'Срок продления: от 1 до 365 дней')
     with db() as conn:
@@ -134,7 +143,7 @@ def proposal(user_id, days):
             (sub['id'],)).fetchone()
         if blocked:
             raise HTTPException(409, 'Предыдущее продление не завершено; повторите его запрос.')
-        new_expiry = max(int(time.time()), int(sub['expires'])) + days * 86400
+        new_expiry = target_expiry(int(sub['expires']), days, shorten, int(time.time()))
         return {
             'subscription_id': sub['id'],
             'before_expires': int(sub['expires']),
@@ -167,10 +176,11 @@ async def extend(user_id, command: Extension, staff_id=None):
         else:
             if int(sub['expires']) != command.before_expires:
                 raise HTTPException(409, 'Срок подписки изменился. Пересчитайте продление.')
-            base = max(int(time.time()), command.before_expires)
+            shorten = command.confirm == 'SHORTEN_ACCOUNT_WIREGUARD'
             # The owner must first obtain a short-lived server-side plan.
-            expected = base + command.days * 86400
-            if abs(command.target_expires - expected) > 300:
+            expected = target_expiry(command.before_expires, command.days, shorten, int(time.time()))
+            if ((shorten or command.before_expires >= int(time.time())) and command.target_expires != expected
+                    or abs(command.target_expires - expected) > 300):
                 raise HTTPException(409, 'План продления устарел. Обновите карточку.')
             if conn.execute(
                 "SELECT 1 FROM flow_owner_extensions WHERE subscription_id=? AND status='pending'",

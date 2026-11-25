@@ -282,7 +282,10 @@ const MANAGEMENT_QUICK = [
   ['diagnostics-section','Диагностика','Проверка работы компонентов','ⓘ'],
   ['updates-panel','Обновления','Версия и безопасное обновление Shop','↻']
 ];
-let currentManagementSection='management-overview';
+function initialManagementSection(){
+  return new URLSearchParams(globalThis.location?.search || '').get('section')==='users' ? 'users-section' : 'management-overview';
+}
+let currentManagementSection=initialManagementSection();
 let managementMenuOpen=false;
 const MANAGEMENT_MOBILE_TABS=[['users-section','Клиенты','♙'],['orders-section','Заказы','▤'],['servers-section','Серверы','◈'],['moderation-section','Модерация','✓'],['support-admin','Помощь','ⓘ'],['plans-section','Тарифы','★'],['shop-finance-section','Финансы','₽']];
 function managementMeta(id){
@@ -437,7 +440,7 @@ $('role-policy-list').onsubmit=async event=>{
 };
 function clearManagement(){
   delegatedPermissions.clear();staffActorId=null;moderationRequest++;rolePolicyRequest++;moderationPage=1;
-  currentManagementSection='management-overview';managementMenuOpen=false;
+  currentManagementSection=initialManagementSection();managementMenuOpen=false;
   $('management-search').value='';$('management-header').dataset ||= {};$('management-header').dataset.mobileMenuOpen='false';
   $('management-menu-toggle').setAttribute?.('aria-expanded','false');$('management-mobile-nav').replaceChildren();
   for(const id of ['management-nav','management-role','management-scope','moderation-list','moderation-status','moderation-page','role-policy-list','role-policy-status'])$(id).replaceChildren();
@@ -1343,7 +1346,7 @@ async function loadUser(page) {
       const tools = role==='owner'
         ? `<div class="record-actions">
           ${sub.protocol==='wg' ? '<button type="button" class="secondary" data-peer-check="'+esc(sub.id)+'">Проверить пир</button>' : ''}
-          ${sub.protocol==='wg' && ['active','expired'].includes(sub.state) ? '<button type="button" class="secondary" data-wg-extend="'+esc(sub.id)+'">Продлить WireGuard</button>' : ''}
+          ${sub.protocol==='wg' && ['active','expired'].includes(sub.state) ? '<button type="button" class="secondary" data-wg-extend="'+esc(sub.id)+'">Изменить срок WireGuard</button>' : ''}
           ${sub.state!=='revoked' ? '<button type="button" class="danger-action" data-subscription-revoke="'+esc(sub.id)+'">Отозвать доступ</button>' : ''}
           ${sub.state!=='revoked' ? '<button type="button" class="danger-action" data-subscription-remove="'+esc(sub.id)+'">Удалить подписку</button>' : ''}
           ${sub.state==='revoked' && sub.can_delete ? '<button type="button" class="danger-action" data-subscription-delete="'+esc(sub.id)+'">Удалить запись</button>' : ''}
@@ -1518,28 +1521,28 @@ $('user-subscriptions').onclick = async event => {
         if(!confirm('Предыдущее продление могло быть принято WGDashboard. '
           +'Повторить ТОТ ЖЕ запрос без начисления дополнительных дней?'))return;
       } else {
-        const daysInput=prompt('Продлить WireGuard на сколько дней? (1–365)', '30');
+        const daysInput=prompt('На сколько дней изменить срок? Для сокращения введите минус, например −7.', '30');
         if(daysInput===null)return;
-        const days=Number(daysInput);
-        if(!Number.isInteger(days)||days<1||days>365){
-          $('user-error').textContent='Укажите целое количество дней от 1 до 365.';
+        const days=Number(daysInput.trim().replace(/^−/,'-'));
+        if(!Number.isInteger(days)||days===0||Math.abs(days)>365){
+          $('user-error').textContent='Введите от 1 до 365 дней со знаком плюс или минус.';
           return;
         }
-        const reason=prompt('Причина продления (сохраняется в журнале)', 'Ручное продление разработчиком');
+        const reason=prompt('Причина изменения срока (сохраняется в журнале)', 'Изменение срока владельцем');
         if(reason===null)return;
         if(reason.trim().length<5 || reason.length>240){
           $('user-error').textContent='Причина должна содержать от 5 до 240 символов.';
           return;
         }
-        const plan=await api('users/'+encodeURIComponent(uid)+'/wireguard/extend/plan?days='+days);
+        const plan=await api('users/'+encodeURIComponent(uid)+'/wireguard/extend/plan?days='+Math.abs(days)+(days<0?'&shorten=true':''));
         if(uid!==selectedUser || epoch!==authEpoch || !$('user-dialog').open)return;
         if(plan.subscription_id!==sid)throw new Error('Подписка изменилась. Обновите карточку.');
-        if(!confirm('Продлить доступ аккаунта до '+dateTime(plan.target_expires)+
+        if(!confirm((days<0?'Сократить доступ до ':'Продлить доступ до ')+dateTime(plan.target_expires)+
           '? Shop должен подтвердить новый срок на прежнем WGDashboard.'))return;
         request={
           request_id:crypto.randomUUID(),subscription_id:sid,
           before_expires:plan.before_expires,target_expires:plan.target_expires,
-          days:plan.days,reason:reason.trim(),confirm:'EXTEND_ACCOUNT_WIREGUARD'
+          days:plan.days,reason:reason.trim(),confirm:days<0?'SHORTEN_ACCOUNT_WIREGUARD':'EXTEND_ACCOUNT_WIREGUARD'
         };
         flowExtensionAttempts.set(key,request);
       }

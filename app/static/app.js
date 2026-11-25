@@ -172,7 +172,7 @@ function clearPrivate(clearPromoIntent=true) {
   for (const id of ['identity','account-summary','subscriptions','orders','payment-result','checkout-info','support-list','support-thread']) $(id).replaceChildren();
   supportRequest++;selectedSupportCase=null;$('support-create').reset();$('support-reply').reset();$('support-reply').hidden=true;$('support-status').textContent='';
   $('auth-form').reset(); $('receipt-label').querySelector('input').value = '';
-  $('account-label').textContent = 'Личный кабинет ↗';
+  $('account-label').textContent = 'Войти';
 }
 async function refreshMe() {
   const request = ++meRequest, epoch = sessionEpoch;
@@ -184,7 +184,7 @@ async function refreshMe() {
   if (me && me.id !== customer?.id) { sessionEpoch++; clearPrivate(); }
   else if (!customer) clearPrivate(false);
   me = customer; catalog = nextCatalog; renderPlans();
-  $('account-label').textContent = me ? 'Мой кабинет ↗' : 'Личный кабинет ↗';
+  $('account-label').textContent = me ? 'Мой кабинет ↗' : 'Войти';
   if (connection) {
     const current = me?.subscriptions.find(s=>s.id===connection.id);
     if (!current || current.state!=='active' || current.expires*1000<=Date.now() || (!connection.deviceId && (current.primary_key_state || 'active')!=='active')) {
@@ -929,7 +929,16 @@ $('logout').onclick = async () => {
     $('auth-methods').textContent=catalog.mtproxy_login?'Подтвердите вход в кабинете MTProxy или войдите по email.':catalog.bot_username?'Войдите по email или откройте магазин из Telegram-бота.':'Войдите по email.';
     if(catalog.bot_username) { for(const id of ['bot-link','auth-bot']) { $(id).href='https://t.me/'+encodeURIComponent(catalog.bot_username); $(id).hidden=false; } }
     const tg=window.Telegram?.WebApp;
-    if(tg?.initData) { tg.ready(); tg.expand(); syncTelegramTheme(); tg.onEvent?.('themeChanged',syncTelegramTheme); await api('/api/auth/telegram',{init_data:tg.initData}); setupMiniappNavigation(); }
+    if(tg?.initData) {
+      tg.ready(); tg.expand(); syncTelegramTheme(); tg.onEvent?.('themeChanged',syncTelegramTheme);
+      try { await api('/api/auth/telegram',{init_data:tg.initData}); }
+      catch(e) {
+        // A Mini App opened by MTProxy has a different bot signature. Only the
+        // separately authenticated Shop cookie can resume the cabinet here.
+        if(e.status!==401 && e.status!==403 && e.status!==503)throw e;
+      }
+      setupMiniappNavigation();
+    }
     await refreshMe();
     // Переход из уведомления не даёт прав: вход уже проверен выше.
     if(new URLSearchParams(location.search).get('view')==='account')show(me?'account-dialog':'auth-dialog');

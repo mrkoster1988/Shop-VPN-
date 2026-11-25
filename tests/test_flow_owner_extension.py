@@ -189,3 +189,21 @@ def test_failed_device_extension_preserves_local_expiry_and_recoverable_request(
     assert one('SELECT expires FROM subscriptions WHERE id=?',(SID,))['expires']==plan['before_expires']
     assert one('SELECT expires FROM devices WHERE id=?',(device,))['expires']==plan['before_expires']
     assert client.get(path()+'/pending',headers=owner()).json()['request']==body
+
+
+def test_owner_can_shorten_active_access_and_retry_the_same_date(client, monkeypatch):
+    prepared(client)
+    before = int(time.time()) + 30 * 86400
+    execute("UPDATE subscriptions SET expires=? WHERE id=?", (before, SID))
+    plan = client.get(path()+'/plan?days=5&shorten=true', headers=owner()).json()
+    assert plan['target_expires'] == before - 5 * 86400
+    seen = []
+    async def provision(sub):
+        seen.append(sub['expires'])
+        return _VALID
+    monkeypatch.setattr(providers, 'provision', provision)
+    command = request(plan, confirm='SHORTEN_ACCOUNT_WIREGUARD')
+    for _ in range(2):
+        assert client.post(path(), headers=owner(), json=command).status_code == 200
+    assert seen == [before - 5 * 86400]
+    assert client.get(path()+'/plan?days=30&shorten=true', headers=owner()).status_code == 422

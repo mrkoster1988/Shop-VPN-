@@ -1385,9 +1385,9 @@ def _developer_only(actor):
 async def admin_flow_extend_plan(
         user_id: int = APIPath(ge=1, le=9223372036854775807),
         days: int = Query(default=30, ge=1, le=365),
-        actor=Depends(admin)):
+        shorten: bool = False, actor=Depends(admin)):
     _developer_only(actor)
-    return flow_owner_extension.proposal(user_id, days)
+    return flow_owner_extension.proposal(user_id, days, shorten)
 
 
 @app.get('/api/admin/users/{user_id}/wireguard/extend/pending')

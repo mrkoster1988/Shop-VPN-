@@ -501,12 +501,23 @@ async def bot_loop():
                         if text in ('/start', '/buy', '/account'):
                             await send(tg_id, 'Pushok VPN 🐾\nВыберите тариф, оплатите и получите подключение.\nСсылка входа в браузере одноразовая и действует 5 минут.',
                                        reply_markup=bot_menu(user['id']))
+                        elif text == '/subscriptions' and msg['chat'].get('id') == tg_id:
+                            from datetime import datetime, timezone
+                            rows = all_rows('SELECT protocol,expires,state FROM subscriptions WHERE user_id=? ORDER BY protocol', (user['id'],))
+                            lines = []
+                            for sub in rows:
+                                end = datetime.fromtimestamp(sub['expires'], timezone.utc).strftime('%d.%m.%Y %H:%M UTC') if sub['expires'] else 'срок ещё не назначен'
+                                lines.append(f"{sub['protocol'].upper()} · {end}")
+                            await send(tg_id, '\n'.join(lines) or 'У вас пока нет подписок.', reply_markup={'inline_keyboard': [
+                                [{'text':'Моя подписка и продление', 'url':ticket(user['id'])}],
+                                [{'text':'Управление для владельца', 'web_app':{'url':c.PUBLIC_URL.rstrip('/')+'/admin?section=users'}}],
+                            ]})
                         elif text in ('/support', '/paysupport'):
                             await send_shop_info(tg_id, 'support')
                         elif text == '/terms':
                             await send_shop_info(tg_id, 'terms')
                         else:
-                            await send(tg_id, 'Команды: /buy — купить VPN, /account — личный кабинет, /support — поддержка')
+                            await send(tg_id, 'Команды: /buy — купить VPN, /account — личный кабинет, /subscriptions — сроки подписок, /support — поддержка')
                     offset = update['update_id'] + 1
                     execute("INSERT OR REPLACE INTO meta VALUES ('bot_offset',?)", (str(offset),))
         except BotOwnershipError:
