@@ -102,7 +102,7 @@ test('a closed customer dialog cannot be filled by a late response', async () =>
   assert.equal(page.element('user-dialog').open, false);
 });
 
-test('only developer sees Flow binding recovery controls in the customer card', async () => {
+test('only developer sees account-based Flow diagnostics in the customer card', async () => {
   for (const [roleName, expected] of [['owner', true],['administrator', false]]) {
     const page=adminPage();
     page.element('user-dialog').open=true;
@@ -112,7 +112,7 @@ test('only developer sees Flow binding recovery controls in the customer card', 
       subscriptions:[],orders:[],orders_total:0,orders_page:1,orders_page_size:20
     });
     await request;
-    assert.equal(page.element('user-details').innerHTML.includes('data-flow-binding-check'),expected);
+    assert.equal(page.element('user-details').innerHTML.includes('data-flow-account-check'),expected);
     assert.ok(!page.element('user-details').innerHTML.includes('client_hash'));
   }
 });
