@@ -130,6 +130,11 @@ def probe(root):
             or labels.get("com.docker.compose.service") != "shop"
             or sources != [str(item) for item in files]):
         raise Rejected("Контейнер запущен из другого Compose-проекта/набора файлов")
+    running_config_hash = labels.get("com.docker.compose.config-hash", "")
+    effective_hash = run(compose(root, files) + ["config", "--hash", "shop"]).split()[-1]
+    if (not re.fullmatch(r"[a-f0-9]{64}", running_config_hash)
+            or running_config_hash != effective_hash):
+        raise Rejected("Compose изменён с момента запуска контейнера; нужен ручной разбор")
     real_mounts = [m for m in container.get("Mounts", []) if m.get("Destination") == "/app/data"]
     if (len(real_mounts) != 1 or real_mounts[0].get("Type") != "volume"
             or real_mounts[0].get("Name") != VOLUME or real_mounts[0].get("RW") is not True):
