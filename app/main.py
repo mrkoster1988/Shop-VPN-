@@ -268,20 +268,24 @@ async def platform_catalog():
 async def protocol_catalog():
     return protocols.catalog()
 
-def html_page(name):
+def html_page(name, *, staff_cookie=False):
     html = (STATIC / name).read_text()
     for asset, fingerprint in ASSET_VERSIONS.items():
         marker = '__BASE_PATH__/static/' + asset + '"'
         html = html.replace(marker, marker[:-1] + '?v=' + fingerprint + '"')
-    return HTMLResponse(html.replace('__BASE_PATH__', c.BASE_PATH), headers={'Cache-Control': 'no-cache'})
+    headers = {'Cache-Control': 'no-cache'}
+    if name == 'admin.html':
+        html = html.replace('__STAFF_SESSION__', '1' if staff_cookie else '0')
+        headers = {'Cache-Control': 'private, no-store', 'Vary': 'Cookie'}
+    return HTMLResponse(html.replace('__BASE_PATH__', c.BASE_PATH), headers=headers)
 
 @app.get('/')
 async def index():
     return html_page('index.html')
 
 @app.get('/admin')
-async def admin_page():
-    return html_page('admin.html')
+async def admin_page(request: Request):
+    return html_page('admin.html', staff_cookie=bool(request.cookies.get('staff_session')))
 
 class StaffLogin(BaseModel):
     email: str = Field(min_length=5, max_length=254)
@@ -301,8 +305,9 @@ async def staff_bootstrap(data: StaffLogin, request: Request, response: Response
     result=staff.bootstrap(data.email,data.password,request.headers.get('authorization',''))
     return {**result,**staff.login(data.email,data.password,response)}
 @app.get('/api/admin/auth/me')
-async def staff_me(request: Request):
+async def staff_me(request: Request, response: Response):
     actor=staff.authorize(request)
+    response.headers['Cache-Control'] = 'private, no-store'
     return {'id':actor.get('id'),'email':actor['email'],'role':actor['role'],'role_label':staff.ROLE_LABELS[actor['role']], 'permissions':actor.get('permissions',[])}
 @app.post('/api/admin/auth/logout')
 async def staff_logout(request: Request, response: Response):
