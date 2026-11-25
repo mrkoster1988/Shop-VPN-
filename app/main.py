@@ -1375,6 +1375,14 @@ async def admin_flow_extend_plan(
     return flow_owner_extension.proposal(user_id, days)
 
 
+@app.get('/api/admin/users/{user_id}/wireguard/extend/pending')
+async def admin_flow_extend_pending(
+        user_id: int = APIPath(ge=1, le=9223372036854775807),
+        actor=Depends(admin)):
+    _developer_only(actor)
+    return flow_owner_extension.pending(user_id)
+
+
 @app.post('/api/admin/users/{user_id}/wireguard/extend')
 async def admin_flow_extend(
         data: flow_owner_extension.Extension,
