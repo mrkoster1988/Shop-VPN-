@@ -71,12 +71,13 @@ def test_existing_shop_telegram_user_no_free_grant_default_and_replay(client, mo
     assert first.json()=={'status':'disabled','subscription_url':None}
     assert first.headers['cache-control']=='no-store'
     assert _call(client,request).status_code==409
-    # No WG peer was ever issued; do not prematurely bind the first phone.\n    assert one('SELECT count(*) AS n FROM flow_bridge_devices')['n']==0
+    # Signing in never binds a phone, regardless of WG entitlement.
+    assert one('SELECT count(*) AS n FROM flow_bridge_devices')['n']==0
     assert one('SELECT count(*) AS n FROM flow_auto_grants')['n']==0
     assert one('SELECT count(*) AS n FROM flow_bridge_identities')['n']==1
 
 
-def test_issued_peer_is_returned_only_to_bound_phone(client,monkeypatch):
+def test_account_receives_same_entitlement_independent_of_phone(client,monkeypatch):
     _enabled(monkeypatch)
     # Simulate a previously purchased/provisioned WireGuard entitlement.
     from app import service
@@ -95,10 +96,12 @@ def test_issued_peer_is_returned_only_to_bound_phone(client,monkeypatch):
     assert len(res)==2
     assert 'PrivateKey' not in first.text and 'token' not in first.text
     assert _call(client,client_id=phone).json()==res
-    assert _call(client,client_id='pfc_'+'y'*43).status_code==409
+    assert _call(client,client_id='pfc_'+'y'*43).json()==res
+    assert client.post(PATH,json={'ticket':_ticket()}).json()==res
+    assert one('SELECT count(*) AS n FROM flow_bridge_devices')['n']==0
     assert _call(client,_ticket(TWO,98455677),client_id=phone).status_code==409
     assert _call(client,_ticket(ONE,98455678),client_id=phone).status_code==409
-    # The personal bearer endpoint itself returns only its device's feed.
+    # The personal bearer feed is account-owned, never device-scoped.
     token=res['subscription_url'].rsplit('/',1)[-1]
     feed=client.get('/flow/wireguard/'+token)
     assert feed.status_code==200 and feed.json()['schema']=='pushok-flow-subscription'
@@ -150,8 +153,8 @@ def test_failed_token_cannot_pollute_global_binds_and_no_login_cookie_needed(cli
     assert _call(client,expired).status_code==401
     assert one('SELECT count(*) AS n FROM flow_bridge_nonces')['n']==0
     assert one('SELECT count(*) AS n FROM flow_bridge_devices')['n']==0
+    # No device identifier is required. The authenticated proof remains mandatory.
     wrong=_ticket()
-    assert _call(client,wrong,client_id='pfc_'+'z'*42).status_code==422
-    ok=_call(client,wrong)
+    ok=client.post(PATH,json={'ticket':wrong})
     assert ok.status_code==200
     assert one('SELECT count(*) AS n FROM flow_bridge_nonces')['n']==1
