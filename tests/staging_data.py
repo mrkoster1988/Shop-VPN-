@@ -79,7 +79,7 @@ def snapshot(database=None, projected_columns=None):
                     json.dumps(projected_rows,sort_keys=True).encode()).hexdigest()
             # Новые пустые таблицы рекламы не меняют данные старой схемы; их наличие проверяется отдельно.
             if name in ('ads_policy','ads_requests','ads_events','ads_payment_entries','ads_sites','ads_placements','ads_placement_actions','ads_bookings','ads_booking_actions','ads_expenses','ads_expense_actions') and not rows:continue
-            if name not in ('sessions','tickets','shop_id_requests','shop_id_sessions'):
+            if name not in ('sessions','tickets','shop_id_requests','shop_id_sessions','mtproxy_web_requests'):
                 records[name]=sorted(json.dumps(row,ensure_ascii=True) for row in rows)
                 if name=='users':
                     columns=[item[1] for item in conn.execute('PRAGMA table_info(users)')]
