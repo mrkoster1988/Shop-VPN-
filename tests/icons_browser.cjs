@@ -84,7 +84,7 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
       assert.equal(await page.locator('#miniapp-account').getAttribute('aria-current'),'page');
       await page.locator('[data-close="account-dialog"]').click();
       await page.locator('[data-miniapp-route="help"]').click();assert.equal(new URL(page.url()).hash,'#help');
-      await page.locator('#miniapp-account').click();await page.locator('#logout').click();
+      await page.locator('#miniapp-account').click();await page.locator('[data-account-section="settings"]').click();await page.locator('#logout').click();
       await page.waitForFunction(()=>document.getElementById('account-label').textContent==='Личный кабинет ↗' && !document.getElementById('account-dialog').open);
       assert.equal(await page.locator('#account-btn .pushok-icon').count(),1,'Выход сохраняет значок');
      }
