@@ -1387,3 +1387,14 @@ test('owner can remove an active subscription in one action; delegated administr
     assert.equal(page.element('user-subscriptions').innerHTML.includes('data-subscription-remove="sid-1"'),name==='owner');
   }
 });
+
+test('customer removal is visible only to developer in the mobile account card',async()=>{
+  const response={user:{id:1,email:'fixture@example.invalid',created:1},subscriptions:[],
+    orders:[],orders_page:1,orders_page_size:20,orders_total:0};
+  for(const name of ['owner','administrator']){
+    const page=adminPage();page.element('user-dialog').open=true;
+    const pending=page.run("role='"+name+"';selectedUser=1;loadUser(1)");
+    page.reply(response);await pending;
+    assert.equal(page.element('user-details').innerHTML.includes('data-user-delete="1"'),name==='owner');
+  }
+});
