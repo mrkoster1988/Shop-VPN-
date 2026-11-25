@@ -14,8 +14,8 @@ async function customerPage(options={}) {
   if(options.anonymous)state.customer=null;
   function element(id) {
     if (!elements.has(id)) elements.set(id,{value:'',textContent:'',innerHTML:'',hidden:false,open:false,disabled:false,attrs:{},listeners:{},children:[],
-      reset(){},select(){this.selected=true;},showModal(){this.open=true;},close(){if(this.open){this.open=false;this.listeners.close?.();}},
-      addEventListener(name,handler){this.listeners[name]=handler;},replaceChildren(){this.innerHTML='';this.textContent='';this.children=[];},
+      reset(){},select(){this.selected=true;},showModal(){this.open=true;},close(){if(this.open){this.open=false;for(const handler of this.listeners.close || [])handler();}},
+      addEventListener(name,handler){(this.listeners[name] ||= []).push(handler);},replaceChildren(){this.innerHTML='';this.textContent='';this.children=[];},
       removeAttribute(name){delete this.attrs[name];delete this[name];},setAttribute(name,value){this.attrs[name]=value;},append(...items){this.children.push(...items);},
       querySelector(){return element(id+'-input');},scrollIntoView(){this.scrolled=true;}});
     return elements.get(id);
