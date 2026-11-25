@@ -451,6 +451,7 @@ async function refreshDelegated({plans=true}={}){
 }
 
 let selectedUser = null, profilePage = 1, profileRequest = 0;
+let flowExtensionAttempts = new Map();
 let serverCache = [], editingServer = null;
 let serverWizardStep = 3, serverDialogEpoch = 0, serverSubmitting = false;
 let credentialsServer = null, credentialsEpoch = 0, credentialsSubmitting = false;
@@ -1404,34 +1405,43 @@ $('user-subscriptions').onclick = async event => {
   if(extend && role==='owner' && selectedUser!==null) {
     const uid=selectedUser, epoch=authEpoch, sid=extend.dataset.wgExtend;
     if(!sid)return;
-    const daysInput=prompt('Продлить WireGuard на сколько дней? (1–365)', '30');
-    if(daysInput===null)return;
-    const days=Number(daysInput);
-    if(!Number.isInteger(days)||days<1||days>365){
-      $('user-error').textContent='Укажите целое количество дней от 1 до 365.';
-      return;
-    }
-    const reason=prompt('Причина продления (будет сохранена в журнале)', 'Ручное продление разработчиком');
-    if(reason===null)return;
-    if(reason.trim().length<5 || reason.length>240){
-      $('user-error').textContent='Причина должна содержать от 5 до 240 символов.';
-      return;
-    }
+    const key=uid+':'+sid;
+    let request=flowExtensionAttempts.get(key);
     extend.disabled=true;
     try {
-      const plan=await api('users/'+encodeURIComponent(uid)+'/wireguard/extend/plan?days='+days);
-      if(uid!==selectedUser || epoch!==authEpoch || !$('user-dialog').open)return;
-      if(plan.subscription_id!==sid)throw new Error('Подписка изменилась. Обновите карточку.');
-      if(!confirm('Продлить доступ аккаунта до '+dateTime(plan.target_expires)+
-        '? Shop должен подтвердить новый срок на прежнем WGDashboard.'))return;
-      const operationId=crypto.randomUUID();
-      const result=await api('users/'+encodeURIComponent(uid)+'/wireguard/extend',{
-        method:'POST',data:{
-          request_id:operationId,subscription_id:sid,
+      if(request) {
+        if(!confirm('Предыдущее продление могло быть принято WGDashboard. '
+          +'Повторить ТОТ ЖЕ запрос без начисления дополнительных дней?'))return;
+      } else {
+        const daysInput=prompt('Продлить WireGuard на сколько дней? (1–365)', '30');
+        if(daysInput===null)return;
+        const days=Number(daysInput);
+        if(!Number.isInteger(days)||days<1||days>365){
+          $('user-error').textContent='Укажите целое количество дней от 1 до 365.';
+          return;
+        }
+        const reason=prompt('Причина продления (сохраняется в журнале)', 'Ручное продление разработчиком');
+        if(reason===null)return;
+        if(reason.trim().length<5 || reason.length>240){
+          $('user-error').textContent='Причина должна содержать от 5 до 240 символов.';
+          return;
+        }
+        const plan=await api('users/'+encodeURIComponent(uid)+'/wireguard/extend/plan?days='+days);
+        if(uid!==selectedUser || epoch!==authEpoch || !$('user-dialog').open)return;
+        if(plan.subscription_id!==sid)throw new Error('Подписка изменилась. Обновите карточку.');
+        if(!confirm('Продлить доступ аккаунта до '+dateTime(plan.target_expires)+
+          '? Shop должен подтвердить новый срок на прежнем WGDashboard.'))return;
+        request={
+          request_id:crypto.randomUUID(),subscription_id:sid,
           before_expires:plan.before_expires,target_expires:plan.target_expires,
           days:plan.days,reason:reason.trim(),confirm:'EXTEND_ACCOUNT_WIREGUARD'
-        }
+        };
+        flowExtensionAttempts.set(key,request);
+      }
+      const result=await api('users/'+encodeURIComponent(uid)+'/wireguard/extend',{
+        method:'POST',data:request
       });
+      flowExtensionAttempts.delete(key);
       if(uid===selectedUser && epoch===authEpoch && $('user-dialog').open){
         await loadUser(profilePage);
         $('user-error').textContent='Срок WireGuard продлён до '+dateTime(result.expires_at)+'.';
@@ -1439,7 +1449,7 @@ $('user-subscriptions').onclick = async event => {
     }catch(error){
       if(uid===selectedUser && epoch===authEpoch){
         $('user-error').textContent=error.message+
-          ' При сбое ответа проверьте журнал продлений, прежде чем создавать новую заявку.';
+          ' При повторе кнопки будет использован тот же идентификатор, чтобы не начислить дни дважды.';
       }
     }finally{extend.disabled=false}
     return;
