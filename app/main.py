@@ -258,6 +258,17 @@ async def health():
     one('SELECT 1 AS ok')
     return {'status': 'ok'}
 
+
+@app.get('/api/version')
+async def public_version():
+    """Check the *deployed* Shop build, never infer runtime from GitHub Releases."""
+    return JSONResponse(
+        {'version': diagnostics.VERSION, 'flow_binding': 'account'},
+        headers={'Cache-Control':'no-store', 'Pragma':'no-cache',
+                 'X-Robots-Tag':'noindex, nofollow'},
+    )
+
+
 @app.get('/api/platforms')
 async def platform_catalog():
     """Read-only code/config inventory, not live platform verification."""
