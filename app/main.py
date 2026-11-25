@@ -1392,6 +1392,13 @@ async def admin_subscription_revoke(sid: str = APIPath(min_length=1,max_length=1
     return await admin_cleanup.revoke_subscription(sid)
 
 
+@app.post('/api/admin/subscriptions/{sid}/remove')
+async def admin_subscription_remove(sid: str = APIPath(min_length=1,max_length=100),
+                                    actor=Depends(admin)):
+    _developer_only(actor)
+    return await admin_cleanup.remove_subscription(sid)
+
+
 @app.delete('/api/admin/subscriptions/{sid}')
 async def admin_subscription_delete(sid: str = APIPath(min_length=1,max_length=100),
                                     actor=Depends(admin)):
