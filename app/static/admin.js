@@ -1335,7 +1335,7 @@ async function loadUser(page) {
     profilePage = data.orders_page;
     const user = data.user;
     $('user-title').textContent = 'Пользователь № ' + user.id;
-    $('user-details').innerHTML = `<p>Email: ${esc(user.email || '—')}</p><p>Telegram ID: ${esc(user.telegram_id ?? '—')}</p><p>Регистрация: ${esc(dateTime(user.created))}</p>` + (role==='owner' ? '<div class="record-actions"><button type="button" class="secondary" data-flow-account-check="1">Проверить аккаунт Flow</button></div><div class="record-note" id="flow-binding-status" role="status" aria-live="polite"></div>' : '');
+    $('user-details').innerHTML = `<p>Email: ${esc(user.email || '—')}</p><p>Telegram ID: ${esc(user.telegram_id ?? '—')}</p><p>Регистрация: ${esc(dateTime(user.created))}</p>` + (role==='owner' ? '<div class="record-actions"><button type="button" class="secondary" data-flow-account-check="1">Проверить аккаунт Flow</button><button type="button" class="danger-action" data-user-delete="1">Удалить пользователя</button></div><div class="record-note" id="user-delete-status" role="status" aria-live="polite"></div><div class="record-note" id="flow-binding-status" role="status" aria-live="polite"></div>' : '');
     $('user-subscriptions').innerHTML = data.subscriptions.length ? data.subscriptions.map(sub => {
       const status = sub.access_active ? 'Активна' : sub.state === 'pending' ? 'Готовится'
         : sub.state === 'revoked' ? 'Доступ отозван' : 'Неактивна';
@@ -1344,6 +1344,7 @@ async function loadUser(page) {
           ${sub.protocol==='wg' ? '<button type="button" class="secondary" data-peer-check="'+esc(sub.id)+'">Проверить пир</button>' : ''}
           ${sub.protocol==='wg' && ['active','expired'].includes(sub.state) ? '<button type="button" class="secondary" data-wg-extend="'+esc(sub.id)+'">Продлить WireGuard</button>' : ''}
           ${sub.state!=='revoked' ? '<button type="button" class="danger-action" data-subscription-revoke="'+esc(sub.id)+'">Отозвать доступ</button>' : ''}
+          ${sub.state!=='revoked' ? '<button type="button" class="danger-action" data-subscription-remove="'+esc(sub.id)+'">Удалить подписку</button>' : ''}
           ${sub.state==='revoked' && sub.can_delete ? '<button type="button" class="danger-action" data-subscription-delete="'+esc(sub.id)+'">Удалить запись</button>' : ''}
           </div>
           ${sub.protocol==='wg' ? '<div class="record-note" role="status" aria-live="polite" data-peer-status="'+esc(sub.id)+'"></div>' : ''}
@@ -1367,6 +1368,42 @@ async function loadUser(page) {
 // Account identity is checked from the signed MTProxy proof, not a phone.
 // This read-only admin view deliberately exposes no device hashes or keys.
 $('user-details').onclick = async event => {
+  const remove=event.target.closest('[data-user-delete]');
+  if(remove && role==='owner' && selectedUser!==null) {
+    const uid=selectedUser,epoch=authEpoch;
+    const status=$('user-delete-status');
+    const current=()=>uid===selectedUser && epoch===authEpoch && $('user-dialog').open;
+    remove.disabled=true;
+    if(status)status.textContent='Проверяем связанные записи…';
+    try {
+      const plan=await api('users/'+encodeURIComponent(uid)+'/delete/preview');
+      if(!current())return;
+      if(plan.user_id!==uid)throw new Error('Карточка пользователя изменилась.');
+      if(!plan.can_delete){
+        if(status)status.textContent='Удаление недоступно: '+plan.blockers.map(item=>item.label+' ('+item.count+')').join(', ')+'. История сохранена.';
+        return;
+      }
+      if(status)status.textContent='Связанных бизнес-записей нет. Сессии и ссылки входа будут отозваны.';
+      if(!confirm('Удалить пользователя № '+uid+' из Shop? Это удалит учётную запись и все её сессии. Другие проекты Pushok не изменятся.'))return;
+      if(prompt('Для удаления введите УДАЛИТЬ','')!=='УДАЛИТЬ')return;
+      const result=await api('users/'+encodeURIComponent(uid)+'/delete',{
+        method:'POST',data:{revision:plan.revision,confirm:'DELETE_UNUSED_CUSTOMER'}
+      });
+      if(!current())return;
+      if(result.status!=='deleted'||result.user_id!==uid)throw new Error('Удаление не подтверждено.');
+      $('user-dialog').close();
+      usersPage=1;
+      try {
+        await refreshUsers();
+        if(epoch===authEpoch)$('users-state').textContent='Пользователь № '+uid+' удалён из Shop.';
+      }catch(error){
+        if(epoch===authEpoch)$('users-state').textContent='Пользователь № '+uid+' удалён. Не удалось обновить список.';
+      }
+    } catch(error) {
+      if(current() && status)status.textContent=error.message;
+    } finally {remove.disabled=false;}
+    return;
+  }
   const check=event.target.closest('[data-flow-account-check]');
   if (!check || role!=='owner' || selectedUser===null) return;
   const panel=$('flow-binding-status');
@@ -1522,23 +1559,25 @@ $('user-subscriptions').onclick = async event => {
   }
   const revoke=event.target.closest('[data-subscription-revoke]');
   const erase=event.target.closest('[data-subscription-delete]');
-  const button=revoke || erase;
+  const remove=event.target.closest('[data-subscription-remove]');
+  const button=revoke || erase || remove;
   if(!button || role!=='owner' || selectedUser===null)return;
-  const sid=revoke?revoke.dataset.subscriptionRevoke:erase.dataset.subscriptionDelete;
+  const sid=revoke?revoke.dataset.subscriptionRevoke:erase?erase.dataset.subscriptionDelete:remove.dataset.subscriptionRemove;
   if(typeof sid!=='string' || !sid)return;
   const question=revoke
     ? 'Отозвать подключение пользователя на сервере? История оплат сохранится.'
+    : remove ? 'Удалить подписку? Shop сначала отключит доступ на сервере. Если запись связана с историей, она останется отозванной.'
     : 'Удалить запись подписки после подтверждённого отзыва пиров?';
   if(!confirm(question))return;
-  if(erase && prompt('Для удаления записи введите УДАЛИТЬ','')!=='УДАЛИТЬ')return;
+  if((erase || remove) && prompt('Для удаления записи введите УДАЛИТЬ','')!=='УДАЛИТЬ')return;
   button.disabled=true;
   const uid=selectedUser, epoch=authEpoch;
   try{
-    await api('subscriptions/'+encodeURIComponent(sid)+(revoke?'/revoke':''),
-      {method:revoke?'POST':'DELETE'});
+    const result=await api('subscriptions/'+encodeURIComponent(sid)+(revoke?'/revoke':remove?'/remove':''),
+      {method:revoke||remove?'POST':'DELETE'});
     if(uid===selectedUser && epoch===authEpoch){
       await loadUser(profilePage);
-      $('user-error').textContent=revoke?'Подключение отозвано.':'Запись подписки удалена.';
+      $('user-error').textContent=revoke?'Подключение отозвано.':result.status==='revoked_retained'?'Доступ отозван, запись сохранена в истории. '+(result.reason||''):'Запись подписки удалена.';
     }
   }catch(error){
     if(uid===selectedUser && epoch===authEpoch)$('user-error').textContent=error.message;
