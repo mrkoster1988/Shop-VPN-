@@ -1123,6 +1123,40 @@ async function refresh({plans = role==='owner' || canGroup('catalog')} = {}) {
   if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates(),refreshRolePolicies(),refreshModeration(),refreshRuntime('appearance'),refreshRuntime('sales'),refreshRuntime('notifications'),refreshPaymentPolicy(),refreshShopFinance(),refreshRouting(),refreshIdPolicy()]);}
   renderManagementNav();
 }
+// Never store a staff password or session token in browser storage.
+async function showStaffSession(identity, epoch) {
+  if(epoch!==authEpoch)return;
+  acceptStaffRole(identity);
+  token='';
+  $('key').value=''; $('staff-password').value='';
+  $('admin-login').hidden=true; $('dashboard').hidden=false;
+  $('error').textContent='';
+  try { await refresh(); }
+  catch(error) { if(epoch===authEpoch)$('error').textContent='Не удалось загрузить разделы. Нажмите «Обновить»: '+error.message; }
+}
+async function restoreStaffSession() {
+  const epoch=++authEpoch;
+  $('admin-login').hidden=true;
+  try {
+    const response=await fetch(basePath+'/api/admin/auth/me',{
+      credentials:'same-origin',cache:'no-store'
+    });
+    if(epoch!==authEpoch)return;
+    if(response.status===401) {
+      $('admin-login').hidden=false;
+      return;
+    }
+    if(!response.ok)throw new Error('Проверка сессии временно недоступна');
+    const identity=await response.json();
+    if(epoch!==authEpoch)return;
+    await showStaffSession(identity,epoch);
+  } catch(error) {
+    if(epoch!==authEpoch)return;
+    role='';token='';staffActorId=null;delegatedPermissions.clear();
+    $('dashboard').hidden=true;$('admin-login').hidden=false;
+    $('error').textContent=error.message;
+  }
+}
 $('admin-login').onsubmit = async event => {
   event.preventDefault(); const button=event.target.querySelector('button'); button.disabled=true; authEpoch++;
   const credentials={email:$('staff-email').value,password:$('staff-password').value};
@@ -1134,8 +1168,7 @@ $('admin-login').onsubmit = async event => {
       result=await response.json();
     }
     if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'Не удалось войти');
-    acceptStaffRole(result);token='';await refresh();
-    $('key').value='';$('staff-password').value='';$('admin-login').hidden=true;$('dashboard').hidden=false;$('error').textContent='';
+    await showStaffSession(result,authEpoch);
   } catch(error){authEpoch++;token='';$('error').textContent=error.message}
   finally{button.disabled=false}
 };
@@ -2149,3 +2182,8 @@ $('ads-expense-list').onsubmit=event=>{
   const form=event.target.closest('[data-ads-expense]');if(!form)return;event.preventDefault();const fields=new FormData(form);
   return saveAdsExpense('ads/expenses/'+encodeURIComponent(form.dataset.adsExpense)+'/void',{version:Number(form.dataset.version),note:String(fields.get('note') || '').trim()},form.querySelector('button'));
 };
+
+// The server renders only a presence hint, never a cookie value or trusted role.
+if(document.querySelector('meta[name="shop-staff-session"]')?.content==='1') {
+  void restoreStaffSession();
+}
