@@ -1213,7 +1213,10 @@ def test_rendered_assets_use_content_fingerprints(client,page,script):
     import re
     response=client.get(page)
     assert response.status_code==200
-    assert response.headers['cache-control']=='no-cache'
+    assert response.headers['cache-control']==('private, no-store' if page=='/admin' else 'no-cache')
+    if page=='/admin':
+        assert response.headers['vary']=='Cookie'
+        assert 'name="shop-staff-session" content="0"' in response.text
     for asset in ('style.css',script):
         match=re.search(r'["\']/static/'+re.escape(asset)+r'\?v=([a-f0-9]{16})["\']',response.text)
         assert match,asset
