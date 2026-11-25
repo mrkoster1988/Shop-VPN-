@@ -48,20 +48,25 @@ def test_polling_routes_callback_and_saves_offset_after_expired_ack(client,monke
     async def send(tg_id,text,**kwargs):sent.append((tg_id,text))
     monkeypatch.setattr(service,'send',send)
     class Response:
+        status_code=200
+        def __init__(self,result=None):self.result=result
         def raise_for_status(self):pass
-        def json(self):return {'ok':True,'result':[{'update_id':10,'callback_query':query()}]}
+        def json(self):return {'ok':True,'result':self.result if self.result is not None else [{'update_id':10,'callback_query':query()}]}
     class API:
         def __init__(self,**kwargs):pass
         async def __aenter__(self):return self
         async def __aexit__(self,*args):pass
         async def post(self,url,*,json):
             requests.append((url.rsplit('/',1)[-1],json))
+            if url.endswith('/getMe'):return Response({'id':123,'username':'shop_fixture_bot'})
+            if url.endswith('/getWebhookInfo'):return Response({'url':''})
             if url.endswith('/answerCallbackQuery'):raise RuntimeError('Query expired')
             if len([r for r in requests if r[0]=='getUpdates'])>1:raise asyncio.CancelledError()
             return Response()
     monkeypatch.setattr(service.httpx,'AsyncClient',API)
     with pytest.raises(asyncio.CancelledError):asyncio.run(service.bot_loop())
-    assert 'callback_query' in requests[0][1]['allowed_updates']
+    assert [name for name,_ in requests[:3]]==['getMe','getWebhookInfo','getUpdates']
+    assert 'callback_query' in requests[2][1]['allowed_updates']
     assert any(name=='answerCallbackQuery' for name,_ in requests)
     assert len(sent)==1 and sent[0][0]==123
     assert one("SELECT value FROM meta WHERE key='bot_offset'")['value']=='11'
@@ -73,3 +78,31 @@ def test_empty_terms(client,monkeypatch):
     execute("UPDATE store_settings SET terms_text=''")
     asyncio.run(service.send_shop_info(123,'terms'))
     assert sent==['Условия продажи ещё не заполнены владельцем магазина.']
+
+@pytest.mark.parametrize('name,hook,conflict,expected',[
+    ('pushok_app','',False,['getMe']),
+    ('MTPROXY_PUSHOK_BOT','',False,['getMe']),
+    ('shop_fixture_bot','https://other.example.test/webhook',False,['getMe','getWebhookInfo']),
+    ('shop_fixture_bot','',True,['getMe','getWebhookInfo','getUpdates']),
+])
+def test_polling_stops_before_consuming_foreign_updates(client,monkeypatch,name,hook,conflict,expected):
+    requests=[]
+    monkeypatch.setattr(c,'BOT_TOKEN','synthetic-token')
+    class Response:
+        def __init__(self,status,data):self.status_code=status;self.data=data
+        def raise_for_status(self):
+            if self.status_code!=200:raise AssertionError('Unexpected HTTP error handling')
+        def json(self):return self.data
+    class API:
+        def __init__(self,**kwargs):pass
+        async def __aenter__(self):return self
+        async def __aexit__(self,*args):pass
+        async def post(self,url,*,json):
+            method=url.rsplit('/',1)[-1];requests.append(method)
+            if method=='getMe':return Response(200,{'ok':True,'result':{'username':name}})
+            if method=='getWebhookInfo':return Response(200,{'ok':True,'result':{'url':hook}})
+            if method=='getUpdates' and conflict:return Response(409,{'ok':False,'error_code':409})
+            raise AssertionError('Unexpected API method')
+    monkeypatch.setattr(service.httpx,'AsyncClient',API)
+    asyncio.run(service.bot_loop())
+    assert requests==expected

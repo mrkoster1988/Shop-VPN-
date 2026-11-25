@@ -430,16 +430,46 @@ async def answer_info_callback(query):
         await send_shop_info(tg_id, action.split(':')[1])
 
 
+class BotOwnershipError(RuntimeError):
+    """Permanent operator-action error, without Telegram credentials."""
+
+
+async def verify_shop_bot(client):
+    api = 'https://api.telegram.org/bot' + c.BOT_TOKEN + '/'
+    response = await client.post(api+'getMe', json={})
+    response.raise_for_status()
+    data = response.json()
+    me = data.get('result') if isinstance(data, dict) and data.get('ok') is True else None
+    if not isinstance(me, dict) or not isinstance(me.get('username'), str) or not me['username'].strip():
+        raise BotOwnershipError('Telegram bot identity not verified')
+    if me['username'].strip().lstrip('@').casefold() in {'pushok_app', 'mtproxy_pushok_bot'}:
+        raise BotOwnershipError('Reserved central Pushok bot')
+    response = await client.post(api+'getWebhookInfo', json={})
+    response.raise_for_status()
+    data = response.json()
+    hook = data.get('result') if isinstance(data, dict) and data.get('ok') is True else None
+    if not isinstance(hook, dict) or not isinstance(hook.get('url'), str) or hook['url']:
+        raise BotOwnershipError('Telegram webhook belongs to another consumer')
+
+
 async def bot_loop():
     saved = one("SELECT value FROM meta WHERE key='bot_offset'")
     offset = int(saved['value']) if saved else 0
+    verified = False
     while True:
         try:
             async with httpx.AsyncClient(timeout=40) as client:
+                if not verified:
+                    await verify_shop_bot(client)
+                    verified = True
                 r = await client.post('https://api.telegram.org/bot' + c.BOT_TOKEN + '/getUpdates',
                                       json={'offset': offset, 'timeout': 25, 'allowed_updates': ['message', 'pre_checkout_query', 'callback_query']})
+                if r.status_code == 409:
+                    raise BotOwnershipError('Telegram polling conflict')
                 r.raise_for_status()
                 data = r.json()
+                if isinstance(data, dict) and data.get('error_code') == 409:
+                    raise BotOwnershipError('Telegram polling conflict')
                 if not data.get('ok'):
                     raise RuntimeError('Telegram polling failed')
                 # Answer time-sensitive pre-checkout updates before sending ordinary replies.
@@ -473,6 +503,9 @@ async def bot_loop():
                             await send(tg_id, 'Команды: /buy — купить VPN, /account — личный кабинет, /support — поддержка')
                     offset = update['update_id'] + 1
                     execute("INSERT OR REPLACE INTO meta VALUES ('bot_offset',?)", (str(offset),))
+        except BotOwnershipError:
+            log.error('Shop Telegram polling stopped: reserved bot, webhook or competing consumer. Check configuration; restart after correction.')
+            return
         except Exception as exc:
             log.warning('Bot polling error=%s', type(exc).__name__)
             await asyncio.sleep(5)
