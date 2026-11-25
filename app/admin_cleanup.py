@@ -61,84 +61,93 @@ def _remote_identity(sub, *, server_profile):
 
 async def revoke_subscription(sid: str):
     async with service.lock:
-        with db() as conn:
-            conn.execute('BEGIN IMMEDIATE')
-            found = conn.execute('SELECT * FROM subscriptions WHERE id=?', (sid,)).fetchone()
-            if not found:
-                raise HTTPException(404, 'Подписка не найдена')
-            sub = dict(found)
-            if conn.execute("SELECT 1 FROM flow_owner_extensions WHERE subscription_id=? AND status='pending'",
-                            (sid,)).fetchone():
-                raise HTTPException(409, 'Есть незавершённое продление WireGuard. Сначала выполните сверку.')
-            if _blocked_orders(conn, sub['user_id'], sub['protocol']):
-                raise HTTPException(409, 'Есть незавершённый заказ этого протокола. '
-                                    'Сначала завершите оплату или разберите заказ.')
-            if _unfinished_rotation(conn, sid):
-                raise HTTPException(409, 'Идёт смена ключей. Дождитесь завершения или отмены.')
-            devices = [dict(row) for row in conn.execute(
-                'SELECT * FROM devices WHERE subscription_id=? ORDER BY id', (sid,),
-            )]
-            confirmed = conn.execute(
-                'SELECT 1 FROM admin_subscription_revocations WHERE subscription_id=?',
-                (sid,),
-            ).fetchone()
-            if confirmed and sub['state'] == 'revoked' and all(
-                    row['state'] == 'revoked' for row in devices):
-                return {'ok': True, 'status': 'revoked'}
+        return await revoke_locked(sid)
 
-        profile = None
-        if sub['server_id']:
-            try:
-                _, profile = servers.for_subscription(sub, revoking=True)
-            except Exception:
-                raise HTTPException(409, 'Нельзя найти прежнюю привязку сервера. '
-                                    'Запись сохранена до проверки узла.') from None
+
+async def revoke_locked(sid, request_id=None):
+    with db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        found = conn.execute('SELECT * FROM subscriptions WHERE id=?', (sid,)).fetchone()
+        if not found:
+            raise HTTPException(404, 'Подписка не найдена')
+        sub = dict(found)
+        if conn.execute("SELECT 1 FROM flow_owner_extensions WHERE subscription_id=? AND status='pending'",
+                        (sid,)).fetchone():
+            raise HTTPException(409, 'Есть незавершённое продление WireGuard. Сначала выполните сверку.')
+        if _blocked_orders(conn, sub['user_id'], sub['protocol']):
+            raise HTTPException(409, 'Есть незавершённый заказ этого протокола. '
+                                'Сначала завершите оплату или разберите заказ.')
+        if _unfinished_rotation(conn, sid):
+            raise HTTPException(409, 'Идёт смена ключей. Дождитесь завершения или отмены.')
+        devices = [dict(row) for row in conn.execute(
+            'SELECT * FROM devices WHERE subscription_id=? ORDER BY id', (sid,),
+        )]
+        confirmed = conn.execute(
+            'SELECT 1 FROM admin_subscription_revocations WHERE subscription_id=?',
+            (sid,),
+        ).fetchone()
+        if confirmed and sub['state'] == 'revoked' and all(
+                row['state'] == 'revoked' for row in devices):
+            if request_id:
+                conn.execute('UPDATE vpn_access_changes SET applied=? WHERE request_id=?', (int(time.time()), request_id))
+            return {'ok': True, 'status': 'revoked'}
+
+    profile = None
+    if sub['server_id']:
         try:
-            if profile is None:
-                _remote_identity(sub, server_profile={})
-                if any(d.get('secret') or d.get('credential_id') or
-                       d['state'] == 'active' for d in devices):
-                    raise HTTPException(409, 'Не найден сервер для дополнительных пиров. '
-                                        'Сначала восстановите привязку.')
-            else:
-                if _remote_identity(sub, server_profile=profile):
-                    await providers.disable({**sub, 'id': service.primary_identity(sub)})
-                for device in devices:
-                    if device['state'] == 'revoked':
-                        continue
-                    remote = {**sub, 'id': service.device_identity(device),
-                              'secret': device.get('secret'), 'credential_id': device.get('credential_id'),
-                              'state': device['state']}
-                    if _remote_identity(remote, server_profile=profile):
-                        await providers.disable({**sub, 'id': service.device_identity(device)})
-        except HTTPException:
-            raise
+            _, profile = servers.for_subscription(sub, revoking=True)
         except Exception:
-            raise HTTPException(502, 'Панель не подтвердила отзыв подключения. '
-                                'Запись сохранена для безопасного повтора.') from None
+            raise HTTPException(409, 'Нельзя найти прежнюю привязку сервера. '
+                                'Запись сохранена до проверки узла.') from None
+    try:
+        if profile is None:
+            _remote_identity(sub, server_profile={})
+            if any(d.get('secret') or d.get('credential_id') or
+                   d['state'] == 'active' for d in devices):
+                raise HTTPException(409, 'Не найден сервер для дополнительных пиров. '
+                                    'Сначала восстановите привязку.')
+        else:
+            if _remote_identity(sub, server_profile=profile):
+                await providers.disable({**sub, 'id': service.primary_identity(sub)})
+            for device in devices:
+                if device['state'] == 'revoked':
+                    continue
+                remote = {**sub, 'id': service.device_identity(device),
+                          'secret': device.get('secret'), 'credential_id': device.get('credential_id'),
+                          'state': device['state']}
+                if _remote_identity(remote, server_profile=profile):
+                    await providers.disable({**sub, 'id': service.device_identity(device)})
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(502, 'Панель не подтвердила отзыв подключения. '
+                            'Запись сохранена для безопасного повтора.') from None
 
-        now = int(time.time())
-        with db() as conn:
-            conn.execute('BEGIN IMMEDIATE')
-            if _blocked_orders(conn, sub['user_id'], sub['protocol']):
-                raise HTTPException(409, 'Во время удаления появился незавершённый заказ.')
-            conn.execute("UPDATE subscriptions SET state='revoked',expires=MIN(expires,?),"
-                         "secret=NULL,primary_key_state='revoked',free_auto_renew=0,"
-                         "free_max_renewals=0 WHERE id=?", (now, sid))
-            conn.execute("UPDATE devices SET state='revoked',expires=0,secret=NULL,"
-                         "next_attempt=0,error=NULL WHERE subscription_id=?", (sid,))
-            conn.execute("UPDATE flow_auto_grants SET state='superseded' "
-                         "WHERE subscription_id=?", (sid,))
-            conn.execute('DELETE FROM flow_wireguard_links WHERE subscription_id=?', (sid,))
-            conn.execute('DELETE FROM flow_wireguard_device_links WHERE device_id IN '
-                         '(SELECT id FROM devices WHERE subscription_id=?)', (sid,))
-            conn.execute('UPDATE subscription_links SET enabled=0,token_hash=NULL,'
-                         'token_secret=NULL WHERE subscription_id=?', (sid,))
-            conn.execute("""INSERT OR REPLACE INTO admin_subscription_revocations(
-                subscription_id,user_id,protocol,server_id,revoked_at)
-                VALUES (?,?,?,?,?)""",
-                (sid, sub['user_id'], sub['protocol'], sub['server_id'], now))
-        return {'ok': True, 'status': 'revoked'}
+    now = int(time.time())
+    with db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        if _blocked_orders(conn, sub['user_id'], sub['protocol']):
+            raise HTTPException(409, 'Во время удаления появился незавершённый заказ.')
+        conn.execute("UPDATE subscriptions SET state='revoked',expires=MIN(expires,?),"
+                     "secret=NULL,primary_key_state='revoked',free_auto_renew=0,"
+                     "free_max_renewals=0 WHERE id=?", (now, sid))
+        conn.execute("UPDATE devices SET state='revoked',expires=0,secret=NULL,"
+                     "next_attempt=0,error=NULL WHERE subscription_id=?", (sid,))
+        conn.execute("UPDATE flow_auto_grants SET state='superseded' "
+                     "WHERE subscription_id=?", (sid,))
+        conn.execute('DELETE FROM flow_wireguard_links WHERE subscription_id=?', (sid,))
+        conn.execute('DELETE FROM flow_wireguard_device_links WHERE device_id IN '
+                     '(SELECT id FROM devices WHERE subscription_id=?)', (sid,))
+        conn.execute('UPDATE subscription_links SET enabled=0,token_hash=NULL,'
+                     'token_secret=NULL WHERE subscription_id=?', (sid,))
+        conn.execute("""INSERT OR REPLACE INTO admin_subscription_revocations(
+            subscription_id,user_id,protocol,server_id,revoked_at)
+            VALUES (?,?,?,?,?)""",
+            (sid, sub['user_id'], sub['protocol'], sub['server_id'], now))
+        if request_id:
+            conn.execute('UPDATE vpn_access_changes SET applied=? WHERE request_id=?',(now,request_id))
+    return {'ok': True, 'status': 'revoked'}
+
 
 
 def purge_blocker(conn, sub):

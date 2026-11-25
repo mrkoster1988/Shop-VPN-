@@ -161,7 +161,7 @@ async def fulfill(order_id):
             encrypted = c.encrypt(secret)
             device_secrets = []
             for device in all_rows("SELECT * FROM devices WHERE subscription_id=? AND state='active'",(sub['id'],)):
-                value = await providers.provision({**sub,'id':device_identity(device),'expires':target,'free_traffic_gb':quota})
+                value = await providers.provision({**sub,'wg_device_name':device.get('name'),'id':device_identity(device),'expires':target,'free_traffic_gb':quota})
                 device_secrets.append((c.encrypt(value),target,device['id']))
             with db() as conn:
                 conn.executemany("UPDATE devices SET secret=?,expires=?,error=NULL WHERE id=?",device_secrets)
@@ -234,7 +234,7 @@ async def process_rotations_locked():
             if job['state']=='revoking':
                 await providers.disable({**sub,'id':old_identity})
                 execute("UPDATE device_rotations SET state='issuing',error=NULL WHERE id=?",(job['id'],))
-            value=await providers.provision({**sub,'id':new_identity})
+            value=await providers.provision({**sub,'wg_device_name':device.get('name'),'id':new_identity})
             secret=c.encrypt(value)
             with db() as conn:
                 conn.execute("UPDATE devices SET state='active',credential_id=?,secret=?,expires=?,error=NULL WHERE id=?",
@@ -259,7 +259,7 @@ async def process_devices():
             if device['state']=='pending' and (sub['state']!='active' or sub['expires']<=time.time()):
                 execute("UPDATE devices SET state='revoking',next_attempt=0 WHERE id=?",(device['id'],))
                 device['state']='revoking'
-            remote = {**sub,'id':device_identity(device)}
+            remote = {**sub,'wg_device_name':device.get('name'),'id':device_identity(device)}
             try:
                 if device['state']=='revoking':
                     await providers.disable(remote)
@@ -347,7 +347,7 @@ async def tick():
         for sub in all_rows("SELECT * FROM subscriptions WHERE state='active' AND expires<=?", (now,)):
             try:
                 for device in all_rows("SELECT * FROM devices WHERE subscription_id=? AND state='active'",(sub['id'],)):
-                    await providers.disable({**sub,'id':device_identity(device),'expires':device['expires']})
+                    await providers.disable({**sub,'wg_device_name':device.get('name'),'id':device_identity(device),'expires':device['expires']})
                 await providers.disable({**sub,'id':primary_identity(sub)})
                 execute("UPDATE subscriptions SET state='expired' WHERE id=?", (sub['id'],))
             except Exception as exc:

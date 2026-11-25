@@ -38,11 +38,15 @@ async def invoice(order):
     async with httpx.AsyncClient(timeout=10,trust_env=False,follow_redirects=False) as client:
         result = await client.post('https://pushok.shop/api/v1/shop/vpn-stars/invoice',content=raw,
             headers={'Content-Type':'application/json','X-Pushok-Management':stamp+':'+signature})
+        if result.status_code in (409, 502, 503):
+            detail = result.json().get('detail')
+            if detail in ('cabinet_stars_disabled','telegram_bot_token_not_configured','invoice_unavailable'):
+                raise HTTPException(result.status_code,detail)
         result.raise_for_status()
         link = result.json().get('url')
-    if not isinstance(link,str) or not re.fullmatch(r'https://t\.me/\$[A-Za-z0-9_-]{1,256}',link):
+    if not isinstance(link,str) or not re.fullmatch(r'https://t\.me/(?:\$|invoice/)[A-Za-z0-9_-]{1,256}',link):
         raise ValueError('Invalid invoice link')
-    return link
+    return link.replace('https://t.me/invoice/', 'https://t.me/$')
 
 
 class Event(BaseModel):
@@ -61,16 +65,16 @@ async def callback(operation: Literal['precheckout','settle','refund'], event: E
     raw = await request.body()
     authorize(operation.encode()+b':'+raw,request.headers.get('X-Pushok-Management',''),DOMAIN)
     oid = event.invoice_payload[len(PREFIX):]
+    proof = {'invoice_payload':oid,'currency':event.currency,'total_amount':event.total_amount,
+             'telegram_payment_charge_id':event.telegram_payment_charge_id}
+    if operation=='precheckout':
+        if not event.query_id or not one('SELECT 1 FROM cabinet_vpn_invoices WHERE order_id=?',(oid,)):
+            return {'ok':False}
+        return {'ok':service.reserve_checkout({**proof,'id':event.query_id,'from':{'id':event.telegram_user_id}})}
     async with service.lock:
         order = one('SELECT o.* FROM orders o JOIN cabinet_vpn_invoices i ON i.order_id=o.id WHERE o.id=?',(oid,))
-        proof = {'invoice_payload':oid,'currency':event.currency,'total_amount':event.total_amount,
-                 'telegram_payment_charge_id':event.telegram_payment_charge_id}
         if not service.stars_match(order,event.telegram_user_id,proof):
-            if operation=='precheckout':return {'ok':False}
             raise HTTPException(409,'payment_mismatch')
-        if operation=='precheckout':
-            if not event.query_id:return {'ok':False}
-            return {'ok':service.reserve_checkout({**proof,'id':event.query_id,'from':{'id':event.telegram_user_id}})}
         if not event.telegram_payment_charge_id:
             raise HTTPException(422,'missing_charge')
         if operation=='settle':

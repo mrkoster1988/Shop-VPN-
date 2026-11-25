@@ -2,7 +2,7 @@
 import json
 import os
 import httpx
-from . import config as c, servers, panel, wgdashboard, protocols, sui
+from . import wg_activity, config as c, servers, panel, wgdashboard, protocols, sui
 
 
 def _require_vpn_protocol(protocol):
@@ -61,7 +61,7 @@ async def provision(sub):
             private_key = wgdashboard.stored_private_key(row['id'], sub['id'])
         async with httpx.AsyncClient(timeout=25, follow_redirects=False, trust_env=False) as client:
             adapter = wgdashboard.WGDashboard(profile)
-            await adapter.ensure_peer(client, private_key, 'pushok_' + sub['id'])
+            await adapter.ensure_peer(client, private_key, wg_activity.display(sub.get('user_id'),sub['id'],sub.get('wg_device_name')))
             if profile.get('schedule_expiry'):
                 await adapter.ensure_expiration(
                     client, private_key, sub['expires'], row['id'], sub['id'])

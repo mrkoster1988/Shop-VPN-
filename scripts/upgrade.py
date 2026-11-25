@@ -20,7 +20,7 @@ from urllib.parse import urlsplit
 
 spec=importlib.util.spec_from_file_location('shop_installer',Path(__file__).with_name('install.py'))
 i=importlib.util.module_from_spec(spec);spec.loader.exec_module(i)
-VERSION='v2.009'
+VERSION='v2.010'
 HOST_UPDATER_PROTOCOL=1
 SUPPORTED={'v0.021','v0.022','v0.023','v0.024','v0.025','v0.026','v0.027','v0.028','v0.029','v0.030','v0.031','v0.032','v0.033','v0.034','v0.035','v0.036','v0.037','v0.038','v0.039','v0.040','v0.041','v0.042','v0.043','v0.044','v0.045','v0.046','v0.047','v0.048','v0.049','v0.050','v0.051','v0.052','v0.053','v0.054','v0.055','v0.056','v0.057','v0.058','v0.059','v0.060','v0.061','v0.062','v0.063','v0.064','v0.065','v0.066','v0.067','v0.068','v2.000','v2.001','v2.002','v2.003','v2.004','v2.005','v2.006','v2.007'}
 IGNORE=shutil.ignore_patterns('.git','.env','.env.*','data','wg-data','.venv','__pycache__','.pytest_cache','backups','upgrades','*.pvb','*.db','*.db-wal','*.db-shm','*.zip')

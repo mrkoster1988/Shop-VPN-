@@ -19,6 +19,7 @@ def test_paid_vpn_bridge_issues_reserves_settles_and_refunds_once(client,monkeyp
     link='https://t.me/$fixture-vpn'
     issued=[]
     class InvoiceClient:
+        status_code=200
         def __init__(self, **kw): assert kw['trust_env'] is False and not kw['follow_redirects']
         async def __aenter__(self):return self
         async def __aexit__(self,*args):pass
@@ -28,7 +29,7 @@ def test_paid_vpn_bridge_issues_reserves_settles_and_refunds_once(client,monkeyp
             assert sig==hmac.digest(bytes.fromhex(key),shared.DOMAIN+stamp.encode()+b':invoice:'+content,'sha256').hex()
             issued.append(json.loads(content));return self
         def raise_for_status(self):pass
-        def json(self):return {'url':link}
+        def json(self):return {'url':link.replace('https://t.me/$','https://t.me/invoice/')}
     monkeypatch.setattr(shared.httpx,'AsyncClient',InvoiceClient)
     plan=client.get('/api/catalog').json()['plans'][0]
     purchase={'plan':plan['id'],'protocol':'wg','accept_terms':True}

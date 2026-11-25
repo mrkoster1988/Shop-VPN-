@@ -61,6 +61,8 @@ async def lifespan(app):
     service.reset_health()
     tasks = []
     if os.getenv('BACKGROUND_TASKS', 'true') == 'true' and os.getenv('MAINTENANCE_MODE')!='true':
+        from . import flow_presence
+        tasks.append(asyncio.create_task(flow_presence.worker()))
         tasks.append(asyncio.create_task(service.worker()))
         tasks.append(asyncio.create_task(updates.worker()))
         tasks.append(asyncio.create_task(server_routing.worker()))
@@ -805,7 +807,7 @@ async def purchase(data: Purchase, user=Depends(current_user)):
     return await purchase_for_user(data,user)
 
 
-async def purchase_for_user(data, user, *, order_id=None):
+async def purchase_for_user(data, user, *, order_id=None, cabinet_checkout=False):
     if not providers.available(data.protocol, user['id']):
         raise HTTPException(503, 'Этот способ подключения ещё не настроен')
     async with service.lock:
@@ -814,7 +816,7 @@ async def purchase_for_user(data, user, *, order_id=None):
         # payment provider is not configured.
         is_free = bool(selected and selected['is_free'])
         method = 'free' if is_free else payment_policy.method_for(user)
-        shared_bot = method == 'stars' and not c.BOT_TOKEN and cabinet_stars.available(user, data.protocol)
+        shared_bot = method == 'stars' and (cabinet_checkout or not c.BOT_TOKEN) and cabinet_stars.available(user, data.protocol)
         if method == 'stars' and (not (c.BOT_TOKEN or shared_bot) or not shop_settings.terms_configured()):
             raise HTTPException(503, 'Владелец ещё не настроил оплату и условия продажи в Telegram')
         if method == 'stars' and not data.accept_terms:
@@ -832,6 +834,8 @@ async def purchase_for_user(data, user, *, order_id=None):
                 else:
                     url = await providers.stars_invoice(order)
                 execute('UPDATE orders SET payment_url=? WHERE id=?', (url, order['id']))
+            except HTTPException:
+                raise
             except Exception as exc:
                 logging.warning('Stars invoice order=%s error=%s', order['id'], type(exc).__name__)
                 raise HTTPException(502, 'Не удалось создать счёт Telegram. Повторите запрос.')

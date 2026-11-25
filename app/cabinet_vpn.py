@@ -21,7 +21,7 @@ class Command(BaseModel):
     model_config = {'extra': 'forbid'}
     actor: UUID
     subject: UUID
-    action: Literal['extend', 'shorten', 'limit', 'retry']
+    action: Literal['extend', 'shorten', 'limit', 'retry', 'revoke', 'restore']
     subscription_id: str = Field(min_length=1, max_length=100)
     request_id: UUID
     before: int = Field(ge=0, strict=True)
@@ -70,6 +70,14 @@ async def manage(cmd: Command, request: Request):
                     raise HTTPException(409, 'vpn_changed')
                 conn.execute('INSERT INTO cabinet_vpn_limits VALUES (?,?,?,?,?,?,?)',
                              (rid, fingerprint, str(cmd.actor), sub['id'], cmd.before, cmd.value, int(time.time())))
+    elif cmd.action in ('revoke','restore'):
+        from . import vpn_lifecycle
+        try:
+            await vpn_lifecycle.change(cmd)
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(503,"vpn_change_unconfirmed") from None
     elif cmd.action == 'retry':
         if sub['state'] != 'pending':
             raise HTTPException(409, 'vpn_changed')
@@ -102,3 +110,15 @@ async def manage(cmd: Command, request: Request):
     async with flow_presence._lock:
         flow_presence._until = 0
     return {'ok': True}
+
+
+@router.post('/vpn-settings/{action}',include_in_schema=False)
+async def settings(action: Literal['read','access'],request:Request):
+    from . import flow_auto_provision as access
+    from pydantic import ValidationError
+    body=await request.body()
+    authorize(action.encode()+b':'+body,request.headers.get('X-Pushok-Management',''),b'pushok-vpn-settings-v1:')
+    try:
+        result=access.policy() if action=='read' else await access.update_policy(access.PolicyUpdate.model_validate_json(body))
+    except ValidationError: raise HTTPException(422) from None
+    return {k:result[k] for k in ('enabled','days','max_users','version','used','remaining')}

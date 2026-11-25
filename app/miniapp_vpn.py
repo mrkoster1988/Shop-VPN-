@@ -65,7 +65,7 @@ def router_for(purchase_model, purchase, order_status):
         policy = payment_policy.catalog(user)
         enabled = (any(o['id']=='wg' and o['available'] for o in options) and policy['payment_available']
                    and (bool(config.BOT_TOKEN) or cabinet_stars.available(user,'wg')) and shop_settings.terms_configured())
-        return reply({'plans':items,'available':bool(enabled),'terms':shop_settings.terms(),
+        return reply({'plans':items,'available':bool(enabled),'issuer':'cabinet' if cabinet_stars.available(user,'wg') else 'shop','terms':shop_settings.terms(),
                       'policy_version':policy['payment_policy_version']})
 
     @router.post('/checkout')
@@ -75,7 +75,7 @@ def router_for(purchase_model, purchase, order_status):
         args = purchase_model(protocol='wg',plan=c.plan,plan_version=c.plan_version,quoted_amount=c.amount,
                               quote_currency='XTR',payment_policy_version=c.policy_version,accept_terms=True)
         oid = str(uuid5(NAMESPACE_URL,f'pushok:miniapp:wg:{user["id"]}:{c.request_id}'))
-        row = await purchase(args,user,order_id=oid)
+        row = await purchase(args,user,order_id=oid,cabinet_checkout=True)
         return reply({k:row[k] for k in ('id','status','payment_url','amount','currency')})
 
     @router.post('/status')
@@ -84,6 +84,6 @@ def router_for(purchase_model, purchase, order_status):
         row = await order_status(str(data.order_id),user)
         if row['protocol']!='wg' or row['method']!='stars':
             raise HTTPException(404)
-        return reply({k:row[k] for k in ('id','status','amount','currency')})
+        return reply({k:row[k] for k in ('id','status','amount','currency','payment_url')})
 
     return router

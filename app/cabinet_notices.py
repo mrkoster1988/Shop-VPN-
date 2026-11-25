@@ -105,12 +105,12 @@ def message(row, policy):
     return 'Pushok ИИ\n\n'+'\n'.join(lines)
 
 
-def claim(now):
+def claim(now, scheduled_by_cabinet=False):
     policy = runtime_settings.get('notifications')
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
         conn.execute('DELETE FROM cabinet_vpn_notices WHERE delivered IS NOT NULL AND delivered<?',(now-30*86400,))
-        if policy['expiry_enabled']:
+        if policy['expiry_enabled'] and not scheduled_by_cabinet:
             conn.execute("""INSERT OR IGNORE INTO cabinet_vpn_notices(user_id,subscription_id,kind,payload,expiry)
                 SELECT s.user_id,s.id,'reminder','{}',s.expires FROM subscriptions s
                 JOIN flow_bridge_identities b ON b.shop_user_id=s.user_id
@@ -124,14 +124,14 @@ def claim(now):
             JOIN users u ON u.id=b.shop_user_id AND u.telegram_id=b.telegram_id
             WHERE n.delivered IS NULL AND n.next_attempt<=?
             AND ((n.kind='reminder' AND ?) OR (n.kind!='reminder' AND ?))
-            ORDER BY n.id LIMIT 5""",(now,policy['expiry_enabled'],policy['order_ready_enabled'])).fetchall()
+            ORDER BY n.id LIMIT 5""",(now,policy['expiry_enabled'] and not scheduled_by_cabinet,policy['order_ready_enabled'])).fetchall()
         items = []
         for row in rows:
             lease = secrets.token_hex(16)
             conn.execute('UPDATE cabinet_vpn_notices SET lease=?,next_attempt=?,attempts=attempts+1 WHERE id=?',
                          (lease,now+90,row['id']))
             items.append({'id':row['id'],'lease':lease,'telegram_id':row['telegram_id'],
-                          'text':message(row,policy),'renew':row['kind']=='reminder' or row['kind']=='changed'
+                          'category':row['kind'],'text':message(row,policy),'renew':row['kind']=='reminder' or row['kind']=='changed'
                           and json.loads(row['payload'])['new']['state']=='expired'})
         return items
 
@@ -149,7 +149,7 @@ async def exchange(operation: Literal['claim','finish'], request: Request):
     authorize(operation.encode()+b':'+raw,request.headers.get('X-Pushok-Management',''),DOMAIN)
     now = int(time.time())
     if operation == 'claim':
-        return {'items':claim(now)}
+        return {'items':claim(now,json.loads(raw or b'{}').get('scheduled_by_cabinet') is True)}
     from pydantic import ValidationError
     try: receipt = Receipt.model_validate_json(raw)
     except ValidationError: raise HTTPException(422,'Invalid receipt') from None

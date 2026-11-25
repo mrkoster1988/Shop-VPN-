@@ -549,6 +549,9 @@ def init_db():
 
         from . import cabinet_notices
         cabinet_notices.install(conn)
+        from . import wg_activity,vpn_lifecycle
+        wg_activity.install(conn)
+        vpn_lifecycle.install(conn)
 
 
 def reserve_deleted_user_id(conn, user_id):

@@ -211,7 +211,7 @@ async def extend(user_id, command: Extension, staff_id=None):
         device_secrets = []
         for device in devices:
             value = await providers.provision({
-                **sub, 'id': service.device_identity(device),
+                **sub, 'wg_device_name':device.get('name'),'id': service.device_identity(device),
                 'expires': command.target_expires, 'require_existing_wg_key': True})
             if (not isinstance(value, str) or len(value) > 65536 or
                     not value.lstrip().startswith('[Interface]') or '[Peer]' not in value):

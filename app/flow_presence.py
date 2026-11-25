@@ -75,54 +75,105 @@ def metrics(peer, sampled_at):
             'sent': byte_count('total_receive', 'cumu_receive')}
 
 
-async def snapshot():
+async def snapshot(maintenance=False):
+    from . import wg_activity
     global _cached, _until
     async with _lock:
-        if _cached is not None and time.monotonic() < _until:
-            return _cached
-        subscriptions = all_rows("""SELECT s.id,s.server_id,s.user_id,s.protocol,s.credential_id,s.wg_configuration,
-            s.expires,s.state,s.device_limit,s.primary_key_state,b.mtproxy_uuid,
-            x.request_id,x.days,x.before_expires,x.target_expires FROM subscriptions s
+        if not maintenance and _cached is not None and time.monotonic()<_until:return _cached
+        now=int(time.time())
+        subscriptions=all_rows("""SELECT s.*,u.telegram_id,b.mtproxy_uuid,x.request_id,x.days,x.before_expires,x.target_expires
+            FROM subscriptions s JOIN users u ON u.id=s.user_id LEFT JOIN flow_bridge_identities b ON b.shop_user_id=u.id
             LEFT JOIN flow_owner_extensions x ON x.subscription_id=s.id AND x.status='pending'
-                AND x.reason LIKE 'Кабинет MTProxy · %'
-            JOIN flow_bridge_identities b ON b.shop_user_id=s.user_id WHERE s.protocol='wg'""")
-        now = int(time.time())
-        accounts, nodes = {}, {}
+            AND x.reason LIKE 'Кабинет MTProxy · %' WHERE s.protocol='wg'""")
+        devices={}
+        for device in all_rows("SELECT d.* FROM devices d JOIN subscriptions s ON s.id=d.subscription_id WHERE s.protocol='wg' AND d.state!='revoked'"):
+            devices.setdefault(device['subscription_id'],[]).append(device)
+        changes={r['subscription_id']:r for r in all_rows('SELECT * FROM vpn_access_changes WHERE applied IS NULL')}
+        revoked={r['subscription_id']:r['revoked_at'] for r in all_rows('SELECT subscription_id,revoked_at FROM admin_subscription_revocations')}
+        rows={}; accounts={}; nodes={}; unlinked={}; samples=[]; renames=[]
         for sub in subscriptions:
-            subject = sub['mtproxy_uuid']
-            state = sub['state']
-            if state == 'active' and int(sub['expires'] or 0) <= now:
-                state = 'expired'
-            accounts[subject] = {'state': state, 'expires_at': sub['expires'] or None,
-                'subscription_id': sub['id'], 'device_limit': sub['device_limit'],
-                'online': None, 'last_seen': None, 'received': None, 'sent': None}
+            sid=sub['id']
+            state='expired' if sub['state']=='active' and sub['expires']<=now else sub['state']
+            row={'state':state,'expires_at':sub['expires'] or None,'subscription_id':sid,'device_limit':sub['device_limit'],
+                 'online':None,'last_seen':None,'received':None,'sent':None,'activity_known':False,
+                 'legacy_reminder':bool(sub['reminder']),'expected':0,'observed':0,'has_recent':False}
+            rows[sid]=row
+            if sub['mtproxy_uuid']:accounts[sub['mtproxy_uuid']]=row
+            elif sub['telegram_id']:unlinked[str(sub['telegram_id'])]=row
             if sub['request_id']:
-                accounts[subject]['pending_change'] = {'request_id': sub['request_id'], 'value': sub['days'],
-                    'before': sub['before_expires'],
-                    'action': 'shorten' if sub['target_expires'] < sub['before_expires'] else 'extend'}
-            if state != 'active' or sub['primary_key_state'] != 'active':
-                continue
-            try:
-                node, profile = servers.for_subscription(sub)
-                key = wgdashboard.stored_private_key(node['id'], service.primary_identity(sub), create=False)
-                public_key = wgdashboard.WGDashboard.identity(key)
-            except Exception:
-                continue
-            nodes.setdefault((node['id'], profile.get('configuration')), (profile, {}))[1][public_key] = accounts[subject]
-        async def observe(client, profile, owners):
-            try:
-                peers = await wgdashboard.WGDashboard(profile).peer_rows(client)
-                for field, rows in peers:
-                    if field == 'configurationPeers':
-                        for peer in rows:
-                            if peer['id'] in owners:
-                                row = owners[peer['id']]
-                                row.update(metrics(peer, now))
-                                row.update(peer_addresses(peer))
-            except (httpx.HTTPError, ValueError, wgdashboard.PanelError):
-                return
-        async with httpx.AsyncClient(timeout=4, follow_redirects=False, trust_env=False) as client:
-            await asyncio.gather(*(observe(client, profile, owners) for profile, owners in nodes.values()))
-        _cached = {'sampled_at': now, 'accounts': accounts}
-        _until = time.monotonic() + 20
-        return _cached
+                row['pending_change']={'request_id':sub['request_id'],'value':sub['days'],'before':sub['before_expires'],
+                     'action':'shorten' if sub['target_expires']<sub['before_expires'] else 'extend'}
+            if sid in changes:
+                operation=changes[sid]
+                row['pending_change']={k:operation[k] for k in ('request_id','action')}
+                row['pending_change'].update(value=operation['days'],before=operation['before_expiry'])
+            if state=='revoked':row['revoked_at']=revoked.get(sid)
+            if state!='active':continue
+            for device in [None,*devices.get(sid,[])]:
+                if device is None and sub['primary_key_state']=='revoked':continue
+                row['expected']+=1
+                if (device['state'] if device else sub['primary_key_state'])!='active':continue
+                try:
+                    node,profile=servers.for_subscription(sub)
+                    ident=service.device_identity(device) if device else service.primary_identity(sub)
+                    key=wgdashboard.WGDashboard.identity(wgdashboard.stored_private_key(node['id'],ident,create=False))
+                except Exception:continue
+                nodes.setdefault((node['id'],profile.get('configuration')),(profile,{}))[1][key]=(sub,device,ident)
+        async def observe(client,profile,owners):
+            panel=wgdashboard.WGDashboard(profile)
+            try:groups=await panel.peer_rows(client)
+            except (httpx.HTTPError,ValueError,wgdashboard.PanelError):return
+            for field,peers in groups:
+                if field!='configurationPeers':continue
+                for peer in peers:
+                    entry=owners.get(peer['id'])
+                    if not entry:continue
+                    sub,device,ident=entry
+                    row=rows[sub['id']]
+                    data=metrics(peer,now);samples.append((sub['id'],peer['id'],data))
+                    if data['last_seen'] is not None or peer.get('latest_handshake')=='No Handshake':
+                        row['observed']+=1
+                    row['has_recent']|=data['online'] is True
+                    if device is None:row.update(peer_addresses(peer))
+                    if maintenance:
+                        name=wg_activity.display(sub['user_id'],ident,device['name'] if device else None)
+                        old=peer.get('name','')
+                        if old!=name and (not old or old.startswith(('pushok_','Pushok · '))):
+                            renames.append((panel,peer['id'],old,name))
+        async with httpx.AsyncClient(timeout=5,follow_redirects=False,trust_env=False) as client:
+            if maintenance:
+                try:await wg_activity.refresh_names(client)
+                except (httpx.HTTPError,ValueError,KeyError):pass
+            await asyncio.gather(*(observe(client,p,owners) for p,owners in nodes.values()))
+            totals=wg_activity.record(samples,now)
+            for sid,row in rows.items():
+                total=totals.get(sid,{})
+                seen=total.get('seen') or None
+                expected=row.pop('expected')
+                complete=row.pop('observed')==expected and expected>0
+                row.update(received=total.get('received'),sent=total.get('sent'),last_seen=seen,
+                    periods=total.get('periods'),activity_seen=seen,activity_known=complete,
+                    ever_used=bool(seen or total.get('received') or total.get('sent')))
+                recent=row.pop('has_recent')
+                row['online']=True if recent else False if complete else None
+        result={'sampled_at':now,'activity_schema':1,'accounts':accounts,
+                'unlinked_telegram_ids':[int(tg) for tg in unlinked], 'unlinked_activity':unlinked}
+        _cached=result
+        _until=time.monotonic()+20
+    if renames:
+        async with httpx.AsyncClient(timeout=5,follow_redirects=False,trust_env=False) as client:
+            for panel,key,old,name in renames:
+                try:
+                    async with service.lock:
+                        await panel.rename_managed(client,key,old,name)
+                except (wgdashboard.PanelError,httpx.HTTPError,ValueError,TypeError):
+                    continue
+    return result
+
+
+async def worker():
+    import logging
+    while True:
+        try:await snapshot(maintenance=True)
+        except Exception as exc:logging.getLogger(__name__).warning('WG observations: %s',type(exc).__name__)
+        await asyncio.sleep(300)
