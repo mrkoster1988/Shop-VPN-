@@ -13,3 +13,14 @@ def test_deployed_version_only_exposes_public_constant(client):
     assert 'token' not in response.text.lower()
     assert 'client_id' not in response.text.lower()
     assert 'telegram_id' not in response.text.lower()
+
+
+def test_v064_upgrade_scripts_accept_previous_release():
+    """No version split between installed API, installer and two upgrade modes."""
+    from scripts import install, upgrade
+    from app import diagnostics
+    from pathlib import Path
+    assert diagnostics.VERSION == install.VERSION == upgrade.VERSION == 'v0.064'
+    assert 'v0.063' in upgrade.SUPPORTED
+    edge = Path(__file__).resolve().parents[1] / 'scripts' / 'upgrade_mtproxy_edge.py'
+    assert 'default="v0.064"' in edge.read_text(encoding='utf-8')
