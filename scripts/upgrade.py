@@ -20,9 +20,9 @@ from urllib.parse import urlsplit
 
 spec=importlib.util.spec_from_file_location('shop_installer',Path(__file__).with_name('install.py'))
 i=importlib.util.module_from_spec(spec);spec.loader.exec_module(i)
-VERSION='v2.002'
+VERSION='v2.003'
 HOST_UPDATER_PROTOCOL=1
-SUPPORTED={'v0.021','v0.022','v0.023','v0.024','v0.025','v0.026','v0.027','v0.028','v0.029','v0.030','v0.031','v0.032','v0.033','v0.034','v0.035','v0.036','v0.037','v0.038','v0.039','v0.040','v0.041','v0.042','v0.043','v0.044','v0.045','v0.046','v0.047','v0.048','v0.049','v0.050','v0.051','v0.052','v0.053','v0.054','v0.055','v0.056','v0.057','v0.058','v0.059','v0.060','v0.061','v0.062','v0.063','v0.064','v0.065','v0.066','v0.067','v0.068','v2.000','v2.001'}
+SUPPORTED={'v0.021','v0.022','v0.023','v0.024','v0.025','v0.026','v0.027','v0.028','v0.029','v0.030','v0.031','v0.032','v0.033','v0.034','v0.035','v0.036','v0.037','v0.038','v0.039','v0.040','v0.041','v0.042','v0.043','v0.044','v0.045','v0.046','v0.047','v0.048','v0.049','v0.050','v0.051','v0.052','v0.053','v0.054','v0.055','v0.056','v0.057','v0.058','v0.059','v0.060','v0.061','v0.062','v0.063','v0.064','v0.065','v0.066','v0.067','v0.068','v2.000','v2.001','v2.002'}
 IGNORE=shutil.ignore_patterns('.git','.env','.env.*','data','wg-data','.venv','__pycache__','.pytest_cache','backups','upgrades','*.pvb','*.db','*.db-wal','*.db-shm','*.zip')
 CHECK_KEY="""import os,sys
 from scripts.backup import environment
@@ -135,7 +135,7 @@ def load(root):
     settings=json.loads(private_file(root/'installer.json'))
     if not isinstance(settings,dict):raise ValueError('Некорректные метаданные установки')
     if (root/'upgrades').is_symlink():raise ValueError('Симлинки в истории обновлений недопустимы')
-    if settings.get('version') not in SUPPORTED or settings['version']>=VERSION:raise ValueError('Поддерживаются исходные версии v0.021–v0.068 и v2.000–v2.001 → '+VERSION)
+    if settings.get('version') not in SUPPORTED or settings['version']>=VERSION:raise ValueError('Поддерживаются исходные версии v0.021–v0.068 и v2.000–v2.002 → '+VERSION)
     if not re.fullmatch(r'pushok-[a-f0-9]{10}',settings.get('project','')):raise ValueError('Неизвестный проект Compose')
     i.public_url(settings['url'])
     if not isinstance(settings.get('port'),int) or not 1024<=settings['port']<=65535:raise ValueError('Некорректный порт установки')
@@ -387,7 +387,7 @@ def activate(root,s):
 
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(description='Обновление v0.021–v0.068 и v2.000–v2.001 → '+VERSION+' в новый volume, с резервной копией и отдельной активацией')
+    parser=argparse.ArgumentParser(description='Обновление v0.021–v0.068 и v2.000–v2.002 → '+VERSION+' в новый volume, с резервной копией и отдельной активацией')
     parser.add_argument('command',choices=['plan','prepare','status','activate','rollback'])
     parser.add_argument('--dir',default='/opt/pushok-vpn');parser.add_argument('--source',type=Path,default=Path(__file__).resolve().parents[1]);parser.add_argument('--password-file')
     parser.add_argument('--expected-fingerprint', help='Контроль плана службы под общей блокировкой установки')

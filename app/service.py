@@ -507,7 +507,8 @@ async def bot_loop():
                             lines = []
                             for sub in rows:
                                 end = datetime.fromtimestamp(sub['expires'], timezone.utc).strftime('%d.%m.%Y %H:%M UTC') if sub['expires'] else 'срок ещё не назначен'
-                                lines.append(f"{sub['protocol'].upper()} · {end}")
+                                name = 'Pushok Flow' if sub['protocol'] == 'wg' else sub['protocol'].upper()
+                                lines.append(f"{name} · {end}")
                             await send(tg_id, '\n'.join(lines) or 'У вас пока нет подписок.', reply_markup={'inline_keyboard': [
                                 [{'text':'Моя подписка и продление', 'url':ticket(user['id'])}],
                                 [{'text':'Управление для владельца', 'web_app':{'url':c.PUBLIC_URL.rstrip('/')+'/admin?section=users'}}],

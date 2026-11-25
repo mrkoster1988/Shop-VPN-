@@ -68,6 +68,12 @@ test('WireGuard Linux instructions use a conf file and platform can change',asyn
   assert.ok(p.element('connection-steps').innerHTML.includes('.conf'));
   assert.ok(p.element('connection-steps').innerHTML.includes('администратору'));
   assert.ok(!p.element('connection-steps').innerHTML.includes('буфера обмена'));
+  for (const platform of ['android','ios','windows','macos','linux']) {
+    p.element('config-platform').value=platform;
+    p.element('config-platform').onchange();
+    assert.doesNotMatch(p.element('connection-steps').innerHTML+' '+p.element('config-help').textContent, /wireguard|wgdashboard/i);
+  }
+  assert.equal(p.run("protocolName('wg')"), 'Pushok Flow');
 });
 
 test('closing the connection clears secrets and ignores a late response',async()=>{
@@ -792,7 +798,7 @@ test('WireGuard trial access offers a link for Flow with no VLESS rotation optio
   await p.run("openLink('sub-a')");
   assert.equal(p.element('flow-open').disabled,true);
   assert.equal(p.element('link-follow-settings').hidden,true);
-  assert.equal(p.element('link-title').textContent,'Ссылка WireGuard для Pushok Flow');
+  assert.equal(p.element('link-title').textContent,'Ссылка для Pushok Flow');
   p.respond('/shop/api/flow/wireguard/subscriptions/sub-a/link',
     {enabled:true,version:1,url:'https://wg.example/flow/wireguard/private-token'});
   await p.run("changeLink('enable')");
@@ -818,7 +824,7 @@ test('Flow device link uses only the selected WireGuard device and clears when r
   const path='/shop/api/flow/wireguard/devices/phone-a/link';
   p.respond(path,{enabled:false,version:0,url:null});
   await p.run("openLink('sub-a','phone-a')");
-  assert.equal(p.element('link-title').textContent,'Ссылка WireGuard для устройства');
+  assert.equal(p.element('link-title').textContent,'Ссылка для устройства');
   assert.equal(p.element('link-enable').disabled,false);
   const secret='https://shop.example/shop/flow/wireguard/device/private-token';
   p.respond(path,{enabled:true,version:1,url:secret});

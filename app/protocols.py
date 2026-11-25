@@ -76,7 +76,7 @@ def supported_drivers():
 
 def sales_options():
     """Только реализованные пути. Наличие свободного сервера проверяет вызывающий код."""
-    return [{'id': item.driver_id, 'name': item.name}
+    return [{'id': item.driver_id, 'name': 'Pushok Flow' if item.driver_id == 'wg' else item.name}
             for item in PROTOCOLS if item.driver_id is not None]
 
 

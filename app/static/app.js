@@ -103,7 +103,7 @@ function show(id) {
   syncTelegramBackButton();
 }
 function date(ts) { return new Date(ts*1000).toLocaleDateString('ru-RU'); }
-function protocolName(id) { return ({wg:'WireGuard',xui:'VLESS',vmess:'VMess',hysteria2:'Hysteria2',tuic:'TUIC v5'})[id] || id; }
+function protocolName(id) { return ({wg:'Pushok Flow',xui:'VLESS',vmess:'VMess',hysteria2:'Hysteria2',tuic:'TUIC v5'})[id] || id; }
 function profileAllowance(limit) { return limit===0 ? 'Только основной профиль' : 'Основной + до '+limit+' дополнительных профилей'; }
 function displayOrderStatus(order) { if(order.progress?.title)return order.progress.title; return order.method==='free'&&order.status==='paid'?'Бесплатный доступ готовится':order.kind==='referral'&&order.status==='paid'?'Добавляем бонусные дни':order.kind==='referral'&&order.status==='active'?'Бонусные дни добавлены':order.kind==='trial'&&order.status==='paid'?'Готовим пробный VPN':order.kind==='trial'&&order.status==='active'?'Пробный доступ выдан':statusLabel[order.status] || order.status; }
 function renderAppearance(){
@@ -516,14 +516,14 @@ function connectionInstructions() {
   const mobile = platform==='android' || platform==='ios';
   const wg = connection.protocol==='wg';
   const remoteSubscription = connection.remoteSubscription;
-  const install = wg ? 'Установите приложение WireGuard для выбранного устройства.' : 'Установите VPN-клиент с поддержкой '+protocolName(connection.protocol)+' для выбранного устройства.';
+  const install = wg ? (platform==='android' ? 'Установите Pushok Flow для Android.' : 'Выберите клиент для своей системы с поддержкой импорта этого профиля .conf.') : 'Установите VPN-клиент с поддержкой '+protocolName(connection.protocol)+' для выбранного устройства.';
   const source = platform==='ios' || platform==='macos' ? 'Ищите приложение в App Store или на официальном сайте его разработчика.' : platform==='android' ? 'Используйте магазин приложений или официальный сайт разработчика.' : 'Скачайте клиент с официального сайта его разработчика для вашей системы.';
-  const importing = wg ? (platform==='linux' ? 'Скачайте файл .conf. Импортируйте его в установленный клиент WireGuard; при ручной настройке обратитесь к администратору.' : 'Скачайте файл .conf. В WireGuard добавьте туннель и выберите импорт из файла.') : remoteSubscription ? 'Скопируйте HTTPS-ссылку. В VPN-клиенте выберите добавление подписки по URL или по ссылке; обновление подписки будет получать конфигурации с панели.' : 'Нажмите «Копировать настройки». В VPN-клиенте выберите добавление профиля или импорт из буфера обмена. Можно также скачать ссылку как .txt.';
+  const importing = wg ? (platform==='linux' ? 'Скачайте файл .conf. Импортируйте его в клиент. Если потребуется ручная настройка, обратитесь к администратору.' : platform==='android' ? 'В Pushok Flow откройте «Настройки → Серверы и подписки» и импортируйте скачанный файл .conf.' : 'Скачайте файл .conf. В клиенте добавьте подключение из файла.') : remoteSubscription ? 'Скопируйте HTTPS-ссылку. В VPN-клиенте выберите добавление подписки по URL или по ссылке; обновление подписки будет получать конфигурации с панели.' : 'Нажмите «Копировать настройки». В VPN-клиенте выберите добавление профиля или импорт из буфера обмена. Можно также скачать ссылку как .txt.';
   const alternative = mobile ? 'Если настройки открыты на другом экране, покажите QR-код и отсканируйте его внутри VPN-клиента.' : 'Для телефона можно открыть QR-код на этом компьютере и отсканировать его в VPN-клиенте телефона.';
   const titles = ['Установите приложение','Импортируйте настройки','Включите VPN'];
   const steps = [install+' '+source, importing+' '+alternative, 'Выберите импортированный профиль и включите подключение. Разрешите добавление VPN, если устройство запросит это. Затем откройте сайт в браузере и проверьте интернет.'];
   $('connection-steps').innerHTML = steps.map((text,i)=>`<li><h3>${titles[i]}</h3><p>${esc(text)}</p></li>`).join('');
-  $('config-help').textContent = wg ? 'Импортируйте именно файл .conf или сканируйте код внутри WireGuard. Не используйте этот профиль в VLESS-клиенте.' : connection.protocol==='tuic' ? 'Импортируйте ссылку tuic:// целиком в клиент с поддержкой TUIC v5. Нужен доступный UDP-порт. Проверьте ALPN h3, режим UDP и алгоритм из ссылки. Оставьте 0-RTT выключенным и не отключайте проверку сертификата TLS.' : connection.protocol==='hysteria2' ? 'Импортируйте ссылку hysteria2:// целиком в клиент с поддержкой Hysteria2. Для подключения нужен доступный UDP-порт. Не отключайте проверку сертификата TLS; при блокировке UDP выберите другой доступный протокол.' : connection.protocol==='vmess' ? 'Импортируйте ссылку vmess:// целиком в клиент с поддержкой VMess AEAD и выбранного TCP/WS + TLS. Включите автоматическую дату и время. Не отключайте проверку сертификата TLS.' : remoteSubscription ? 'Это ссылка подписки. Добавьте её в клиент как подписку по URL; QR-код также содержит ссылку. Поддержка подписок зависит от выбранного клиента.' : 'Клиент должен поддерживать параметры вашей VLESS-ссылки. Скопируйте ссылку целиком, без лишних пробелов. Обычная камера телефона может не распознать VPN-конфигурацию.';
+  $('config-help').textContent = wg ? 'Импортируйте файл .conf или отсканируйте QR-код в приложении для подключения.' : connection.protocol==='tuic' ? 'Импортируйте ссылку tuic:// целиком в клиент с поддержкой TUIC v5. Нужен доступный UDP-порт. Проверьте ALPN h3, режим UDP и алгоритм из ссылки. Оставьте 0-RTT выключенным и не отключайте проверку сертификата TLS.' : connection.protocol==='hysteria2' ? 'Импортируйте ссылку hysteria2:// целиком в клиент с поддержкой Hysteria2. Для подключения нужен доступный UDP-порт. Не отключайте проверку сертификата TLS; при блокировке UDP выберите другой доступный протокол.' : connection.protocol==='vmess' ? 'Импортируйте ссылку vmess:// целиком в клиент с поддержкой VMess AEAD и выбранного TCP/WS + TLS. Включите автоматическую дату и время. Не отключайте проверку сертификата TLS.' : remoteSubscription ? 'Это ссылка подписки. Добавьте её в клиент как подписку по URL; QR-код также содержит ссылку. Поддержка подписок зависит от выбранного клиента.' : 'Клиент должен поддерживать параметры вашей VLESS-ссылки. Скопируйте ссылку целиком, без лишних пробелов. Обычная камера телефона может не распознать VPN-конфигурацию.';
 }
 function connectionReady() {
   if (!connection || connection.expires*1000<=Date.now()) {
@@ -712,7 +712,7 @@ function renderFlowLink(state, parent) {
   $('flow-open').disabled=!flowLaunchUrl;
   $('flow-open-note').textContent=flowLaunchUrl
     ? 'Откроется страница передачи подписки. Подтвердите добавление в Pushok Flow.'
-    : linkIsWireGuard() ? 'Для WireGuard нужна версия Pushok Flow 0.57 или новее и HTTPS-ссылка.'
+    : linkIsWireGuard() ? 'Для импорта HTTPS-ссылки нужен Pushok Flow версии 0.57 или новее.'
       : 'Для VLESS нужна версия Pushok Flow 0.41 или новее и HTTPS-ссылка.';
 }
 function linkApiPath(sid) {
@@ -735,7 +735,7 @@ function renderLink(state) {
   if(linkDeviceId && !linkTargetReady(parent)){ $('link-dialog').close();clearLink();return; }
   linkState=state;$('link-value').value=state.url || '';$('link-follow').checked=!!state.follow_rotation;
   const wireguard=linkIsWireGuard();
-  $('link-title').textContent=linkDeviceId?'Ссылка WireGuard для устройства':wireguard?'Ссылка WireGuard для Pushok Flow':'Ссылка подписки VLESS';
+  $('link-title').textContent=linkDeviceId?'Ссылка для устройства':wireguard?'Ссылка для Pushok Flow':'Ссылка подписки VLESS';
   $('link-description').textContent='Личная ссылка отдаёт настройки только '+(linkDeviceId?'выбранного устройства':'основного профиля')+'. Любой, кто получил ссылку, сможет получить VPN-ключ — храните её приватно.';
   $('link-revoke-note').textContent=linkDeviceId?'Отключение ссылки не отзывает скачанный VPN-ключ. Для отзыва используйте управление устройством. Перевыпуск ключа отключит прежнюю ссылку.':'Отключение или замена ссылки не отзывает уже скачанный VPN-ключ. Для его отзыва используйте смену основного ключа. Частота обновления зависит от VPN-клиента.';
   $('link-follow-settings').hidden=wireguard;
