@@ -1474,7 +1474,8 @@ $('user-subscriptions').onclick = async event => {
         const extra=result.server_name?' Закреплённый узел: '+result.server_name+'.':'';
         const attempts=result.grant?.state==='pending'
           ? ' В очереди, попыток: '+result.grant.attempts+'.':'';
-        panel.textContent=state+extra+attempts;
+        const error=result.grant?.state==='pending' && result.grant.error ? ' Ошибка выдачи: '+result.grant.error+'.':'';
+        panel.textContent=state+extra+attempts+error;
         if(result.can_retry || result.can_restore){
           const action=document.createElement('button');
           action.type='button';

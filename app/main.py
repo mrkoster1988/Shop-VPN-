@@ -31,7 +31,7 @@ from . import shop_settings, runtime_settings, payment_policy, shop_finance, pla
 from . import config as c, providers, service, servers, server_routing, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
 from .db import init_db, db, one, execute, all_rows, insert_user
 from .security import current_user, admin, session, password_hash, password_valid, digest, telegram_user
-from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, flow_bridge_recovery, flow_owner_extension, pushok_identity, flow_wireguard_devices, admin_cleanup, admin_user_cleanup, wg_peer_diagnostics
+from . import staff, staff_permissions, mail, partner, commerce_analytics, updates, update_install, flow_wireguard, flow_auto_provision, flow_identity_bridge, flow_bridge_recovery, flow_owner_extension, pushok_identity, flow_wireguard_devices, admin_cleanup, admin_user_cleanup, wg_peer_diagnostics, mtproxy_web_login
 
 logging.basicConfig(level=logging.INFO)
 # Telegram credentials are embedded in its API URL: never log HTTP request URLs.
@@ -501,7 +501,7 @@ async def catalog(request: Request):
     return {'plans': plans, 'currency': 'XTR' if tg else 'RUB', 'protocols': options,
             'appearance':{k:v for k,v in appearance.items() if k not in ('version','updated')},
             'sale_notice':sale_notice,'pushok_id':pushok_identity.public_capabilities(),
-            'trial':trials.offer(customer), **payment, 'bot_username': c.BOT_USERNAME if c.BOT_TOKEN else None,
+            'mtproxy_login':mtproxy_web_login.enabled(), 'trial':trials.offer(customer), **payment, 'bot_username': c.BOT_USERNAME if c.BOT_TOKEN else None,
             'support': public_settings['support'],
             'receipts': not tg and payment['payment_mode'] in ('yookassa','sbp') and os.getenv('YOOKASSA_RECEIPTS') == 'true',
             'terms': public_settings['terms']}
@@ -738,6 +738,8 @@ async def pushok_id_cancel(request:Request):
 @app.post('/api/auth/pushok-id/revoke')
 async def pushok_id_revoke(request:Request,user=Depends(current_user)):
     return pushok_identity.revoke(request,user)
+
+app.include_router(mtproxy_web_login.router)
 
 @app.post('/api/auth/telegram')
 async def tg_login(data: TgAuth):

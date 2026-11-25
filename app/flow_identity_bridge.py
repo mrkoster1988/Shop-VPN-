@@ -57,17 +57,20 @@ def _decode(encoded):
     return raw
 
 
-def verify(ticket, *, now=None):
+def verify(ticket, *, now=None, browser_challenge=None):
     match = _TICKET.fullmatch(ticket) if isinstance(ticket, str) else None
     if not match:
         _invalid()
     key = os.getenv('FLOW_SHOP_BRIDGE_SECRET', '')
     if not _KEY.fullmatch(key):
-        raise HTTPException(503, 'Связь с Pushok ID ещё не настроена')
+        raise HTTPException(503, 'Связь с MTProxy ещё не настроена')
     payload = _decode(match.group(1))
     if len(payload) > 650:
         _invalid()
-    expected = hmac.new(bytes.fromhex(key), _DOMAIN+payload, hashlib.sha256).hexdigest()
+    key = bytes.fromhex(key)
+    if browser_challenge is not None:
+        key = hmac.digest(key, b'pushok-shop-web-login-v1\0' + browser_challenge.encode('ascii'), 'sha256')
+    expected = hmac.new(key, _DOMAIN+payload, hashlib.sha256).hexdigest()
     if not hmac.compare_digest(match.group(2), expected):
         _invalid()
     def unique(pairs):
@@ -106,40 +109,44 @@ def verify(ticket, *, now=None):
 
 
 def _bind(proof):
-    if not c.SECURE_COOKIE or not c.PUBLIC_URL.startswith('https://'):
-        raise HTTPException(503, 'Личный доступ требует HTTPS')
-    now=int(time.time())
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
-        conn.execute('DELETE FROM flow_bridge_nonces WHERE expires<=?', (now,))
-        # Bound the number of unexpired proofs even if another service leaks signed tokens.
-        if conn.execute('SELECT count(*) FROM flow_bridge_nonces').fetchone()[0] >= 50000:
-            raise HTTPException(503, 'Сервис временно перегружен')
-        if conn.execute('SELECT 1 FROM flow_bridge_nonces WHERE nonce_hash=?', (proof['nonce_hash'],)).fetchone():
-            raise HTTPException(409, {'code':'FLOW_PROOF_REPLAY'})
-        linked=conn.execute('SELECT * FROM flow_bridge_identities WHERE mtproxy_uuid=?',
-                            (proof['subject'],)).fetchone()
-        other=conn.execute('SELECT * FROM flow_bridge_identities WHERE telegram_id=?',
-                           (proof['telegram_id'],)).fetchone()
-        if ((linked is not None and linked['telegram_id'] != proof['telegram_id'])
-                or (other is not None and other['mtproxy_uuid'] != proof['subject'])):
-            raise HTTPException(409, {'code':'FLOW_IDENTITY_CONFLICT'})
-        row=conn.execute('SELECT id FROM users WHERE telegram_id=?', (proof['telegram_id'],)).fetchone()
-        if row is None:
-            uid = insert_user(conn, telegram_id=proof['telegram_id'], created=now)
-            row=conn.execute('SELECT id FROM users WHERE id=?', (uid,)).fetchone()
-        uid=row['id']
-        if linked is not None and linked['shop_user_id'] != uid:
-            raise HTTPException(409, {'code':'FLOW_IDENTITY_CONFLICT'})
-        if linked is None:
-            conn.execute('INSERT INTO flow_bridge_identities(mtproxy_uuid,telegram_id,shop_user_id,created) VALUES (?,?,?,?)',
-                         (proof['subject'], proof['telegram_id'],uid,now))
-        # Older deployments can contain flow_bridge_devices rows. Ignore
-        # them deliberately: they are legacy metadata, not access controls.
-        # Do not delete them during a login or change any WG peer.
-        conn.execute('INSERT INTO flow_bridge_nonces(nonce_hash,expires,created) VALUES (?,?,?)',
-                     (proof['nonce_hash'],proof['expires'],now))
-        return uid
+        return bind_identity_locked(conn, proof)
+
+
+def bind_identity_locked(conn, proof):
+    if not c.SECURE_COOKIE or not c.PUBLIC_URL.startswith('https://'):
+        raise HTTPException(503, 'Личный доступ требует HTTPS')
+    now = int(time.time())
+    conn.execute('DELETE FROM flow_bridge_nonces WHERE expires<=?', (now,))
+    # Bound the number of unexpired proofs even if another service leaks signed tokens.
+    if conn.execute('SELECT count(*) FROM flow_bridge_nonces').fetchone()[0] >= 50000:
+        raise HTTPException(503, 'Сервис временно перегружен')
+    if conn.execute('SELECT 1 FROM flow_bridge_nonces WHERE nonce_hash=?', (proof['nonce_hash'],)).fetchone():
+        raise HTTPException(409, {'code':'FLOW_PROOF_REPLAY'})
+    linked=conn.execute('SELECT * FROM flow_bridge_identities WHERE mtproxy_uuid=?',
+                        (proof['subject'],)).fetchone()
+    other=conn.execute('SELECT * FROM flow_bridge_identities WHERE telegram_id=?',
+                       (proof['telegram_id'],)).fetchone()
+    if ((linked is not None and linked['telegram_id'] != proof['telegram_id'])
+            or (other is not None and other['mtproxy_uuid'] != proof['subject'])):
+        raise HTTPException(409, {'code':'FLOW_IDENTITY_CONFLICT'})
+    row=conn.execute('SELECT id FROM users WHERE telegram_id=?', (proof['telegram_id'],)).fetchone()
+    if row is None:
+        uid = insert_user(conn, telegram_id=proof['telegram_id'], created=now)
+        row=conn.execute('SELECT id FROM users WHERE id=?', (uid,)).fetchone()
+    uid=row['id']
+    if linked is not None and linked['shop_user_id'] != uid:
+        raise HTTPException(409, {'code':'FLOW_IDENTITY_CONFLICT'})
+    if linked is None:
+        conn.execute('INSERT INTO flow_bridge_identities(mtproxy_uuid,telegram_id,shop_user_id,created) VALUES (?,?,?,?)',
+                     (proof['subject'], proof['telegram_id'],uid,now))
+    # Older deployments can contain flow_bridge_devices rows. Ignore
+    # them deliberately: they are legacy metadata, not access controls.
+    # Do not delete them during a login or change any WG peer.
+    conn.execute('INSERT INTO flow_bridge_nonces(nonce_hash,expires,created) VALUES (?,?,?)',
+                 (proof['nonce_hash'],proof['expires'],now))
+    return uid
 
 
 def exchange(ticket, client_id=None):

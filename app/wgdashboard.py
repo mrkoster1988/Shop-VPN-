@@ -1,4 +1,4 @@
-"""Адаптер WGDashboard; методы записи пока не подключены к заказам магазина."""
+"""Выдача и проверка личных конфигураций через API WGDashboard."""
 from .servers import WGDashboardProfile
 from .panel import PanelError
 
@@ -13,6 +13,13 @@ ORDER_ERROR_CODES = frozenset({
     'UnsupportedWGDashboardConfig',
     'UnsupportedWGDashboardJobsSchema',
     'UnsupportedWGDashboardSchema',
+    'WGDashboardConfigSections',
+    'WGDashboardConfigFields',
+    'WGDashboardConfigPrivateKey',
+    'WGDashboardConfigAddress',
+    'WGDashboardConfigAllowedIPs',
+    'WGDashboardConfigPublicKey',
+    'WGDashboardConfigEndpoint',
     'WGDashboardConfigMismatch',
     'WGDashboardExpiryAmbiguousLocalTime',
     'WGDashboardExpiryInvalid',
@@ -29,6 +36,13 @@ ORDER_ERROR_CODES = frozenset({
     'WGDashboardStoredKeyMissing',
     'WireGuardServerRequired',
 })
+
+
+def issuance_error_code(exc):
+    if (isinstance(exc, PanelError) and len(exc.args) == 1
+            and isinstance(exc.args[0], str) and exc.args[0] in ORDER_ERROR_CODES):
+        return exc.args[0]
+    return type(exc).__name__
 
 
 class CheckProfile(WGDashboardProfile):
@@ -227,8 +241,6 @@ class WGDashboard:
 
     async def download_config(self, client, private_key):
         """Получает конфиг только для подтверждённого активного peer этого ключа."""
-        import configparser
-        import ipaddress
         from urllib.parse import quote
         public_key = self.identity(private_key)
         await self.check(client)
@@ -242,36 +254,74 @@ class WGDashboard:
         raw = data['file']
         if len(raw) > 16384 or '\x00' in raw:
             raise PanelError('UnsupportedWGDashboardConfig')
+        return self.validate_config(raw, private_key)
+
+    @staticmethod
+    def validate_config(raw, private_key):
+        import base64
+        import configparser
+        import io
+        import ipaddress
+        import re
+        from urllib.parse import urlsplit
+
         parser = configparser.ConfigParser(interpolation=None, strict=True)
         parser.optionxform = str
         try:
             parser.read_string(raw)
-            if set(parser.sections()) != {'Interface', 'Peer'} or parser.defaults():
-                raise ValueError()
-            interface, peer = parser['Interface'], parser['Peer']
-            # Не выдаём исполняемые hooks из удалённого шаблона панели.
-            if (set(interface) - {'PrivateKey','Address','DNS','MTU','ListenPort'}
-                    or set(peer) - {'PublicKey','PresharedKey','AllowedIPs','Endpoint','PersistentKeepalive'}):
-                raise ValueError()
-            if interface['PrivateKey'] != private_key:
-                raise ValueError()
-            for value in interface['Address'].split(','):
+        except configparser.Error:
+            raise PanelError('WGDashboardConfigSections') from None
+        if set(parser.sections()) != {'Interface', 'Peer'} or parser.defaults():
+            raise PanelError('WGDashboardConfigSections')
+        interface, peer = parser['Interface'], parser['Peer']
+        if (set(interface) - {'PrivateKey', 'Address', 'DNS', 'MTU', 'ListenPort'}
+                or set(peer) - {'PublicKey', 'PresharedKey', 'AllowedIPs', 'Endpoint', 'PersistentKeepalive'}):
+            raise PanelError('WGDashboardConfigFields')
+        updated = False
+        if interface.get('PrivateKey') != private_key:
+            raise PanelError('WGDashboardConfigPrivateKey')
+        try:
+            for value in interface.get('Address', '').split(','):
                 ipaddress.ip_interface(value.strip())
-            for value in peer['AllowedIPs'].split(','):
+        except ValueError:
+            raise PanelError('WGDashboardConfigAddress') from None
+        try:
+            for value in peer.get('AllowedIPs', '').split(','):
                 ipaddress.ip_network(value.strip(), strict=False)
-            import base64
-            if len(base64.b64decode(peer['PublicKey'], validate=True)) != 32:
-                raise ValueError()
-            endpoint = peer['Endpoint']
-            from urllib.parse import urlsplit
+        except ValueError:
+            raise PanelError('WGDashboardConfigAllowedIPs') from None
+        try:
+            if len(base64.b64decode(peer.get('PublicKey', ''), validate=True)) != 32:
+                raise ValueError
+        except ValueError:
+            raise PanelError('WGDashboardConfigPublicKey') from None
+        endpoint = peer.get('Endpoint', '')
+        # WGDashboard appends its listen port even when remote_endpoint already
+        # contains that port. Two distinct ports cannot be resolved unambiguously.
+        host = r'(\[[a-fA-F0-9:.]+\]|[A-Za-z0-9.-]+)'
+        port = r'([1-9][0-9]{0,4})'
+        doubled = re.fullmatch(host + ':' + port + r':\2', endpoint)
+        # The panel setting sometimes contains an HTTP(S) prefix or a trailing
+        # slash. Accept only a bare host and the panel's single UDP port.
+        url_host = re.fullmatch(r'https?://' + host + '/?:' + port, endpoint)
+        corrected = doubled or url_host
+        if corrected:
+            endpoint = f'{corrected[1]}:{corrected[2]}'
+            peer['Endpoint'] = endpoint
+            updated = True
+        try:
             parsed = urlsplit('//' + endpoint)
             if (not parsed.hostname or not parsed.port or parsed.username or parsed.password
                     or parsed.path or parsed.query or parsed.fragment
                     or any(ch.isspace() for ch in endpoint)):
-                raise ValueError()
-        except (configparser.Error, KeyError, ValueError, TypeError):
-            raise PanelError('WGDashboardConfigMismatch') from None
-        return raw
+                raise ValueError
+        except ValueError:
+            raise PanelError('WGDashboardConfigEndpoint') from None
+        if not updated:
+            return raw
+        output = io.StringIO()
+        parser.write(output)
+        return output.getvalue()
 
 
 def stored_private_key(server_id, credential_id, *, create=True):

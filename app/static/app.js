@@ -654,13 +654,33 @@ function renderTrial() {
   const messages={telegram_required:'Войдите через Telegram, чтобы попробовать VPN.',existing_customer:'Пробный доступ доступен аккаунтам без прежних заказов и подписок.',limit_reached:'Пробные активации временно недоступны.',not_configured:'Пробный доступ готовится к запуску.',disabled:'Пробный доступ отключён.'};
   $('trial-info').textContent=trial.claim?'Пробный доступ уже выбран: '+protocolName(trial.claim.protocol)+'. Статус и настройки — в кабинете.':trial.eligible?trial.days+' дн. · '+protocolName(protocol)+' · только основной профиль.':messages[trial.reason] || 'Пробный доступ уже использован.';
   $('trial-start').textContent=trial.claim?'Открыть кабинет':trial.reason==='telegram_required'?'Войти через Telegram':'Попробовать бесплатно';
-  $('trial-start').disabled=!trial.claim && !(trial.eligible&&available) && trial.reason!=='telegram_required';
+  const loginAvailable=Boolean(catalog.mtproxy_login || catalog.bot_username);
+  if(!trial.claim && trial.reason==='telegram_required' && !loginAvailable){
+    $('trial-info').textContent='Магазин пока не подключил вход через Telegram.';
+    $('trial-start').textContent='Вход через Telegram недоступен';
+  }
+  $('trial-start').disabled=!trial.claim && !(trial.eligible&&available) && !(trial.reason==='telegram_required' && loginAvailable);
 }
+async function startMtproxyLogin() {
+  await api('/api/auth/mtproxy/start', {});
+  location.assign('/?shop_login=1#login');
+}
+$('auth-mtproxy').onclick=()=>startMtproxyLogin().catch(e=>toast(e.message));
 async function beginTrial() {
   selectedPlan=null;checkoutTrial=null;resetQuote();
   await refreshMe();const trial=catalog.trial;
   if(trial?.claim){setShopAccountPane('subscriptions');show('account-dialog');return;}
-  if(!me?.telegram_id){show('auth-dialog');toast('Пробный доступ доступен при входе через Telegram-бота.');return;}
+  if(!me?.telegram_id){
+    if(catalog.mtproxy_login){
+      if(me){show('account-dialog');toast('Для входа через Telegram сначала выйдите из этого аккаунта магазина.');return;}
+      await startMtproxyLogin();
+    } else if(catalog.bot_username){
+      location.assign('https://t.me/'+encodeURIComponent(catalog.bot_username));
+    } else {
+      show('auth-dialog');toast('Вход через Telegram пока не настроен в этом магазине.');
+    }
+    return;
+  }
   if(!trial?.eligible || !trialProtocolAvailable())throw new Error('Пробный доступ сейчас недоступен.');
   selectedPlan=null;checkoutTrial={protocol,version:trial.version};$('promo-controls').hidden=true;
   $('checkout-info').textContent='Пробный доступ / '+trial.days+' дн. / '+protocolName(protocol)+' / без оплаты / только основной профиль';
@@ -905,6 +925,8 @@ $('logout').onclick = async () => {
 (async () => {
   try {
     catalog=await api('/api/catalog'); protocol=catalog.protocols.find(p=>p.available)?.id || 'xui'; renderPlans(); $('support').textContent=catalog.support;
+    $('auth-mtproxy').hidden=!catalog.mtproxy_login;
+    $('auth-methods').textContent=catalog.mtproxy_login?'Подтвердите вход в кабинете MTProxy или войдите по email.':catalog.bot_username?'Войдите по email или откройте магазин из Telegram-бота.':'Войдите по email.';
     if(catalog.bot_username) { for(const id of ['bot-link','auth-bot']) { $(id).href='https://t.me/'+encodeURIComponent(catalog.bot_username); $(id).hidden=false; } }
     const tg=window.Telegram?.WebApp;
     if(tg?.initData) { tg.ready(); tg.expand(); syncTelegramTheme(); tg.onEvent?.('themeChanged',syncTelegramTheme); await api('/api/auth/telegram',{init_data:tg.initData}); setupMiniappNavigation(); }

@@ -5,7 +5,7 @@ import sqlite3
 from contextlib import closing
 from . import config as c, shop_settings, payment_policy, server_routing, protocols as protocol_catalog
 
-VERSION='v0.067'
+VERSION='v0.068'
 QUEUE_SPECS={
     'issuance':('orders',"status='paid'"),
     'payment_poll':('orders',"status='pending' AND method IN ('yookassa','sbp') AND payment_id IS NOT NULL"),

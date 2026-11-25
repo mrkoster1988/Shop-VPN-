@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from . import config as c, providers, servers, shop_settings
 from .db import db
+from .wgdashboard import issuance_error_code
 
 log = logging.getLogger('pushok.flow_bootstrap')
 
@@ -221,15 +222,16 @@ async def process_pending(max_jobs: int = 5) -> int:
                                  "credential_id=?,primary_key_state='active',access_source='trial'"
                                  " WHERE id=?",
                                  (job['target_expires'], encrypted, c.encrypt(sid), sid))
-                    conn.execute("UPDATE flow_auto_grants SET state='active' WHERE user_id=?",
+                    conn.execute("UPDATE flow_auto_grants SET state='active',error=NULL WHERE user_id=?",
                                  (job['user_id'],))
                 completed += 1
             except Exception as exc:
+                error = issuance_error_code(exc)
                 attempts = int(job['attempts']) + 1
                 delay = min(1800, 10 * (2 ** min(attempts, 8)))
                 with db() as conn:
-                    conn.execute("UPDATE flow_auto_grants SET attempts=?,next_attempt=? "
+                    conn.execute("UPDATE flow_auto_grants SET attempts=?,next_attempt=?,error=? "
                                  "WHERE user_id=? AND state='pending'",
-                                 (attempts, int(time.time()) + delay, job['user_id']))
-                log.warning('Auto WireGuard grant retry: %s', type(exc).__name__)
+                                 (attempts, int(time.time()) + delay, error, job['user_id']))
+                log.warning('Auto WireGuard grant retry: %s', error)
     return completed

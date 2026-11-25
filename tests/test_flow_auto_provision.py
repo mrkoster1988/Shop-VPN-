@@ -128,11 +128,11 @@ def test_retry_keeps_identity_and_does_not_claim_ready_before_peer(client, monke
     assert asyncio.run(auto.process_pending()) == 0
     assert one('SELECT state FROM subscriptions')['state'] == 'pending'
     assert client.get('/api/flow/wireguard/subscriptions/' + sid).status_code == 409
-    assert one('SELECT attempts FROM flow_auto_grants')['attempts'] == 1
+    assert one('SELECT attempts,error FROM flow_auto_grants') == {'attempts':1, 'error':'RuntimeError'}
     execute('UPDATE flow_auto_grants SET next_attempt=0')
     assert asyncio.run(auto.process_pending()) == 1
     assert attempted == [sid, sid]
-    assert one('SELECT state FROM flow_auto_grants')['state'] == 'active'
+    assert one('SELECT state,error FROM flow_auto_grants') == {'state':'active', 'error':None}
 
 
 def test_existing_wireguard_is_not_overwritten_even_if_expired(client, monkeypatch):

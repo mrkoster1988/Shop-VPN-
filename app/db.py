@@ -258,6 +258,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS flow_bridge_devices (
           shop_user_id INTEGER PRIMARY KEY REFERENCES users(id),
           client_hash CHAR(64) NOT NULL, created INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS mtproxy_web_requests (
+          challenge TEXT PRIMARY KEY, expires INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS flow_bridge_nonces (
           nonce_hash CHAR(64) PRIMARY KEY, expires INTEGER NOT NULL,
           created INTEGER NOT NULL);
@@ -400,6 +402,8 @@ def init_db():
         CREATE INDEX IF NOT EXISTS orders_user ON orders(user_id, created);
         CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires);
         ''')
+        if 'error' not in {r['name'] for r in conn.execute('PRAGMA table_info(flow_auto_grants)')}:
+            conn.execute('ALTER TABLE flow_auto_grants ADD COLUMN error TEXT')
         # Additive migration for installations created before editable tariffs.
         columns = {row['name'] for row in conn.execute('PRAGMA table_info(orders)')}
         if 'plan_version' not in columns:

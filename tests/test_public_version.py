@@ -5,7 +5,7 @@ from test_shop import client
 def test_deployed_version_only_exposes_public_constant(client):
     response = client.get('/api/version')
     assert response.status_code == 200
-    assert response.json() == {'version': 'v0.067', 'flow_binding': 'account'}
+    assert response.json() == {'version': 'v0.068', 'flow_binding': 'account'}
     assert response.headers['cache-control'] == 'no-store'
     assert response.headers['pragma'] == 'no-cache'
     assert response.headers['x-robots-tag'] == 'noindex, nofollow'
@@ -20,7 +20,7 @@ def test_v067_upgrade_scripts_accept_previous_release():
     from scripts import install, upgrade
     from app import diagnostics
     from pathlib import Path
-    assert diagnostics.VERSION == install.VERSION == upgrade.VERSION == 'v0.067'
-    assert 'v0.066' in upgrade.SUPPORTED
+    assert diagnostics.VERSION == install.VERSION == upgrade.VERSION == 'v0.068'
+    assert 'v0.067' in upgrade.SUPPORTED
     edge = Path(__file__).resolve().parents[1] / 'scripts' / 'upgrade_mtproxy_edge.py'
-    assert 'default="v0.067"' in edge.read_text(encoding='utf-8')
+    assert 'default="v0.068"' in edge.read_text(encoding='utf-8')

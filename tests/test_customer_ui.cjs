@@ -35,7 +35,7 @@ async function customerPage(options={}) {
   const context=vm.createContext({document:{getElementById:element,querySelector:()=>({content:'/shop'}),querySelectorAll:()=>[],createElement:tag=>element('created-'+tag+'-'+(++elementId))},
     fetch,URL,URLSearchParams,FormData:class {constructor(form){this.fields=form.fields;}get(name){return this.fields[name];}},crypto:require('node:crypto').webcrypto,Date:class extends Date { static now(){return clock.now;} },
     navigator:{platform:'Linux x86_64',userAgent:'Android',clipboard:{writeText:async value=>state.copied.push(value)}},
-    window:{confirm:()=>true,open:(...args)=>state.opened.push(args),...(options.telegram?{Telegram:{WebApp:telegram}}:{})},location:{search:options.search || '',origin:options.origin || 'https://shop.example'},history:{replaceState(){}},
+    window:{confirm:()=>true,open:(...args)=>state.opened.push(args),...(options.telegram?{Telegram:{WebApp:telegram}}:{})},location:{assign:url=>state.opened.push([url]),search:options.search || '',origin:options.origin || 'https://shop.example'},history:{replaceState(){}},
     setTimeout:(fn,delay)=>{const id=++timerId;timers.set(id,{fn,delay});return id;},clearTimeout:id=>timers.delete(id),setInterval:fn=>{intervals.push(fn);return intervals.length;}});
   vm.runInContext(fs.readFileSync('app/static/flow-links.js','utf8'),context);
   vm.runInContext(fs.readFileSync('app/static/app.js','utf8'),context);
@@ -407,11 +407,23 @@ test('account refresh clears the prepared Flow link after key revocation',async(
 
 test('trial offer requires Telegram and accepted claim links to the account',async()=>{
   const p=await customerPage();p.state.catalog.trial={enabled:true,days:1,eligible:false,reason:'telegram_required',claim:null};p.run('renderPlans()');
-  assert.equal(p.element('trial-offer').hidden,false);assert.equal(p.element('trial-start').disabled,false);
+  assert.equal(p.element('trial-offer').hidden,false);assert.equal(p.element('trial-start').disabled,true);
   assert.ok(p.element('trial-info').textContent.includes('Telegram'));
   await p.run("selectedPlan={id:'month'};beginTrial()");assert.equal(p.run('selectedPlan'),null);assert.equal(p.element('auth-dialog').open,true);
   p.state.catalog.trial.claim={id:'trial',protocol:'wg'};p.run('renderPlans()');
   assert.equal(p.element('trial-start').textContent,'Открыть кабинет');
+});
+
+test('Telegram trial sign-in starts in MTProxy without asking for email',async()=>{
+  const p=await customerPage();
+  p.state.customer=null;
+  p.state.catalog.mtproxy_login=true;
+  p.state.catalog.trial={enabled:true,eligible:false,reason:'telegram_required'};
+  p.respond('/shop/api/me',{detail:'Anonymous'},401);
+  p.respond('/shop/api/auth/mtproxy/start',{ok:true});
+  await p.run('beginTrial()');
+  assert.equal(p.element('auth-dialog').open,false);
+  assert.deepEqual(p.state.opened.at(-1),['/?shop_login=1#login']);
 });
 
 test('trial checkout uses policy snapshot and requires terms without receipt',async()=>{

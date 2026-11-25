@@ -200,7 +200,7 @@ def restore(path,password,target,*,preserve_device_links=False):
             # Backward-compatible flag used only for a verified stopped-source upgrade.
             invalidate_restored_wireguard_links(conn, preserve=preserve_device_links)
             # Pending SSO approvals and their locally issued sessions must never resurrect.
-            for table in ('shop_id_requests','shop_id_sessions'):
+            for table in ('shop_id_requests','shop_id_sessions','mtproxy_web_requests'):
                 if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",(table,)).fetchone():
                     conn.execute('DELETE FROM '+table)
             sessions=conn.execute('DELETE FROM sessions').rowcount;tickets=conn.execute('DELETE FROM tickets').rowcount;conn.commit()

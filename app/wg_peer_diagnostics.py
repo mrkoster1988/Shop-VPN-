@@ -23,11 +23,11 @@ def _subscription(conn, user_id):
 
 def _grant(conn, user_id):
     row = conn.execute(
-        'SELECT state,attempts,next_attempt,target_expires FROM flow_auto_grants WHERE user_id=?',
+        'SELECT state,attempts,next_attempt,target_expires,error FROM flow_auto_grants WHERE user_id=?',
         (user_id,)).fetchone()
     if row is None:
         return None
-    return {'state': row['state'], 'attempts': row['attempts'],
+    return {'state': row['state'], 'attempts': row['attempts'], 'error': row['error'] if row['state'] == 'pending' else None,
             'next_attempt': row['next_attempt'] if row['state'] == 'pending' else None,
             'target_expires': row['target_expires']}
 
