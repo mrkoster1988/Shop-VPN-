@@ -220,3 +220,40 @@ def test_wgdashboard_unconfirmed_peer_deletion_cannot_be_marked_successful(clien
     assert one('SELECT subscription_id FROM admin_subscription_revocations '
                'WHERE subscription_id=?', (sid,)) is None
     assert client.delete('/api/admin/subscriptions/' + sid, headers=headers()).status_code == 409
+
+
+def test_owner_remove_combines_verified_revoke_and_purge(client, monkeypatch):
+    sid=subscription(client)
+    called=[]
+    async def disable(remote):
+        called.append(remote['id'])
+    monkeypatch.setattr(providers,'disable',disable)
+    assert client.post('/api/admin/subscriptions/'+sid+'/remove').status_code==401
+    result=client.post('/api/admin/subscriptions/'+sid+'/remove',headers=headers())
+    assert result.status_code==200,result.text
+    assert result.json()['status']=='deleted'
+    assert called==[sid]
+    assert one('SELECT id FROM subscriptions WHERE id=?',(sid,)) is None
+    assert client.post('/api/admin/subscriptions/'+sid+'/remove',headers=headers()).json()['status']=='deleted'
+    assert called==[sid]
+
+
+def test_owner_remove_retains_autogrant_history(client, monkeypatch):
+    sid=subscription(client)
+    execute("INSERT INTO flow_auto_grants(user_id,subscription_id,target_expires,policy_version,state,created,next_attempt) "
+            "VALUES(1,?,9999999999,1,'active',1,1)",(sid,))
+    async def disable(remote):pass
+    monkeypatch.setattr(providers,'disable',disable)
+    result=client.post('/api/admin/subscriptions/'+sid+'/remove',headers=headers())
+    assert result.status_code==200,result.text
+    assert result.json()['status']=='revoked_retained'
+    assert one('SELECT state,secret FROM subscriptions WHERE id=?',(sid,))=={'state':'revoked','secret':None}
+    assert one('SELECT state FROM flow_auto_grants')['state']=='superseded'
+
+
+def test_owner_remove_remote_failure_keeps_record(client, monkeypatch):
+    sid=subscription(client)
+    async def disable(remote):raise TimeoutError()
+    monkeypatch.setattr(providers,'disable',disable)
+    assert client.post('/api/admin/subscriptions/'+sid+'/remove',headers=headers()).status_code==502
+    assert one('SELECT state FROM subscriptions WHERE id=?',(sid,))['state']=='active'
