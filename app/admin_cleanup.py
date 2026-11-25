@@ -67,6 +67,9 @@ async def revoke_subscription(sid: str):
             if not found:
                 raise HTTPException(404, 'Подписка не найдена')
             sub = dict(found)
+            if conn.execute("SELECT 1 FROM flow_owner_extensions WHERE subscription_id=? AND status='pending'",
+                            (sid,)).fetchone():
+                raise HTTPException(409, 'Есть незавершённое продление WireGuard. Сначала выполните сверку.')
             if _blocked_orders(conn, sub['user_id'], sub['protocol']):
                 raise HTTPException(409, 'Есть незавершённый заказ этого протокола. '
                                     'Сначала завершите оплату или разберите заказ.')
@@ -244,9 +247,6 @@ async def remove_subscription(sid: str):
                             (sid,)).fetchone():
                 return {'ok': True, 'status': 'deleted'}
             raise HTTPException(404, 'Подписка не найдена')
-        if conn.execute("SELECT 1 FROM flow_owner_extensions WHERE subscription_id=? AND status='pending'",
-                        (sid,)).fetchone():
-            raise HTTPException(409, 'Есть незавершённое продление WireGuard. Сначала выполните сверку.')
     await revoke_subscription(sid)
     async with service.lock:
         with db() as conn:
