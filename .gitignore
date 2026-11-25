@@ -14,3 +14,5 @@ backups/
 *.db-wal
 *.db-shm
 upgrades/
+edge-upgrades/
+.edge-upgrade.lock
