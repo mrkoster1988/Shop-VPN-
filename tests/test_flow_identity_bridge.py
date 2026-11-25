@@ -187,3 +187,37 @@ def test_failed_token_cannot_pollute_global_binds_and_no_login_cookie_needed(cli
     ok=client.post(PATH,json={'ticket':wrong})
     assert ok.status_code==200
     assert one('SELECT count(*) AS n FROM flow_bridge_nonces')['n']==1
+
+
+def test_flow_account_status_is_redacted_and_independent_of_legacy_phone(client, monkeypatch):
+    _enabled(monkeypatch)
+    from app import service
+    service.telegram_account(98455677)
+    headers={'Authorization':'Bearer '+c.ADMIN_TOKEN}
+    url='/api/admin/users/1/flow/account'
+    assert client.get(url).status_code==401
+    assert client.get(url+'?client_id=private').status_code==401
+    initial=client.get(url,headers=headers)
+    assert initial.status_code==200
+    assert initial.json()=={
+        'account_linked':False,'access':'none','expires_at':None,
+        'binding_scope':'account'}
+    assert _call(client).status_code==200
+    assert client.get(url,headers=headers).json()['account_linked'] is True
+    expiry=int(time.time())+3600
+    with db() as conn:
+        conn.execute(
+            "INSERT INTO subscriptions(id,user_id,protocol,state,expires,secret) "
+            "VALUES ('account-owned',1,'wg','active',?,?)",
+            (expiry,c.encrypt(_VALID)))
+        conn.execute("INSERT INTO flow_bridge_devices(shop_user_id,client_hash,created) "
+                     "VALUES (1,?,?)",('f'*64,123))
+    status=client.get(url,headers=headers)
+    assert status.status_code==200
+    assert status.json()=={
+        'account_linked':True,'access':'active','expires_at':expiry,
+        'binding_scope':'account'}
+    assert 'f'*64 not in status.text and 'pfc_' not in status.text
+    execute("UPDATE subscriptions SET state='expired',expires=1 WHERE id='account-owned'")
+    assert client.get(url,headers=headers).json()['access']=='expired'
+    assert client.get('/api/admin/users/999/flow/account',headers=headers).status_code==404
