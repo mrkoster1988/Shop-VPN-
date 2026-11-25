@@ -37,7 +37,7 @@ def simulated_compose():
     }
 
 
-def simulated_container(root, *, mount=VOLUME if False else "pushok_shop_data"):
+def simulated_container(root, *, mount="pushok_shop_data"):
     return [{
         "Id": "f" * 64,
         "Image": OLD,
@@ -122,6 +122,7 @@ def test_probe_requires_private_env_and_existing_files(root, monkeypatch):
         edge.probe(root)
     (root / ".env").chmod(0o600)
     (root / "compose.wg-ip.yaml").unlink()
+    patch_probe(monkeypatch, root, label_config=str(root / "compose.mtproxy-edge.yaml"))
     assert edge.probe(root)["compose_files"] == ["compose.mtproxy-edge.yaml"]
 
 
