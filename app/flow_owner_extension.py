@@ -11,7 +11,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 from typing import Literal
 
-from . import config as c, providers, servers, service
+from . import config as c, providers, servers, service, wgdashboard
 from .db import db
 
 
@@ -24,6 +24,46 @@ class Extension(BaseModel):
     days: int = Field(ge=1, le=365, strict=True)
     reason: str = Field(min_length=5, max_length=240)
     confirm: Literal['EXTEND_ACCOUNT_WIREGUARD']
+
+
+def _require_stored_key(conn, server_id, identity):
+    """A renewal cannot replace a previously issued private key."""
+    try:
+        if str(UUID(identity)) != identity:
+            raise ValueError('Invalid identity')
+        row = conn.execute(
+            'SELECT private_key FROM wgdashboard_keys WHERE server_id=? AND credential_id=?',
+            (server_id, identity)).fetchone()
+        if row is None:
+            raise ValueError('Missing key')
+        wgdashboard.WGDashboard.identity(c.decrypt(row['private_key']))
+    except Exception:
+        raise HTTPException(409, 'Не найден или повреждён сохранённый ключ WireGuard. '
+                            'Сначала проверьте пир; продление не создаёт новый ключ.') from None
+
+
+def _devices(conn, sub):
+    # Do not race a device rotation or an unfinished issue/revoke job.
+    if conn.execute(
+        "SELECT 1 FROM devices WHERE subscription_id=? AND state NOT IN ('active','revoked')",
+        (sub['id'],)).fetchone() or conn.execute(
+        "SELECT 1 FROM device_rotations WHERE device_id IN "
+        "(SELECT id FROM devices WHERE subscription_id=?) "
+        "AND state NOT IN ('completed','canceled')",
+        (sub['id'],)).fetchone():
+        raise HTTPException(409, 'Есть незавершённая операция с дополнительным профилем.')
+    rows = [dict(row) for row in conn.execute(
+        "SELECT * FROM devices WHERE subscription_id=? AND state='active' ORDER BY id",
+        (sub['id'],))]
+    for device in rows:
+        if not device['secret']:
+            raise HTTPException(409, 'Дополнительный профиль не имеет сохранённого конфига.')
+        try:
+            identity = service.device_identity(device)
+        except Exception:
+            raise HTTPException(409, 'Повреждён идентификатор дополнительного профиля.') from None
+        _require_stored_key(conn, sub['server_id'], identity)
+    return rows
 
 
 def _subscription(conn, user_id):
@@ -61,7 +101,27 @@ def _subscription(conn, user_id):
             profile.get('schedule_expiry') is not True or
             not profile.get('panel_timezone')):
         raise HTTPException(409, 'Нужен WGDashboard с управлением сроком отключения peer.')
+    try:
+        identity = service.primary_identity(sub)
+    except Exception:
+        raise HTTPException(409, 'Повреждён идентификатор основного профиля.') from None
+    _require_stored_key(conn, sub['server_id'], identity)
+    _devices(conn, sub)
     return sub
+
+
+def pending(user_id):
+    """Owner-only recovery of the durable request, even after browser reload."""
+    with db() as conn:
+        if conn.execute('SELECT 1 FROM users WHERE id=?', (user_id,)).fetchone() is None:
+            raise HTTPException(404, 'Пользователь не найден')
+        row = conn.execute(
+            "SELECT request_id,subscription_id,before_expires,target_expires,days,reason "
+            "FROM flow_owner_extensions WHERE user_id=? AND status='pending'",
+            (user_id,)).fetchone()
+        if row is None:
+            return {'request': None}
+        return {'request': {**dict(row), 'confirm': 'EXTEND_ACCOUNT_WIREGUARD'}}
 
 
 def proposal(user_id, days):
@@ -126,16 +186,27 @@ async def extend(user_id, command: Extension, staff_id=None):
         if sub['expires'] != command.before_expires:
             raise HTTPException(409, 'Текущий срок подписки отличается от исходного')
         identity = service.primary_identity(sub)
+        devices = _devices(conn, sub)
 
     # The existing stored WG key is reused and only its schedule updated.
     # Any failure leaves the durable request pending for an identical retry.
     try:
         config = await providers.provision({**sub, 'id': identity,
-                                            'expires': command.target_expires})
+                                            'expires': command.target_expires,
+                                            'require_existing_wg_key': True})
         if (not isinstance(config, str) or len(config) > 65536 or
                 not config.lstrip().startswith('[Interface]') or '[Peer]' not in config):
             raise ValueError('UnconfirmedWireGuardProfile')
         encrypted = c.encrypt(config)
+        device_secrets = []
+        for device in devices:
+            value = await providers.provision({
+                **sub, 'id': service.device_identity(device),
+                'expires': command.target_expires, 'require_existing_wg_key': True})
+            if (not isinstance(value, str) or len(value) > 65536 or
+                    not value.lstrip().startswith('[Interface]') or '[Peer]' not in value):
+                raise ValueError('UnconfirmedWireGuardDevice')
+            device_secrets.append((c.encrypt(value), command.target_expires, device['id']))
     except Exception:
         raise HTTPException(502, 'WGDashboard не подтвердил продление. '
                                 'Срок не изменён; повторите тот же запрос.') from None
@@ -147,6 +218,11 @@ async def extend(user_id, command: Extension, staff_id=None):
             (sub['id'], user_id)).fetchone()
         if current is None or current['expires'] != command.before_expires or current['state'] not in ('active', 'expired'):
             raise HTTPException(409, 'Состояние подписки изменилось. Нужна сверка с WGDashboard.')
+        if [d['id'] for d in _devices(conn, sub)] != [d['id'] for d in devices]:
+            raise HTTPException(409, 'Состав дополнительных профилей изменился. Нужна сверка.')
+        conn.executemany(
+            "UPDATE devices SET secret=?,expires=?,error=NULL WHERE id=? AND state='active'",
+            device_secrets)
         conn.execute(
             "UPDATE subscriptions SET expires=?,state='active',secret=?,primary_key_state='active' "
             "WHERE id=? AND user_id=? AND expires=?",
