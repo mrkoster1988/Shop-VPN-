@@ -47,7 +47,7 @@ function renderUpdates(data) {
     data.error_code ? updatesErrors[data.error_code] || updatesErrors.check_error : labels[data.state] || '';
   const zone = data.settings.timezone;
   const schedule = !data.settings.enabled ? 'Проверка по расписанию выключена.' : !data.scheduler_running ?
-    'Фоновые задачи магазина выключены. Доступна ручная проверка.' : 'Следующая проверка: '+updatesDate(data.next_check,zone)+'.';
+    'Фоновые задачи магазина выключены. Доступна ручная проверка.' : 'Следующая проверка списка релизов в админке: '+updatesDate(data.next_check,zone)+'.';
   $('updates-timing').textContent = 'Последняя попытка: '+updatesDate(data.last_attempt,zone)+
     '. Успешная проверка: '+updatesDate(data.last_success,zone)+'. '+schedule+' Часовой пояс: '+zone+'.'+
     (data.stale ? ' Сведения о релизе сохранены ранее; доступность обновления нужно подтвердить.' : '');
@@ -156,7 +156,8 @@ function renderHostUpdate(data){
  hostUpdate=data;
  const enabled=!!data?.enabled,job=data?.job,active=['queued','running'].includes(job?.state);
  $('host-update-panel').hidden=!enabled;$('host-update-controls').hidden=!enabled;$('updates-manual').hidden=enabled;
- $('updates-action-note').textContent=enabled?'Сначала проверьте план, затем подтвердите установку.':'Обновление выполняется через команды на VPS. Кнопка открывает порядок действий.';
+ $('updates-open').textContent=enabled?'Управление установкой':'Как установить';
+ $('updates-action-note').textContent=enabled?'Сначала проверьте план, затем подтвердите установку.':'При включённом таймере установка начнётся автоматически после выхода стабильного релиза.';
  $('host-update-status').textContent=!data?.reachable?'Связь со службой не подтверждена. Принятая операция может продолжаться.':job?
    (hostStates[job.state]||'Неизвестное состояние')+(job.phase?' · '+(hostPhases[job.phase]||'Проверка состояния'):''):'Служба подключена. Обновление не запущено.';
  $('host-update-detail').textContent=job?'Версия: '+job.tag+' · операция '+job.id+'.'+

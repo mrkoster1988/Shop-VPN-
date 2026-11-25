@@ -1,15 +1,15 @@
-# Управляемое обновление — v0.066
+# Управляемое обновление — v0.067
 
 Админка умеет проверять стабильный релиз по расписанию и показывать описание изменений:
 [Настройка проверки](UPDATE_CHECKER.md). Без отдельной службы установка выполняется командами ниже. В Unreleased добавлена
 [служба для запуска из админки](HOST_UPDATER.md), использующая эту же процедуру.
 Действующая установка должна иметь поддерживаемый хостовый обновлятор и корректный ключ копии.
 
-Поддержаны переходы **v0.021 / v0.022 / v0.023 / v0.024 / v0.025 / v0.026 / v0.027 / v0.028 / v0.029 / v0.030 / v0.031 / v0.032 / v0.033 / v0.034 / v0.035 / v0.036 / v0.037 / v0.038 / v0.039 / v0.040 / v0.041 / v0.042 / v0.043 / v0.044 / v0.045 / v0.046 / v0.047 / v0.048 / v0.049 / v0.050 / v0.051 / v0.052 / v0.053 / v0.054 / v0.055 / v0.056 / v0.057 / v0.058 / v0.059 / v0.060 / v0.061 / v0.062 / v0.063 / v0.064 / v0.065 → v0.066** для установок нашего
+Поддержаны переходы **v0.021 / v0.022 / v0.023 / v0.024 / v0.025 / v0.026 / v0.027 / v0.028 / v0.029 / v0.030 / v0.031 / v0.032 / v0.033 / v0.034 / v0.035 / v0.036 / v0.037 / v0.038 / v0.039 / v0.040 / v0.041 / v0.042 / v0.043 / v0.044 / v0.045 / v0.046 / v0.047 / v0.048 / v0.049 / v0.050 / v0.051 / v0.052 / v0.053 / v0.054 / v0.055 / v0.056 / v0.057 / v0.058 / v0.059 / v0.060 / v0.061 / v0.062 / v0.063 / v0.064 / v0.065 / v0.066 → v0.067** для установок нашего
 установщика. Узнаются обычные установки с `shop_data` и установки после завершённого
 managed-upgrade с отдельным внешним томом и подтверждённой историей активации.
 Более старые версии, произвольные Compose-файлы и вручную изменённые привязки требуют
-отдельного плана; флага обхода проверок нет. Версия v0.066 повторно не обновляется на себя.
+отдельного плана; флага обхода проверок нет. Версия v0.067 повторно не обновляется на себя.
 
 Магазин будет недоступен между остановкой старой версии и отдельной активацией/откатом.
 Новый образ собирается до остановки. Старая база остаётся в своём томе; новый снимок
@@ -19,15 +19,15 @@ managed-upgrade с отдельным внешним томом и подтве�
 ## Команды
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.066/install.sh | bash -s -- --upgrade plan --dir /opt/pushok-vpn
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.066/install.sh | bash -s -- --upgrade prepare --dir /opt/pushok-vpn
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.066/install.sh | bash -s -- --upgrade status --dir /opt/pushok-vpn
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.067/install.sh | bash -s -- --upgrade plan --dir /opt/pushok-vpn
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.067/install.sh | bash -s -- --upgrade prepare --dir /opt/pushok-vpn
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.067/install.sh | bash -s -- --upgrade status --dir /opt/pushok-vpn
 ```
 
-Bootstrap скачивает фиксированный v0.066 и для новой установки, и для `--upgrade`.
+Bootstrap скачивает фиксированный v0.067 и для новой установки, и для `--upgrade`.
 В отличие от bootstrap v0.023, он не подставляет старый целевой релиз v0.022.
 
-Из полного каталога исходников v0.066 можно выполнить те же команды:
+Из полного каталога исходников v0.067 можно выполнить те же команды:
 
 ```bash
 python3 scripts/upgrade.py plan --dir /opt/pushok-vpn
@@ -95,7 +95,7 @@ committed-журнал сохраняется туда до замены тек�
 ## Активация
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.066/install.sh | bash -s -- --upgrade activate --dir /opt/pushok-vpn
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.067/install.sh | bash -s -- --upgrade activate --dir /opt/pushok-vpn
 ```
 
 Активация восстанавливает исходные настройки фоновых задач/обслуживания и пересоздаёт
@@ -111,7 +111,7 @@ activation_failed: новые API/worker/бот могли уже записат
 ## Откат до активации
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.066/install.sh | bash -s -- --upgrade rollback --dir /opt/pushok-vpn
+curl -fsSL https://raw.githubusercontent.com/mrkoster1988/Shop-VPN-/v0.067/install.sh | bash -s -- --upgrade rollback --dir /opt/pushok-vpn
 ```
 
 До activate откат возвращает **не исходную когда-то установку**, а текущую перед
