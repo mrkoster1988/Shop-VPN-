@@ -1016,7 +1016,9 @@ def test_icon_sprite_served_at_configured_prefix(client, monkeypatch, base):
         assert page.status_code == 200
         assert '__BASE_PATH__' not in page.text
         uses = re.findall(r'<use href="([^"]+)"', page.text)
-        assert len(uses) == 6
+        # Hero and desktop account plus four icons in each of two navigations.
+        assert len(uses) == 10
+        assert {u.split('#')[1] for u in uses} == {'pi-user', 'pi-price', 'pi-home', 'pi-support'}
         sprite = shop.get(base + '/static/pushok-icons.svg')
         assert sprite.status_code == 200
         assert sprite.headers['content-type'].startswith('image/svg+xml')
@@ -1213,7 +1215,10 @@ def test_rendered_assets_use_content_fingerprints(client,page,script):
     import re
     response=client.get(page)
     assert response.status_code==200
-    assert response.headers['cache-control']=='no-cache'
+    assert response.headers['cache-control']==('private, no-store' if page=='/admin' else 'no-cache')
+    if page=='/admin':
+        assert response.headers['vary']=='Cookie'
+        assert 'name="shop-staff-session" content="0"' in response.text
     for asset in ('style.css',script):
         match=re.search(r'["\']/static/'+re.escape(asset)+r'\?v=([a-f0-9]{16})["\']',response.text)
         assert match,asset

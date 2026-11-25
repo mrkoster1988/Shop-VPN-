@@ -96,9 +96,10 @@ function show(id) {
   const dialog = $(id);
   if (!dialog.open) {
     dialog.showModal();
+    dialog.scrollTop=0;
     if (typeof telegramApp?.BackButton?.show === 'function') telegramDialogStack.push(dialog);
   }
-  if (id === 'account-dialog') setMiniappActive('account');
+  if (id === 'account-dialog') {setMiniappActive('account');setShopMobileActive('account');}
   syncTelegramBackButton();
 }
 function date(ts) { return new Date(ts*1000).toLocaleDateString('ru-RU'); }
@@ -168,7 +169,7 @@ function clearPrivate(clearPromoIntent=true) {
   $('devices-dialog').close(); clearDevices();
   $('config-dialog').close(); clearConnection();
   $('account-dialog').close(); $('checkout-dialog').close();
-  for (const id of ['identity','subscriptions','orders','payment-result','checkout-info','support-list','support-thread']) $(id).replaceChildren();
+  for (const id of ['identity','account-summary','subscriptions','orders','payment-result','checkout-info','support-list','support-thread']) $(id).replaceChildren();
   supportRequest++;selectedSupportCase=null;$('support-create').reset();$('support-reply').reset();$('support-reply').hidden=true;$('support-status').textContent='';
   $('auth-form').reset(); $('receipt-label').querySelector('input').value = '';
   $('account-label').textContent = 'Личный кабинет ↗';
@@ -210,17 +211,42 @@ function renderAccount() {
   $('password-settings').hidden=!me.can_change_password;
   renderReferrals();
   $('identity').textContent = me.email || 'Telegram · ' + me.telegram_id;
+  const activeCount=me.subscriptions.filter(s=>s.state==='active'&&s.expires*1000>Date.now()).length;
+  const pendingCount=me.subscriptions.filter(s=>s.state==='pending').length;
+  $('account-summary').textContent='Активных: '+activeCount+' · готовятся: '+pendingCount;
+  const bonusTab=document.querySelector('[data-account-section="referrals-panel"]');
+  if(bonusTab)bonusTab.hidden=!me.referrals;
+  if(!me.referrals&&$('referrals-panel').dataset?.accountActive==='true')setShopAccountPane('subscriptions');
+  // Preserve expanded controls during the 15-second refresh.
+  const expanded=new Set(Array.from($('subscriptions').querySelectorAll?.('details[data-subscription-options][open]')||[],el=>el.dataset.subscriptionOptions));
   $('subscriptions').innerHTML = me.subscriptions.length ? me.subscriptions.map(s => {
     const active = s.state === 'active' && s.expires*1000 > Date.now();
     const primaryReady=active && (s.primary_key_state || 'active')==='active';
-    return `<article class="subscription"><h3>${esc(protocolName(s.protocol))}</h3>${s.access_source==='trial'?'<span class="status">Пробный доступ</span>':''}<p>${active?'Доступ до '+date(s.expires):s.state==='pending'?'Подключение готовится':'Подписка закончилась'}</p><p>${esc(profileAllowance(s.device_limit ?? 4))}</p>${primaryReady?`<button class="small" data-config="${esc(s.id)}">Основной профиль ↗</button>${s.access_source!=='trial'?`<button class="text-link" data-primary-rotate="${esc(s.id)}">Сменить основной ключ</button>`:''}`:s.primary_key_state==='rotating'?`<p>Меняем основной ключ${s.primary_retrying?' · повторим после ошибки':''}. Дополнительные профили не меняются.</p>`:''}${s.protocol==='xui'&&s.state!=='pending'&&s.access_source!=='trial'?`<button class="text-link" data-link="${esc(s.id)}">Ссылка подписки</button>`:''}${s.protocol==='wg'&&primaryReady?`<button class="text-link" data-link="${esc(s.id)}">Открыть в Pushok Flow</button>`:''}${active&&s.access_source!=='trial'&&me.referrals?.balance_days>0?`<button class="text-link" data-referral="${esc(s.id)}">Потратить бонус</button>`:''}${s.state!=='pending'?` ${s.access_source!=='trial'?`<button class="small secondary" data-devices="${esc(s.id)}">Устройства</button>`:''}<button class="text-link" data-renew="${esc(s.protocol)}">${active?'Продлить подписку':'Возобновить подписку'}</button>`:''}</article>`;
-  }).join('') : '<p>Подписок пока нет. Выберите тариф на главной странице.</p>';
+    const accessLabel=active?'Активно':s.state==='pending'?'Готовится':s.state==='revoked'?'Отозвано':'Истекло';
+    const stateClass=active?'active':s.state==='pending'?'pending':'canceled';
+    const configure=primaryReady?'<button type="button" class="small" data-config="'+esc(s.id)+'">Настроить подключение ↗</button>':'';
+    const flow=s.protocol==='wg'&&primaryReady?'<button type="button" class="small subscription-flow" data-link="'+esc(s.id)+'">Открыть в Pushok Flow</button>':'';
+    const options=[
+      primaryReady&&s.access_source!=='trial'?'<button type="button" class="text-link" data-primary-rotate="'+esc(s.id)+'">Сменить основной ключ</button>':'',
+      s.protocol==='xui'&&s.state!=='pending'&&s.access_source!=='trial'?'<button type="button" class="text-link" data-link="'+esc(s.id)+'">Ссылка подписки</button>':'',
+      active&&s.access_source!=='trial'&&me.referrals?.balance_days>0?'<button type="button" class="text-link" data-referral="'+esc(s.id)+'">Потратить бонус</button>':'',
+      s.state!=='pending'&&s.access_source!=='trial'?'<button type="button" class="small secondary" data-devices="'+esc(s.id)+'">Устройства</button>':''
+    ].filter(Boolean);
+    const renewal=s.state!=='pending'?'<button type="button" class="small secondary" data-renew="'+esc(s.protocol)+'">'+(active?'Продлить подписку':'Возобновить подписку')+'</button>':'';
+    return '<article class="subscription"><div class="subscription-top"><h3>'+esc(protocolName(s.protocol))+'</h3><span class="status '+stateClass+'">'+accessLabel+'</span></div>'+
+      (s.access_source==='trial'?'<p class="subscription-kind">Пробный доступ</p>':'')+
+      '<p class="subscription-expiry">'+(active?'Доступ до '+date(s.expires):s.state==='pending'?'Подключение готовится':s.state==='revoked'?'Доступ отозван':'Подписка закончилась')+'</p><p>'+esc(profileAllowance(s.device_limit ?? 4))+'</p>'+
+      (s.primary_key_state==='rotating'?'<p>Меняем основной ключ'+(s.primary_retrying?' · повторим после ошибки':'')+'. Дополнительные профили не меняются.</p>':'')+
+      '<div class="subscription-primary">'+flow+configure+renewal+'</div>'+
+      (options.length?'<details class="subscription-options" data-subscription-options="'+esc(s.id)+'"'+(expanded.has(s.id)?' open':'')+'><summary>Управление подключением</summary><div class="actions">'+options.join('')+'</div></details>':'')+'</article>';
+  }).join('') : '<article class="account-empty"><h3>Подключений пока нет</h3><p>Выберите тариф, чтобы получить настройки для вашего устройства.</p><button type="button" class="small" data-account-plans>Выбрать тариф</button></article>';
   $('orders').innerHTML = me.orders.length ? me.orders.map(o => `<div class="order"><div><b>${esc(protocolName(o.protocol))} · ${o.kind==='referral'?'Бонус · '+o.days+' дней':o.kind==='trial'?'Без оплаты':money(o.amount,o.currency)}</b><br><code>${esc(o.id)}</code><br>${date(o.created)}</div><div><span class="status ${esc(o.status)} ${esc(o.progress?.stage || '')}">${esc(displayOrderStatus(o))}</span><p>${esc(o.progress?.message || '')}</p><br><button class="text-link" data-order="${esc(o.id)}">${o.status==='pending'?'Оплатить / реквизиты':'Статус и помощь'}</button></div></div>`).join('') : '<p>Заказов пока нет.</p>';
   refreshSupportCases().catch(e=>{ $('support-status').textContent=e.message; });
 }
 async function refreshSupportCases(){
  const request=++supportRequest,epoch=sessionEpoch;
- const select=$('support-order');select.innerHTML='<option value="">Без привязки</option>'+me.orders.map(o=>'<option value="'+esc(o.id)+'">'+esc(o.plan_name||protocolName(o.protocol))+' · '+esc(o.id.slice(0,8))+'</option>').join('');
+ const select=$('support-order'),chosenOrder=select.value;select.innerHTML='<option value="">Без привязки</option>'+me.orders.map(o=>'<option value="'+esc(o.id)+'">'+esc(o.plan_name||protocolName(o.protocol))+' · '+esc(o.id.slice(0,8))+'</option>').join('');
+  if(chosenOrder&&me.orders.some(o=>o.id===chosenOrder))select.value=chosenOrder;
  const data=await api('/api/support/tickets?page=1&page_size=30');
  if(request!==supportRequest||epoch!==sessionEpoch||!me)return;
  const labels={open:'Открыто',waiting_staff:'Ждёт поддержки',waiting_customer:'Ждёт вашего ответа',closed:'Закрыто'};
@@ -263,7 +289,7 @@ async function beginCheckout(id) {
   if (!me) { show('auth-dialog'); return; }
   if(catalog.protocols.find(p=>p.id===protocol)?.sales_allowed===false)throw new Error(catalog.sale_notice||'Продажи временно приостановлены.');
   if(selectedPlan.price!==0 && catalog.payment_available===false)throw new Error(catalog.payment_notice||'Оплата временно недоступна.');
-  $('promo-controls').hidden=selectedPlan.price===0;renderCheckoutAmount();
+  $('promo-controls').hidden=selectedPlan.price===0;$('promo-controls').open=!!promoIntent&&selectedPlan.price!==0;renderCheckoutAmount();
   if(promoIntent){$('promo-code').value=promoIntent;$('promo-status').textContent='Промокод из ссылки. Нажмите «Применить», чтобы проверить скидку и итоговую цену.';}
   clearPayment(); $('checkout-form').hidden = false;
   checkoutPolicyVersion=Number.isSafeInteger(catalog.payment_policy_version)?catalog.payment_policy_version:null;
@@ -278,6 +304,7 @@ function paymentResult(order) {
   $('checkout-form').hidden = true;
   $('payment-result').replaceChildren();
   const paragraph = document.createElement('p');
+  paragraph.className='payment-summary';
   paragraph.textContent = `Заказ: ${order.id}\nТариф: ${order.plan_name || protocolName(order.protocol)} · ${order.days} дней\n${profileAllowance(order.device_limit ?? 4)}\nСумма: ${order.kind==='referral'?'Бонусные дни':order.kind==='trial'?'Без оплаты':order.amount===0?'Бесплатно':money(order.amount,order.currency)}\n${displayOrderStatus(order)}${order.promo_code?'\nПромокод: '+order.promo_code+' · скидка '+money(order.discount,order.currency)+' от '+money(order.base_amount,order.currency):''}\n\n${order.progress?.message || ''}\n${order.instructions || ''}`;
   $('payment-result').append(paragraph);
   if (order.payment_url && order.status === 'pending') {
@@ -302,7 +329,7 @@ function paymentResult(order) {
     connect.onclick=async()=>{
       const epoch=sessionEpoch,request=paymentRequest;
       if(paymentOrder?.id!==order.id || !$('checkout-dialog').open)return;
-      try {await refreshMe();if(epoch===sessionEpoch && request===paymentRequest && me){$('checkout-dialog').close();show('account-dialog');}}
+      try {await refreshMe();if(epoch===sessionEpoch && request===paymentRequest && me){$('checkout-dialog').close();setShopAccountPane('subscriptions');show('account-dialog');}}
       catch(e){if(epoch===sessionEpoch && request===paymentRequest)toast(e.message);}
     };
     $('payment-result').append(connect);
@@ -459,7 +486,7 @@ $('forgot-form').onsubmit=async event=>{
 $('auth-switch').onclick = () => { register=!register; $('auth-title').textContent=register?'Добро пожаловать.':'С возвращением.'; $('auth-submit').textContent=register?'Создать аккаунт →':'Войти →'; $('auth-switch').textContent=register?'Уже есть аккаунт? Войти':'Создать аккаунт'; $('auth-form').password.autocomplete=register?'new-password':'current-password'; $('forgot-open').hidden=register; };
 $('auth-form').onsubmit = async event => {
   event.preventDefault(); if(logoutPending || passwordOperation)return; const b=$('auth-submit'); b.disabled=true;
-  try { const form=new FormData(event.target); await api('/api/auth/'+(register?'register':'login'),Object.fromEntries(form)); sessionEpoch++; $('auth-form').reset(); $('auth-dialog').close(); await refreshMe(); if(selectedPlan) await beginCheckout(selectedPlan.id); else show('account-dialog'); }
+  try { const form=new FormData(event.target); await api('/api/auth/'+(register?'register':'login'),Object.fromEntries(form)); sessionEpoch++; $('auth-form').reset(); $('auth-dialog').close(); await refreshMe(); if(selectedPlan) await beginCheckout(selectedPlan.id); else {setShopAccountPane(defaultAccountPane());show('account-dialog');} }
   catch(e) { toast(e.message); } finally { b.disabled=false; }
 };
 $('checkout-form').onsubmit = async event => {
@@ -559,6 +586,10 @@ $('config-qr').onerror = () => {
   $('config-status').textContent='QR-код не загрузился. Используйте копирование или скачивание настроек.';
 };
 $('subscriptions').onclick = async event => {
+  if(event.target.closest('[data-account-plans]')){
+    $('account-dialog').close();setShopMobileActive('plans');setMiniappActive('plans');
+    $('plans').scrollIntoView({behavior:'smooth',block:'start'});return;
+  }
   const bonus=event.target.closest('[data-referral]');if(bonus){bonus.disabled=true;try {await redeemReferral(bonus.dataset.referral);}catch(e){toast(e.message);}finally{bonus.disabled=false;}return;}
   const link=event.target.closest('[data-link]');
   if(link){await openLink(link.dataset.link).catch(e=>toast(e.message));return;}
@@ -583,6 +614,7 @@ $('subscriptions').onclick = async event => {
     const item=catalog.protocols.find(p=>p.id===renew.dataset.renew);
     if (!item?.available) { toast('Продление временно недоступно. Обратитесь в поддержку.'); return; }
     protocol=item.id; selectedPlan=null; renderPlans(); $('account-dialog').close();
+    setShopMobileActive('plans');setMiniappActive('plans');
     $('plans').scrollIntoView({behavior:'smooth',block:'start'}); toast('Выберите срок продления. Оставшиеся дни сохранятся.'); return;
   }
   const button=event.target.closest('[data-config]');
@@ -627,13 +659,13 @@ function renderTrial() {
 async function beginTrial() {
   selectedPlan=null;checkoutTrial=null;resetQuote();
   await refreshMe();const trial=catalog.trial;
-  if(trial?.claim){show('account-dialog');return;}
+  if(trial?.claim){setShopAccountPane('subscriptions');show('account-dialog');return;}
   if(!me?.telegram_id){show('auth-dialog');toast('Пробный доступ доступен при входе через Telegram-бота.');return;}
   if(!trial?.eligible || !trialProtocolAvailable())throw new Error('Пробный доступ сейчас недоступен.');
   selectedPlan=null;checkoutTrial={protocol,version:trial.version};$('promo-controls').hidden=true;
   $('checkout-info').textContent='Пробный доступ / '+trial.days+' дн. / '+protocolName(protocol)+' / без оплаты / только основной профиль';
   clearPayment();$('checkout-form').hidden=false;$('receipt-label').hidden=true;$('receipt-label').querySelector('input').required=false;
-  $('terms-text').textContent=catalog.terms;$('accept-terms').checked=false;$('accept-terms').required=true;show('checkout-dialog');
+  $('terms-text').textContent=catalog.terms;$('accept-terms').checked=false;$('accept-terms').required=true;$('checkout-submit').textContent='Получить пробный доступ →';show('checkout-dialog');
 }
 $('trial-start').onclick=()=>beginTrial().catch(e=>toast(e.message));
 function clearFlowLink() {
@@ -851,7 +883,7 @@ $('password-form').onsubmit = event => {
       sessionEpoch++; meRequest++; const nextEpoch=sessionEpoch; clearPrivate();
       await refreshMe();
       if(nextEpoch===sessionEpoch && me?.id===actor && !logoutPending){
-        if(reopen)show('account-dialog');
+        if(reopen){setShopAccountPane('settings');show('account-dialog');}
         toast('Пароль изменён. Другие сеансы и ссылки входа отозваны.');
       }
     } catch(e) {
@@ -885,8 +917,8 @@ $('logout').onclick = async () => {
     if(/^[A-Z0-9][A-Z0-9_-]{3,31}$/.test(incomingPromo)){
       promoIntent=incomingPromo;toast('В ссылке есть промокод. Выберите тариф и примените его перед оформлением.');
     }
-    if(/^[a-f0-9]{24}$/.test(new URLSearchParams(location.search).get('ref') || '')) {show(me?'account-dialog':'auth-dialog');toast('Примите приглашение в кабинете до первого заказа или пробного доступа.');}
-    if(new URLSearchParams(location.search).has('payment')) { history.replaceState(null,'',basePath+'/'); show(me?'account-dialog':'auth-dialog'); }
+    if(/^[a-f0-9]{24}$/.test(new URLSearchParams(location.search).get('ref') || '')) {if(me)setShopAccountPane('referrals-panel');show(me?'account-dialog':'auth-dialog');toast('Примите приглашение в кабинете до первого заказа или пробного доступа.');}
+    if(new URLSearchParams(location.search).has('payment')) { if(me)setShopAccountPane('orders');history.replaceState(null,'',basePath+'/'); show(me?'account-dialog':'auth-dialog'); }
     setInterval(async()=>{ if(me && ( $('account-dialog').open || $('checkout-dialog').open || $('config-dialog').open || $('devices-dialog').open )) { try { await refreshMe(); await refreshPaymentOrder(true); } catch {} } },15000);
   } catch(e) { toast(e.message); }
 })();
@@ -986,11 +1018,17 @@ const SHOP_ACCOUNT_PANES = {
   orders: 'orders-pane',
   'referrals-panel': 'referrals-panel',
   'support-panel': 'support-panel',
+  settings: 'account-settings-pane',
 };
+function defaultAccountPane(){
+  const params=new URLSearchParams(location.search);
+  return params.has('payment')?'orders':/^[a-f0-9]{24}$/.test(params.get('ref')||'')?'referrals-panel':'subscriptions';
+}
 function setShopAccountPane(name, focus = false) {
-  const chosen = Object.hasOwn(SHOP_ACCOUNT_PANES, name) ? name : 'subscriptions';
+  const chosen = Object.hasOwn(SHOP_ACCOUNT_PANES, name) && (name!=='referrals-panel'||me?.referrals) ? name : 'subscriptions';
   for (const [key, id] of Object.entries(SHOP_ACCOUNT_PANES)) {
     const pane = $(id);
+    pane.dataset ||= {};
     pane.dataset.accountActive = key === chosen ? 'true' : 'false';
   }
   for (const button of document.querySelectorAll('[data-account-section]')) {
@@ -1000,32 +1038,43 @@ function setShopAccountPane(name, focus = false) {
   if (focus && $('account-dialog').open) {
     const pane = $(SHOP_ACCOUNT_PANES[chosen]);
     pane.setAttribute('tabindex','-1');
-    pane.focus({preventScroll:true});
-    pane.scrollIntoView({behavior:'auto',block:'nearest'});
+    pane.focus?.({preventScroll:true});
+    $('account-dialog').scrollTop=0;
   }
 }
 document.querySelectorAll('[data-account-section]').forEach(button => {
   button.addEventListener('click', () => setShopAccountPane(button.dataset.accountSection,true));
 });
 
-// The browser has a compact mobile tab bar; Telegram keeps its existing
-// native Mini App bar and is never shown two overlapping bars.
+// One browser tab bar; Telegram keeps its dedicated Mini App navigation.
+let shopCurrentRoute='home';
+function setShopMobileActive(route){
+  if(!['home','plans','help','account'].includes(route))route='home';
+  if(route!=='account')shopCurrentRoute=route;
+  if($('account-dialog').open)route='account';
+  for(const item of document.querySelectorAll('[data-shop-route]')){
+    if(item.dataset.shopRoute===route)item.setAttribute('aria-current','page');
+    else item.removeAttribute('aria-current');
+  }
+}
 $('hero-account-btn').onclick = () => $('account-btn').click();
 $('shop-mobile-account').onclick = () => $('account-btn').click();
-document.querySelectorAll('[data-shop-route]').forEach(link => {
-  link.addEventListener('click', () => {
-    for (const item of document.querySelectorAll('[data-shop-route]')) {
-      if (item === link) item.setAttribute('aria-current','page');
-      else item.removeAttribute('aria-current');
-    }
-  });
+document.querySelectorAll('a[data-shop-route]').forEach(link => {
+  link.addEventListener('click', () => setShopMobileActive(link.dataset.shopRoute));
 });
-window.addEventListener?.('hashchange', () => {
-  const hash = location.hash.slice(1);
-  if (!['home','plans','how','help'].includes(hash)) return;
-  const chosen = hash === 'how' ? 'plans' : hash;
-  document.querySelectorAll('[data-shop-route]').forEach(link => {
-    if (link.dataset.shopRoute === chosen) link.setAttribute('aria-current','page');
-    else link.removeAttribute('aria-current');
-  });
-});
+$('account-dialog').addEventListener('close',()=>{if(!$('account-dialog').open)setShopMobileActive(shopCurrentRoute);});
+function syncShopRoute(){
+  const hash=(location.hash||'').slice(1);
+  const route=hash==='how'?'plans':hash;
+  if(['home','plans','help'].includes(route))setShopMobileActive(route);
+}
+window.addEventListener?.('hashchange',syncShopRoute);
+syncShopRoute();
+if('IntersectionObserver' in window){
+  const observer=new IntersectionObserver(entries=>{
+    if($('account-dialog').open)return;
+    const visible=entries.filter(e=>e.isIntersecting).sort((a,b)=>b.intersectionRatio-a.intersectionRatio)[0];
+    if(visible)setShopMobileActive(visible.target.id);
+  },{rootMargin:'-15% 0px -65% 0px',threshold:[0,.15,.35]});
+  for(const id of ['home','plans','help'])observer.observe($(id));
+}

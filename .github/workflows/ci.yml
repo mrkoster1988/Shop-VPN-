@@ -13,7 +13,7 @@ permissions:
 jobs:
   panel-wizard-browser:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout source
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -22,7 +22,7 @@ jobs:
       - name: Install pinned browser test runtime
         run: |
           npm install --prefix "$RUNNER_TEMP/panel-ui" --ignore-scripts --no-audit --no-fund playwright@1.62.1
-          "$RUNNER_TEMP/panel-ui/node_modules/.bin/playwright" install --with-deps chromium
+          "$RUNNER_TEMP/panel-ui/node_modules/.bin/playwright" install --with-deps chromium webkit
       - name: Check panel wizard, credentials and updates on desktop and mobile
         env:
           NODE_PATH: ${{ runner.temp }}/panel-ui/node_modules
@@ -33,6 +33,7 @@ jobs:
           node tests/panel_wizard_browser.cjs
           node tests/updates_browser.cjs
           node tests/storefront_compact_browser.cjs
+          node tests/mobile_turnkey_browser.cjs
       - name: Save synthetic storefront desktop and mobile screenshots
         if: always()
         uses: actions/upload-artifact@v4

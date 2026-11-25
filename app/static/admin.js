@@ -282,6 +282,8 @@ const MANAGEMENT_QUICK = [
   ['updates-panel','Обновления','Версия и безопасное обновление Shop','↻']
 ];
 let currentManagementSection='management-overview';
+let managementMenuOpen=false;
+const MANAGEMENT_MOBILE_TABS=[['users-section','Клиенты','♙'],['orders-section','Заказы','▤'],['servers-section','Серверы','◈'],['moderation-section','Модерация','✓'],['support-admin','Помощь','ⓘ'],['plans-section','Тарифы','★'],['shop-finance-section','Финансы','₽']];
 function managementMeta(id){
   return MANAGEMENT_SECTIONS.find(section=>section[0]===id);
 }
@@ -320,6 +322,20 @@ function renderManagementNavItems(){
   }
   $('management-nav').innerHTML=markup||'<p class="management-empty">Разделы не найдены.</p>';
 }
+function renderManagementMobileNav(){
+  const tabs=[['management-overview','Главная','⌂'],...MANAGEMENT_MOBILE_TABS.filter(([id])=>canViewManagementSection(id)).slice(0,3)];
+  $('management-mobile-nav').innerHTML=tabs.map(([id,title,icon])=>
+    '<button type="button" data-admin-target="'+id+'"'+(currentManagementSection===id&&!managementMenuOpen?' aria-current="page"':'')+'><span aria-hidden="true">'+icon+'</span>'+esc(title)+'</button>'
+  ).join('')+'<button type="button" data-admin-menu aria-controls="management-menu-content" aria-expanded="'+String(managementMenuOpen)+'"'+(managementMenuOpen?' aria-current="page"':'')+'><span aria-hidden="true">☰</span>Разделы</button>';
+}
+function setManagementMenu(open,{scroll=false}={}){
+  managementMenuOpen=!!open;
+  const header=$('management-header');header.dataset ||= {};
+  header.dataset.mobileMenuOpen=String(managementMenuOpen);
+  $('management-menu-toggle').setAttribute?.('aria-expanded',String(managementMenuOpen));
+  renderManagementMobileNav();
+  if(managementMenuOpen&&scroll)header.scrollIntoView?.({behavior:'auto',block:'start'});
+}
 function showManagementSection(id,{scroll=false}={}){
   currentManagementSection=canViewManagementSection(id)?id:'management-overview';
   $('dashboard').dataset ||= {};
@@ -335,7 +351,8 @@ function showManagementSection(id,{scroll=false}={}){
   const info=managementMeta(currentManagementSection);
   $('management-current').textContent=currentManagementSection==='management-overview'
     ?'Раздел: рабочий стол':'Раздел: '+info[2];
-  renderManagementNavItems();
+  if(scroll)$('management-search').value='';
+  renderManagementNavItems();setManagementMenu(false);
   if(scroll){
     $(currentManagementSection).scrollIntoView?.({behavior:'smooth',block:'start'});
   }
@@ -355,6 +372,8 @@ function renderManagementNav(){
 }
 // Only authorized areas are navigable. A crafted hash/link never grants access.
 $('dashboard').addEventListener('click',event=>{
+  const menu=event.target?.closest?.('[data-admin-menu]');
+  if(menu){event.preventDefault();setManagementMenu(!managementMenuOpen,{scroll:true});return;}
   const link=event.target?.closest?.('[data-admin-target]');
   if(!link)return;
   const destination=link.dataset?.adminTarget;
@@ -417,6 +436,9 @@ $('role-policy-list').onsubmit=async event=>{
 };
 function clearManagement(){
   delegatedPermissions.clear();staffActorId=null;moderationRequest++;rolePolicyRequest++;moderationPage=1;
+  currentManagementSection='management-overview';managementMenuOpen=false;
+  $('management-search').value='';$('management-header').dataset ||= {};$('management-header').dataset.mobileMenuOpen='false';
+  $('management-menu-toggle').setAttribute?.('aria-expanded','false');$('management-mobile-nav').replaceChildren();
   for(const id of ['management-nav','management-role','management-scope','moderation-list','moderation-status','moderation-page','role-policy-list','role-policy-status'])$(id).replaceChildren();
   $('moderation-state').value='pending';$('moderation-section').hidden=true;$('role-policy-section').hidden=true;
 }
@@ -1101,6 +1123,40 @@ async function refresh({plans = role==='owner' || canGroup('catalog')} = {}) {
   if(role==='owner'){await Promise.all([refreshStaff(),refreshSupportAdmin(),refreshShopSettings(),refreshBotMenu(),refreshUpdates(),refreshRolePolicies(),refreshModeration(),refreshRuntime('appearance'),refreshRuntime('sales'),refreshRuntime('notifications'),refreshPaymentPolicy(),refreshShopFinance(),refreshRouting(),refreshIdPolicy()]);}
   renderManagementNav();
 }
+// Never store a staff password or session token in browser storage.
+async function showStaffSession(identity, epoch) {
+  if(epoch!==authEpoch)return;
+  acceptStaffRole(identity);
+  token='';
+  $('key').value=''; $('staff-password').value='';
+  $('admin-login').hidden=true; $('dashboard').hidden=false;
+  $('error').textContent='';
+  try { await refresh(); }
+  catch(error) { if(epoch===authEpoch)$('error').textContent='Не удалось загрузить разделы. Нажмите «Обновить»: '+error.message; }
+}
+async function restoreStaffSession() {
+  const epoch=++authEpoch;
+  $('admin-login').hidden=true;
+  try {
+    const response=await fetch(basePath+'/api/admin/auth/me',{
+      credentials:'same-origin',cache:'no-store'
+    });
+    if(epoch!==authEpoch)return;
+    if(response.status===401) {
+      $('admin-login').hidden=false;
+      return;
+    }
+    if(!response.ok)throw new Error('Проверка сессии временно недоступна');
+    const identity=await response.json();
+    if(epoch!==authEpoch)return;
+    await showStaffSession(identity,epoch);
+  } catch(error) {
+    if(epoch!==authEpoch)return;
+    role='';token='';staffActorId=null;delegatedPermissions.clear();
+    $('dashboard').hidden=true;$('admin-login').hidden=false;
+    $('error').textContent=error.message;
+  }
+}
 $('admin-login').onsubmit = async event => {
   event.preventDefault(); const button=event.target.querySelector('button'); button.disabled=true; authEpoch++;
   const credentials={email:$('staff-email').value,password:$('staff-password').value};
@@ -1112,8 +1168,7 @@ $('admin-login').onsubmit = async event => {
       result=await response.json();
     }
     if(!response.ok)throw new Error(typeof result.detail==='string'?result.detail:'Не удалось войти');
-    acceptStaffRole(result);token='';await refresh();
-    $('key').value='';$('staff-password').value='';$('admin-login').hidden=true;$('dashboard').hidden=false;$('error').textContent='';
+    await showStaffSession(result,authEpoch);
   } catch(error){authEpoch++;token='';$('error').textContent=error.message}
   finally{button.disabled=false}
 };
@@ -2127,3 +2182,8 @@ $('ads-expense-list').onsubmit=event=>{
   const form=event.target.closest('[data-ads-expense]');if(!form)return;event.preventDefault();const fields=new FormData(form);
   return saveAdsExpense('ads/expenses/'+encodeURIComponent(form.dataset.adsExpense)+'/void',{version:Number(form.dataset.version),note:String(fields.get('note') || '').trim()},form.querySelector('button'));
 };
+
+// The server renders only a presence hint, never a cookie value or trusted role.
+if(document.querySelector('meta[name="shop-staff-session"]')?.content==='1') {
+  void restoreStaffSession();
+}
