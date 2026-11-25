@@ -55,8 +55,10 @@ async def provision(sub):
         return await sui_client(sub)
     row, profile = servers.for_subscription(sub)
     if profile.get('api') == 'wgdashboard':
-        private_key = wgdashboard.stored_private_key(
-            row['id'], sub['id'], create=not sub.get('require_existing_wg_key', False))
+        if sub.get('require_existing_wg_key', False):
+            private_key = wgdashboard.stored_private_key(row['id'], sub['id'], create=False)
+        else:
+            private_key = wgdashboard.stored_private_key(row['id'], sub['id'])
         async with httpx.AsyncClient(timeout=25, follow_redirects=False, trust_env=False) as client:
             adapter = wgdashboard.WGDashboard(profile)
             await adapter.ensure_peer(client, private_key, 'pushok_' + sub['id'])
