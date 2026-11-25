@@ -9,20 +9,20 @@ from __future__ import annotations
 
 import argparse
 import json
+from ipaddress import IPv4Address
 import re
 import subprocess
 from pathlib import Path
 
 HOST = "wg.pushok.shop"
-EXPECTED_IP = "45.90.56.23"
+EXPECTED_IP = "193.238.155.39"
 HEX_32_BYTES = re.compile(r"[0-9a-f]{64}\Z")
-HOST_LINE = re.compile(r"(?m)^\s*-\s*['\"]?wg\.pushok\.shop=45\.90\.56\.23['\"]?\s*$")
 
 PROBE = """
 import os, socket, ssl, sys, urllib.request
 try:
     address = socket.gethostbyname('wg.pushok.shop')
-    if address != '45.90.56.23':
+    if address != sys.argv[1]:
         sys.exit(10)
     with urllib.request.urlopen('https://wg.pushok.shop/', timeout=10,
                                 context=ssl.create_default_context()) as res:
@@ -65,20 +65,17 @@ def check_shared_secret(shop: Path, mtproxy: Path) -> bool:
                 and left == right)
 
 
-def overlay_has_ip(path: Path) -> bool:
-    if path.is_symlink() or not path.is_file():
-        return False
-    return bool(HOST_LINE.search(path.read_text(encoding="utf-8")))
-
-
 def run(*args, timeout=25):
     return subprocess.run(args, capture_output=True, timeout=timeout, check=False)
 
 
-def configured_shop(shop: Path) -> bool:
-    cmd = ("docker", "compose", "-f", "compose.mtproxy-edge.yaml",
-           "-f", "compose.wg-ip.yaml", "-p", "pushok-shop",
-           "config", "--format", "json")
+def configured_shop(shop: Path, expected_ip: str = EXPECTED_IP) -> bool:
+    overlay = shop / "compose.wg-ip.yaml"
+    if overlay.is_symlink() or (overlay.exists() and not overlay.is_file()):
+        return False
+    files = ("-f", overlay.name) if overlay.exists() else ()
+    cmd = ("docker", "compose", "-f", "compose.mtproxy-edge.yaml", *files,
+           "-p", "pushok-shop", "config", "--format", "json")
     response = run(*cmd, timeout=35) if shop == Path.cwd() else subprocess.run(
         cmd, cwd=shop, capture_output=True, timeout=35, check=False)
     if response.returncode:
@@ -91,10 +88,11 @@ def configured_shop(shop: Path) -> bool:
             return False  # Must stay behind existing MTProxy Caddy.
         hosts = service.get("extra_hosts", {})
         if isinstance(hosts, dict):
-            correct = hosts.get(HOST) == EXPECTED_IP
+            correct = HOST not in hosts or hosts[HOST] == expected_ip
         elif isinstance(hosts, list):
-            correct = any(item in (f"{HOST}={EXPECTED_IP}", f"{HOST}:{EXPECTED_IP}")
-                          for item in hosts)
+            pins = [item.replace("=", ":", 1).partition(":")[2] for item in hosts
+                    if isinstance(item, str) and item.startswith((HOST+"=", HOST+":"))]
+            correct = all(ip == expected_ip for ip in pins)
         else:
             correct = False
         mounts = service.get("volumes", [])
@@ -116,7 +114,10 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--shop-dir", type=Path, default=Path("/opt/pushok-shop"))
     parser.add_argument("--mtproxy-dir", type=Path, default=Path("/opt/mtproxy-pushok"))
+    parser.add_argument("--expected-ip", type=IPv4Address, default=EXPECTED_IP,
+                        help="Публичный IPv4 действующего узла WGDashboard")
     args = parser.parse_args(argv)
+    expected_ip = str(args.expected_ip)
     shop, mtproxy = args.shop_dir, args.mtproxy_dir
     checks = []
     try:
@@ -132,11 +133,10 @@ def main(argv=None) -> int:
     checks.append(("MTProxy-only trial guard enabled", pilot))
 
     try:
-        overlay = overlay_has_ip(shop / "compose.wg-ip.yaml")
-        composed = overlay and configured_shop(shop)
+        composed = configured_shop(shop, expected_ip)
     except (OSError, UnicodeError, subprocess.SubprocessError, ValueError):
         composed = False
-    checks.append(("Shop Compose overlay keeps WG IP, volume and private port", composed))
+    checks.append(("Shop Compose uses DNS or the correct WG IP, volume and private port", composed))
 
     migrated_file = (mtproxy / "database/076_flow_shop_rate_window.sql").is_file()
     checks.append(("MTProxy 076 migration present in checked-out release", migrated_file))
@@ -144,12 +144,12 @@ def main(argv=None) -> int:
     try:
         health = run("docker", "inspect", "--format", "{{.State.Health.Status}}",
                      "pushok-shop").stdout.strip() == b"healthy"
-        shop_probe = (run("docker", "exec", "pushok-shop", "python", "-c", PROBE,
+        shop_probe = (run("docker", "exec", "pushok-shop", "python", "-c", PROBE, expected_ip,
                           timeout=25).returncode == 0)
     except (OSError, subprocess.SubprocessError):
         health = shop_probe = False
     checks.append(("Shop container healthy", health))
-    checks.append(("Shop container resolves pinned WG IP, TLS and bridge", shop_probe))
+    checks.append(("Shop container resolves current WG IP, TLS and bridge", shop_probe))
 
     try:
         mtproxy_probe = (run("docker", "exec", "mtproxy-pushok-api-1", "python",

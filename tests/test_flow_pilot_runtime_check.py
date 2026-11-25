@@ -20,7 +20,7 @@ def prepare(tmp_path):
                               "\nFLOW_TRIAL_MTPROXY_ONLY=true\n")
     (mtproxy / ".env").write_text("FLOW_SHOP_BRIDGE_SECRET=" + "ab" * 32 + "\n")
     (shop / "compose.wg-ip.yaml").write_text(
-        'services:\n  shop:\n    extra_hosts:\n      - "wg.pushok.shop=45.90.56.23"\n'
+        'services:\n  shop:\n    extra_hosts:\n      - "wg.pushok.shop=193.238.155.39"\n'
     )
     return shop, mtproxy
 
@@ -37,15 +37,12 @@ def test_env_pair_guard_is_secret_free_and_detects_rotation(tmp_path):
         mod.check_shared_secret(shop, mtproxy)
 
 
-def test_overlay_must_preserve_exact_domain_to_ipv4_pin(tmp_path):
+def test_overlay_symlink_rejected(tmp_path):
     shop, _ = prepare(tmp_path)
     overlay = shop / "compose.wg-ip.yaml"
-    assert mod.overlay_has_ip(overlay)
-    overlay.write_text('services:\n  shop:\n    extra_hosts: ["wg.pushok.shop=192.0.2.1"]\n')
-    assert not mod.overlay_has_ip(overlay)
     overlay.unlink()
     overlay.symlink_to(shop / ".env")
-    assert not mod.overlay_has_ip(overlay)
+    assert not mod.configured_shop(shop)
 
 
 def test_compose_gate_requires_private_port_and_persistent_volume(tmp_path, monkeypatch):
@@ -54,7 +51,7 @@ def test_compose_gate_requires_private_port_and_persistent_volume(tmp_path, monk
         "services": {
             "shop": {
                 "ports": [],
-                "extra_hosts": {"wg.pushok.shop": "45.90.56.23"},
+                "extra_hosts": {"wg.pushok.shop": "193.238.155.39"},
                 "volumes": [{"type": "volume", "source": "shop_data", "target": "/app/data"}],
             }
         },
@@ -71,6 +68,14 @@ def test_compose_gate_requires_private_port_and_persistent_volume(tmp_path, monk
     assert mod.configured_shop(shop)
     assert results[0][:6] == ("docker", "compose", "-f", "compose.mtproxy-edge.yaml",
                               "-f", "compose.wg-ip.yaml")
+    (shop / "compose.wg-ip.yaml").unlink()
+    payload["services"]["shop"]["extra_hosts"] = {}
+    assert mod.configured_shop(shop)
+    assert "compose.wg-ip.yaml" not in results[-1]
+    payload["services"]["shop"]["extra_hosts"] = ["wg.pushok.shop:192.0.2.1"]
+    assert not mod.configured_shop(shop)
+    assert mod.configured_shop(shop, "192.0.2.1")
+    payload["services"]["shop"]["extra_hosts"] = []
     payload["services"]["shop"]["ports"] = [{"published": "8000"}]
     assert not mod.configured_shop(shop)
     payload["services"]["shop"]["ports"] = []

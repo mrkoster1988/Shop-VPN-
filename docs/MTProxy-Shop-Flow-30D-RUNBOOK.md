@@ -91,16 +91,16 @@ MTProxy API использует прежний образ — там меняе
 
 ```bash
 cd /opt/pushok-shop
-# Обязательно оставляем локальное закрепление wg.pushok.shop -> 45.90.56.23.
-# compose.wg-ip.yaml — приватный локальный override, не заменяем и не теряем.
-docker compose -f compose.mtproxy-edge.yaml -f compose.wg-ip.yaml -p pushok-shop config --quiet
+shop_compose=(-f compose.mtproxy-edge.yaml)
+if test -f compose.wg-ip.yaml; then shop_compose+=(-f compose.wg-ip.yaml); fi
+docker compose "${shop_compose[@]}" -p pushok-shop config --quiet
 
 cd /opt/mtproxy-pushok
 docker compose config --quiet
 
 # Только Shop; сохраняет именованный том pushok_shop_data:
 cd /opt/pushok-shop
-docker compose -f compose.mtproxy-edge.yaml -f compose.wg-ip.yaml -p pushok-shop up -d --no-deps --build --force-recreate shop
+docker compose "${shop_compose[@]}" -p pushok-shop up -d --no-deps --build --force-recreate shop
 
 # Только API MTProxy; не затрагивает его bot, worker, Caddy и БД:
 cd /opt/mtproxy-pushok
@@ -128,23 +128,27 @@ python3 scripts/flow_pilot_runtime_check.py
 ```
 
 Он проверяет совпадение закрытых ключей MTProxy/Shop (без их печати),
-`FLOW_TRIAL_MTPROXY_ONLY=true`, локальный Compose-override с IP
-`45.90.56.23`, отсутствие host-портов, существующий том
+`FLOW_TRIAL_MTPROXY_ONLY=true`, DNS или локальное закрепление за текущим IPv4
+`193.238.155.39`, отсутствие host-портов, существующий том
 `pushok_shop_data`, HTTPS/TLS WGDashboard из контейнера Shop,
 `database/076_flow_shop_rate_window.sql` и присутствие секрета в
 действующем MTProxy API. Если какой-либо пункт показывает `BLOCK`, автоматическая
 выдача пока не допускается. До обновления MTProxy API последний пункт может
 показывать `BLOCK` — это ожидаемо.
 
-**Сохранить HTTPS:** если `wg.pushok.shop` не разрешается
-публичным DNS из-за рассинхронизации авторитетных NS, Shop использует
-локальный `compose.wg-ip.yaml` со строкой
-`wg.pushok.shop=45.90.56.23`. В профиле панели сохраняется
-`https://wg.pushok.shop`, а не голый IP — TLS продолжает
-проверять сертификат по имени. Для публичных Android-клиентов UDP endpoint
-должен быть `45.90.56.23:51820` до восстановления DNS.
-Если VPS WGDashboard сменит IP, override и endpoint нужно осознанно
-обновить. Отдельно решить проблему DNS у провайдера.
+Панель Shop обращается к `https://wg.pushok.shop`. Для клиентских профилей
+WGDashboard на интерфейсе `wg0` задайте **Peer Remote Endpoint** `wg.pushok.shop`
+и **Listen Port** `51820`. В готовом профиле ожидается
+`Endpoint = wg.pushok.shop:51820`. Проверка на VPS магазина:
+
+```bash
+docker exec pushok-shop getent ahostsv4 wg.pushok.shop
+```
+
+На 25 ноября 2026 года домен указывает на `193.238.155.39`. При рабочем DNS
+`extra_hosts` для WGDashboard не требуется. Если локальное закрепление уже
+есть, проверьте его при переносе узла. Параметр анализа `--expected-ip`
+позволяет задать новый адрес. Штатное обновление сохраняет локальный Compose-файл.
 
 **Важно:** `PASS` этого скрипта и кнопки «Проверить API» означают
 только готовность чтения и связи. Они не доказывают право создания peer,
