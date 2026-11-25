@@ -27,12 +27,13 @@ async function customerPage(options={}) {
     if(url==='/shop/api/catalog')body=state.catalog;
     else if(url==='/shop/api/me'){body=state.customer||{detail:'Войдите'};ok=!!state.customer;status=ok?200:401;}
     else if(url==='/shop/api/auth/logout'){state.customer=null;body={ok:true};}
+    else if(url==='/shop/api/guest/browser')body=JSON.parse(opts.body).activate ? {status:'pending',expires_at:Math.floor(clock.now/1000)+7*86400} : (state.guest || {status:'available'});
     else if(url.endsWith('/devices'))body={devices:state.devices,max_extra:4};
     else if(url.endsWith('/config'))body=state.config;
     else throw Error('Unexpected '+url);
     return {ok,status,json:async()=>body};
   };
-  const context=vm.createContext({document:{getElementById:element,querySelector:()=>({content:'/shop'}),querySelectorAll:()=>[],createElement:tag=>element('created-'+tag+'-'+(++elementId))},
+  const context=vm.createContext({document:{addEventListener(){},getElementById:element,querySelector:()=>({content:'/shop'}),querySelectorAll:()=>[],createElement:tag=>element('created-'+tag+'-'+(++elementId))},
     fetch,AbortController,URL,URLSearchParams,FormData:class {constructor(form){this.fields=form.fields;}get(name){return this.fields[name];}},crypto:require('node:crypto').webcrypto,Date:class extends Date { static now(){return clock.now;} },
     navigator:{platform:'Linux x86_64',userAgent:'Android',clipboard:{writeText:async value=>state.copied.push(value)}},
     window:{confirm:()=>true,open:(...args)=>state.opened.push(args),...(options.telegram?{Telegram:{WebApp:telegram}}:{})},location:{assign:url=>state.opened.push([url]),search:options.search || '',origin:options.origin || 'https://shop.example'},history:{replaceState(){}},
@@ -966,4 +967,17 @@ test('MTProxy login gives feedback inside the dialog and permits retry after a s
   assert.equal(page.state.opened.length,0);
   page.respond(path,{ok:true});await button.onclick();
   assert.deepEqual(page.state.opened,[['/?shop_login=1#login']]);
+});
+
+test('Shop only reserves a guest on click and opens the issued subscription from home', async()=>{
+  const p=await customerPage({anonymous:true});
+  assert.equal(p.element('guest-home').hidden,false);
+  assert.equal(p.calls.filter(x=>x.url.endsWith('/guest/browser')&&JSON.parse(x.opts.body).activate).length,0);
+  await p.element('guest-start').onclick();
+  assert.match(p.element('guest-note').textContent,/Готовим/);
+  p.state.guest={status:'active',expires_at:Math.floor(p.clock.now/1000)+7*86400,
+    subscription_url:'https://shop.example/shop/sub/example'};
+  await p.run('refreshGuest(false)');
+  assert.match(p.element('guest-open').href,/^pushokflow:\/\/subscription/);
+  assert.match(p.element('guest-note').textContent,/Гостевой доступ до/);
 });

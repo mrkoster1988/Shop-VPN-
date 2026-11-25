@@ -741,6 +741,7 @@ async def pushok_id_revoke(request:Request,user=Depends(current_user)):
     return pushok_identity.revoke(request,user)
 
 app.include_router(mtproxy_web_login.router)
+app.include_router(flow_guests.router)
 
 @app.post('/api/auth/telegram')
 async def tg_login(data: TgAuth):

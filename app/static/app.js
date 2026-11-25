@@ -18,7 +18,7 @@ let sessionEpoch = 0, meRequest = 0, connectionRequest = 0, connection = null, c
 let deviceSubscription=null, deviceRequest=0, deviceIntent=null, deviceCache=[], rotationIntents=new Map(), primaryRotationIntents=new Map();
 async function api(path, data, method) {
   const epoch = sessionEpoch;
-  const loginRead = path==='/api/me' || path==='/api/catalog' || path.startsWith('/api/auth/');
+  const loginRead = path==='/api/guest/browser' || path==='/api/me' || path==='/api/catalog' || path.startsWith('/api/auth/');
   const controller = loginRead ? new AbortController() : null;
   const timer = controller && setTimeout(()=>controller.abort(), 15000);
   let response, result;
@@ -212,6 +212,8 @@ async function refreshMe() {
     } else if (linkState) renderFlowLink(linkState, current);
   }
   if (me) renderAccount();
+  updateGuestVisibility();
+  if (!me && !guestState) void refreshGuest();
   if (deviceSubscription) await refreshDevices();
 }
 function renderAccount() {
@@ -1131,3 +1133,68 @@ if('IntersectionObserver' in window){
   },{rootMargin:'-15% 0px -65% 0px',threshold:[0,.15,.35]});
   for(const id of ['home','plans','help'])observer.observe($(id));
 }
+
+let guestState = null, guestBusy = false, guestTimer;
+function updateGuestVisibility() {
+  const showGuest = !me && guestState && guestState.status !== 'disabled';
+  $('guest-home').hidden = !showGuest;
+  $('auth-guest').hidden = !showGuest;
+  if (me) {
+    clearTimeout(guestTimer);
+    $('guest-open').removeAttribute('href');
+    $('guest-open').hidden = true;
+    guestState = null;
+  }
+}
+function renderGuest(reply) {
+  guestState = reply;
+  updateGuestVisibility();
+  const open = $('guest-open'), button = $('guest-start');
+  const url = reply.status === 'active' && PushokFlowLinks.appUrl(reply.subscription_url, 'Гостевой доступ');
+  open.hidden = !url;
+  if (url) open.href = url;
+  else open.removeAttribute('href');
+  const end = Number.isSafeInteger(reply.expires_at) ? ' до '+date(reply.expires_at) : '';
+  const states = {active:'Гостевой доступ'+end+'.', pending:'Готовим ваше подключение'+end+'…',
+    available:'Один гостевой срок в этом браузере.', expired:'Гостевой срок закончился.',
+    revoked:'Гостевой доступ отозван.', link_disabled:'Ссылка подключения отключена.',
+    unavailable:'Гостевое подключение сейчас недоступно.'};
+  $('guest-note').textContent = states[reply.status] || '';
+  button.hidden = !['available','pending','unavailable'].includes(reply.status);
+  button.textContent = reply.status === 'available' ? 'Без Telegram · 7 суток' : 'Проверить доступ';
+}
+async function refreshGuest(activate = false) {
+  if (me || guestBusy) return;
+  guestBusy = true;
+  const epoch = sessionEpoch;
+  clearTimeout(guestTimer);
+  const button = $('guest-start');
+  button.disabled = true;
+  try {
+    let reply = await api('/api/guest/browser', {activate});
+    if (activate && reply.status === 'available') {
+      reply = await api('/api/guest/browser', {activate:true});
+      if (reply.status === 'available') throw new Error('Разрешите cookie магазина и повторите.');
+    }
+    if (me || epoch !== sessionEpoch) return;
+    renderGuest(reply);
+    if (reply.status === 'pending' && !document.hidden) guestTimer = setTimeout(refreshGuest, 8000);
+  } catch (error) {
+    if (!me && epoch === sessionEpoch && (activate || guestState)) {
+      $('guest-note').textContent = error.message;
+      button.hidden = false;
+    }
+  } finally {
+    guestBusy = false;
+    button.disabled = false;
+  }
+}
+$('guest-start').onclick = () => refreshGuest(!guestState || guestState.status !== 'pending');
+$('auth-guest').onclick = () => {
+  $('auth-dialog').close();
+  $('guest-home').scrollIntoView({block:'center'});
+  refreshGuest(!guestState || guestState.status === 'available');
+};
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && guestState?.status === 'pending') refreshGuest();
+});

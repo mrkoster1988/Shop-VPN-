@@ -35,3 +35,27 @@ def test_guest_one_seven_day_grant_without_account_login(client, monkeypatch):
     assert client.get('/' + link.split('/shop/', 1)[1]).json()['expires_at'] == row['target_expires']
     assert flow_guests.claim(device, 'Bearer '+'c'*64, 'fixture')['subscription_url'] is None
     assert one('SELECT count(*) AS n FROM flow_auto_grants')['n'] == 1
+
+
+def test_browser_guest_requires_click_and_resumes_with_same_cookie(client, monkeypatch):
+    from fastapi.testclient import TestClient
+    from app.main import app
+    _node()
+    assert _policy(client, monkeypatch, days=30).status_code == 200
+    monkeypatch.setattr(config, 'SECURE_COOKIE', True)
+    monkeypatch.setattr(config, 'PUBLIC_URL', 'https://testserver')
+    monkeypatch.setattr(config, 'COOKIE_PATH', '/')
+    browser = TestClient(app, base_url='https://testserver')
+    def request(activate=False, origin='https://testserver'):
+        return browser.post('/api/guest/browser', json={'activate': activate}, headers={'Origin': origin})
+    assert request(True, 'https://other.example').status_code == 403
+    initial = request()
+    assert initial.json()['status'] == 'available'
+    assert 'HttpOnly' in initial.headers['set-cookie'] and 'Secure' in initial.headers['set-cookie']
+    assert one('SELECT COUNT(*) AS n FROM flow_guest_trials')['n'] == 0
+    pending = request(True).json()
+    assert pending['status'] == 'pending' and pending['expires_at'] > 0
+    assert request().json() == pending
+    assert request(True).json() == pending
+    assert one('SELECT COUNT(*) AS n FROM flow_guest_trials')['n'] == 1
+    assert browser.get('/api/me').status_code == 401
