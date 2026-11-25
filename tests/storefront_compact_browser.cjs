@@ -5,7 +5,7 @@ const root=path.resolve(__dirname,'..');
 const output=process.env.STOREFRONT_UI_OUTPUT||'/tmp/pushok-storefront-ui';
 fs.mkdirSync(output,{recursive:true});
 const catalog={
- protocols:[{id:'xui',available:true},{id:'wg',available:true},{id:'vmess',available:false}],
+ guest_access:true, protocols:[{id:'xui',available:true},{id:'wg',available:true},{id:'vmess',available:false}],
  currency:'RUB',payment_available:true,payment_mode:'manual',payment_policy_version:1,
  support:'Поддержка Pushok',terms:'Тестовые условия',
  plans:[
@@ -53,6 +53,10 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
     if(p==='/shop/api/auth/telegram')return route.fulfill({json:{ok:true}});
     if(p==='/shop/api/catalog')return route.fulfill({json:catalog});
     if(p==='/shop/api/auth/telegram')return route.fulfill({json:{ok:true}});
+    if(p==='/shop/api/guest/browser'){
+     const {activate}=request.postDataJSON();
+     return route.fulfill({json:activate?{status:'pending',expires_at:1900000000}:{status:'available'}});
+    }
     if(p==='/shop/api/me')return route.fulfill(authenticated?{json:customer}:{status:401,json:{detail:'Войдите'}});
     if(p==='/shop/api/support/tickets')return route.fulfill({json:{cases:[]}});
     unexpected.push(p);return route.fulfill({status:404,json:{detail:'Unexpected fixture'}});
@@ -104,7 +108,9 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
      assert.equal(await page.locator('#orders-pane').isVisible(),false);
      await page.locator('#account-dialog [data-close="account-dialog"]').click();
     }else{
-     await page.locator('#auth-dialog [data-close="auth-dialog"]').click();
+     await page.locator('#auth-guest').click();
+     await page.getByText(/Готовим ваше подключение/).waitFor();
+     assert.equal(await page.locator('#guest-home').isVisible(),true);
      await page.locator('#plan-list [data-plan="month"]').click();
      await page.locator('#auth-dialog').waitFor({state:'visible',timeout:10000});
      await page.locator('#auth-dialog [data-close="auth-dialog"]').click();

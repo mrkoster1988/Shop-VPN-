@@ -213,7 +213,7 @@ async function refreshMe() {
   }
   if (me) renderAccount();
   updateGuestVisibility();
-  if (!me && !guestState) void refreshGuest();
+  if (!me && !guestState && catalog.guest_access) void refreshGuest();
   if (deviceSubscription) await refreshDevices();
 }
 function renderAccount() {

@@ -217,6 +217,9 @@ def validated(protocol, settings):
     return model.model_validate(settings).model_dump()
 
 
+GUEST_CONFIGURATION = 'wg-guest'
+
+
 def decode(row):
     profile = json.loads(c.decrypt(row['settings']))
     if row['protocol']=='xui':
@@ -256,7 +259,11 @@ def list_servers():
 def select(conn, protocol):
     from . import server_routing
     candidates=server_routing.candidates(conn,protocol)
-    return candidates[0] if candidates else None
+    for row in candidates:
+        if protocol == 'wg' and decode(row).get('configuration') == GUEST_CONFIGURATION:
+            continue
+        return row
+    return None
 
 
 def available(protocol, user_id=None):
@@ -271,6 +278,16 @@ def available(protocol, user_id=None):
         return select(conn, protocol) is not None
 
 
+def subscription_profile(row, sub):
+    profile = decode(row)
+    configuration = sub.get('wg_configuration')
+    if configuration is not None:
+        if configuration != GUEST_CONFIGURATION or profile.get('api') != 'wgdashboard':
+            raise RuntimeError('WireGuardGuestConfigurationInvalid')
+        profile['configuration'] = configuration
+    return profile
+
+
 def for_subscription(sub, *, revoking=False):
     sid = sub.get('server_id')
     row = one('SELECT * FROM servers WHERE id=?', (sid,)) if sid else None
@@ -279,7 +296,7 @@ def for_subscription(sub, *, revoking=False):
     if not revoking and row['state'] not in ('active','draining'):
         raise RuntimeError('ServerUnavailable')
     # Pinned attempts always use this profile, even after a failed health check.
-    return row, decode(row)
+    return row, subscription_profile(row, sub)
 
 
 def create(data):

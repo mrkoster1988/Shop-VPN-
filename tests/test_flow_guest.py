@@ -59,3 +59,72 @@ def test_browser_guest_requires_click_and_resumes_with_same_cookie(client, monke
     assert request(True).json() == pending
     assert one('SELECT COUNT(*) AS n FROM flow_guest_trials')['n'] == 1
     assert browser.get('/api/me').status_code == 401
+
+
+def test_guest_uses_guest_interface_for_issuance_expiration_export_and_revoke(client, monkeypatch):
+    from app import servers, wgdashboard
+    from app.db import db
+    _node()
+    assert _policy(client, monkeypatch, days=30).status_code == 200
+    monkeypatch.setattr(config, 'SECURE_COOKIE', True)
+    monkeypatch.setattr(config, 'PUBLIC_URL', 'https://pushok.shop/shop')
+    calls = []
+    original_identity = staticmethod(wgdashboard.WGDashboard.identity)
+
+    class Panel:
+        identity = original_identity
+        def __init__(self, profile):
+            self.interface = profile['configuration']
+        async def ensure_peer(self, client, private_key, name):
+            calls.append((self.interface, 'peer'))
+        async def ensure_expiration(self, client, private_key, expires, server_id, credential):
+            calls.append((self.interface, 'expiry'))
+        async def download_config(self, client, private_key):
+            calls.append((self.interface, 'export'))
+            return '[Interface]\nPrivateKey = '+private_key+'\n[Peer]\nEndpoint = wg.pushok.shop:65353\n'
+        async def revoke_peer(self, client, public_key):
+            calls.append((self.interface, 'revoke'))
+
+    monkeypatch.setattr(wgdashboard, 'WGDashboard', Panel)
+    assert flow_guests.claim('a'*64,'Bearer '+'b'*64,'fixture')['status'] == 'pending'
+    assert asyncio.run(flow_auto_provision.process_pending()) == 1
+    sub = one('SELECT * FROM subscriptions')
+    assert sub['wg_configuration'] == 'wg-guest'
+    assert 'wg.pushok.shop:65353' in config.decrypt(sub['secret'])
+    with db() as conn:
+        assert servers.decode(servers.select(conn, 'wg'))['configuration'] == 'wg0'
+    asyncio.run(providers.disable(sub))
+    assert calls == [('wg-guest', step) for step in ('peer','expiry','export','revoke')]
+
+
+def test_guest_panel_failure_keeps_grant_pending_without_using_wg0(client, monkeypatch):
+    from app import wgdashboard
+    _node()
+    assert _policy(client, monkeypatch).status_code == 200
+    monkeypatch.setattr(config, 'SECURE_COOKIE', True)
+    seen = []
+    async def offline(self, *args):
+        seen.append(self.profile['configuration'])
+        raise wgdashboard.PanelError('WGDashboardInterfaceUnavailable')
+    monkeypatch.setattr(wgdashboard.WGDashboard, 'ensure_peer', offline)
+    assert flow_guests.claim('c'*64,'Bearer '+'d'*64,'fixture')['status'] == 'pending'
+    assert asyncio.run(flow_auto_provision.process_pending()) == 0
+    assert seen == ['wg-guest']
+    assert one('SELECT state,error FROM flow_auto_grants') == {
+        'state':'pending','error':'WGDashboardInterfaceUnavailable'}
+
+
+def test_dedicated_panel_is_reserved_for_guests(client):
+    import json
+    from app import servers
+    from app.db import db
+    _node()
+    with db() as conn:
+        regular = servers.select(conn, 'wg')
+        profile = {**servers.decode(regular), 'configuration': 'wg-guest'}
+        conn.execute("""INSERT INTO servers(id,name,protocol,settings,state,health,created)
+                        VALUES ('guest','Guests','wg',?,'active','ok',0)""",
+                     (config.encrypt(json.dumps(profile)),))
+        assert flow_auto_provision._node(conn, guest=True)['id'] == 'guest'
+        assert flow_auto_provision._node(conn)['id'] == regular['id']
+        assert servers.select(conn, 'wg')['id'] == regular['id']

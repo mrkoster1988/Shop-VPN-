@@ -502,7 +502,7 @@ async def catalog(request: Request):
     return {'plans': plans, 'currency': 'XTR' if tg else 'RUB', 'protocols': options,
             'appearance':{k:v for k,v in appearance.items() if k not in ('version','updated')},
             'sale_notice':sale_notice,'pushok_id':pushok_identity.public_capabilities(),
-            'mtproxy_login':mtproxy_web_login.enabled(), 'trial':trials.offer(customer), **payment, 'bot_username': c.BOT_USERNAME if c.BOT_TOKEN else None,
+            'guest_access':c.SECURE_COOKIE, 'mtproxy_login':mtproxy_web_login.enabled(), 'trial':trials.offer(customer), **payment, 'bot_username': c.BOT_USERNAME if c.BOT_TOKEN else None,
             'support': public_settings['support'],
             'receipts': not tg and payment['payment_mode'] in ('yookassa','sbp') and os.getenv('YOOKASSA_RECEIPTS') == 'true',
             'terms': public_settings['terms']}

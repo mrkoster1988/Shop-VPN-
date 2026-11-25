@@ -422,6 +422,16 @@ def init_db():
         for column,definition in (('credential_id','TEXT'),('primary_key_state',"TEXT NOT NULL DEFAULT 'active'"),('rotation_error','TEXT')):
             if column not in sub_columns:
                 conn.execute('ALTER TABLE subscriptions ADD COLUMN '+column+' '+definition)
+        if 'wg_configuration' not in sub_columns:
+            conn.execute("ALTER TABLE subscriptions ADD COLUMN wg_configuration TEXT")
+            # An unattempted grant has never touched the original interface.
+            conn.execute("""UPDATE subscriptions SET wg_configuration='wg-guest'
+                WHERE state='pending' AND secret IS NULL AND id IN (
+                    SELECT g.subscription_id FROM flow_auto_grants g
+                    JOIN flow_guest_trials t ON t.user_id=g.user_id
+                    WHERE g.state='pending' AND g.attempts=0)
+                AND NOT EXISTS (SELECT 1 FROM wgdashboard_keys k
+                    WHERE k.server_id=subscriptions.server_id AND k.credential_id=subscriptions.id)""")
         conn.execute('CREATE INDEX IF NOT EXISTS subscriptions_server ON subscriptions(server_id,state,expires)')
         device_columns = {row['name'] for row in conn.execute('PRAGMA table_info(devices)')}
         if 'credential_id' not in device_columns:

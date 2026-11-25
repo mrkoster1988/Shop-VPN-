@@ -7,7 +7,7 @@ const tick=()=>new Promise(setImmediate);
 async function customerPage(options={}) {
   const clock={now:Date.now()}, timers=new Map(), elements=new Map(), calls=[], overrides=new Map(), intervals=[];
   let timerId=0,elementId=0;
-  const catalog={protocols:[{id:'xui',name:'VLESS',available:true},{id:'wg',name:'WireGuard',available:true}],plans:[{id:'month',name:'Месяц',days:30,price:199,version:1}],currency:'RUB',support:'Поддержка: @support',bot_username:'',terms:'Условия',payment_mode:'manual'};
+  const catalog={guest_access:true,protocols:[{id:'xui',name:'VLESS',available:true},{id:'wg',name:'WireGuard',available:true}],plans:[{id:'month',name:'Месяц',days:30,price:199,version:1}],currency:'RUB',support:'Поддержка: @support',bot_username:'',terms:'Условия',payment_mode:'manual'};
   const subscription={id:'sub-a',protocol:'xui',state:'active',expires:Math.floor(clock.now/1000)+3600};
   const state={customer:{id:1,email:'buyer@example.com',subscriptions:[subscription],orders:[]},devices:[],catalog,config:{protocol:'xui',config:'vless://private-secret@vpn.example'},copied:[],opened:[],telegramOpened:[]};
   const telegram={initData:'',openLink:(...args)=>state.telegramOpened.push(args)};

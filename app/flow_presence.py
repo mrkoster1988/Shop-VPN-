@@ -54,7 +54,7 @@ async def snapshot():
     async with _lock:
         if _cached is not None and time.monotonic() < _until:
             return _cached
-        subscriptions = all_rows("""SELECT s.id,s.server_id,s.user_id,s.protocol,s.credential_id,
+        subscriptions = all_rows("""SELECT s.id,s.server_id,s.user_id,s.protocol,s.credential_id,s.wg_configuration,
             s.expires,s.state,s.primary_key_state,b.mtproxy_uuid FROM subscriptions s
             JOIN flow_bridge_identities b ON b.shop_user_id=s.user_id WHERE s.protocol='wg'""")
         now = int(time.time())
@@ -74,7 +74,7 @@ async def snapshot():
                 public_key = wgdashboard.WGDashboard.identity(key)
             except Exception:
                 continue
-            nodes.setdefault(node['id'], (profile, {}))[1][public_key] = subject
+            nodes.setdefault((node['id'], profile.get('configuration')), (profile, {}))[1][public_key] = subject
         async def observe(client, profile, owners):
             try:
                 peers = await wgdashboard.WGDashboard(profile).peer_rows(client)

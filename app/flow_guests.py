@@ -46,13 +46,13 @@ def claim(device, authorization, network):
             if recent >= 10:
                 raise HTTPException(429, 'Повторите позже', headers={'Retry-After': '3600'})
             used = conn.execute('SELECT count(*) FROM flow_auto_grants').fetchone()[0]
-            node = flow_auto_provision._node(conn)
+            node = flow_auto_provision._node(conn, guest=True)
             if used >= setting['max_users'] or node is None:
                 return {'status': 'unavailable', 'subscription_url': None}
             uid = insert_user(conn, created=now)
             conn.execute('INSERT INTO flow_guest_trials VALUES (?,?,?,?,?)',
                          (device, key, uid, network_hash, now))
-            flow_auto_provision.reserve(conn, uid, node, setting, now, 7)
+            flow_auto_provision.reserve(conn, uid, node, setting, now, 7, guest=True)
     return flow_identity_bridge.subscription_reply(uid, 'unavailable')
 
 router = APIRouter(prefix='/api/guest')

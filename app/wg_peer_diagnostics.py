@@ -92,7 +92,7 @@ async def inspect(user_id):
     if not server or server['protocol'] != 'wg':
         return {**base, 'status': 'server_missing', 'can_retry': False}
     try:
-        profile = servers.decode(server)
+        profile = servers.subscription_profile(server, sub)
     except Exception:
         return {**base, 'status': 'server_configuration_error', 'can_retry': False}
     if profile.get('api') != 'wgdashboard':
@@ -161,7 +161,7 @@ async def restore_primary(user_id):
                 raise HTTPException(409, 'Исходный узел недоступен. '
                                     'Автоматический перенос на другой сервер запрещён.')
             try:
-                profile = servers.decode(dict(row))
+                profile = servers.subscription_profile(dict(row), sub)
                 identity = service.primary_identity(sub)
             except Exception:
                 raise HTTPException(409, 'Не удалось проверить привязку пира') from None

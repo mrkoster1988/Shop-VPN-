@@ -94,7 +94,7 @@ def _subscription(conn, user_id):
             server['state'] not in ('active', 'draining') or server['health'] == 'error'):
         raise HTTPException(409, 'Исходный WGDashboard недоступен; миграция не выполняется.')
     try:
-        profile = servers.decode(dict(server))
+        profile = servers.subscription_profile(dict(server), sub)
     except Exception:
         raise HTTPException(409, 'Не удалось проверить конфигурацию исходного WGDashboard') from None
     if (profile.get('api') != 'wgdashboard' or

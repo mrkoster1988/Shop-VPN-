@@ -61,9 +61,10 @@ def policy():
             }}
 
 
-def _node(conn):
+def _node(conn, *, guest=False):
     """Общий выбор новых узлов плюс обязательный защищённый срок WGDashboard."""
     from . import server_routing
+    shared = None
     for row in server_routing.candidates(conn,'wg'):
         try:
             profile=servers.decode(row)
@@ -71,8 +72,12 @@ def _node(conn):
             continue
         if (profile.get('api')=='wgdashboard' and profile.get('schedule_expiry') is True
                 and bool(profile.get('panel_timezone'))):
-            return row
-    return None
+            dedicated = profile.get('configuration') == servers.GUEST_CONFIGURATION
+            if guest == dedicated:
+                return row
+            if guest and shared is None:
+                shared = row
+    return shared
 
 
 async def update_policy(data: PolicyUpdate):
@@ -88,7 +93,7 @@ async def update_policy(data: PolicyUpdate):
                     raise HTTPException(409, 'Для автовыдачи требуется HTTPS.')
                 if not shop_settings.terms_configured():
                     raise HTTPException(409, 'Сначала настройте условия доступа.')
-                if _node(conn) is None:
+                if _node(conn) is None and _node(conn, guest=True) is None:
                     raise HTTPException(409, 'Нужен активный WGDashboard с заданием окончания доступа.')
             if (bool(row['enabled']), row['days'], row['max_users']) != (
                     data.enabled, data.days, data.max_users):
@@ -136,13 +141,13 @@ def enqueue(user_id: int) -> str:
         return 'pending'
 
 
-def reserve(conn, user_id, node, setting, now, days):
+def reserve(conn, user_id, node, setting, now, days, *, guest=False):
     """Reserve the subscription and its worker job inside the caller's transaction."""
     sid = str(uuid.uuid4())
     target = now + days * 86400
     conn.execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state,"
-                 "server_id,device_limit,access_source) VALUES (?,?,'wg',0,'pending',?,0,'trial')",
-                 (sid, user_id, node['id']))
+                 "server_id,device_limit,access_source,wg_configuration) VALUES (?,?,'wg',0,'pending',?,0,'trial',?)",
+                 (sid, user_id, node['id'], servers.GUEST_CONFIGURATION if guest else None))
     conn.execute("INSERT INTO flow_auto_grants(user_id,subscription_id,target_expires,"
                  "policy_version,state,created,next_attempt,attempts) "
                  "VALUES (?,?,?,?,'pending',?,?,0)",
