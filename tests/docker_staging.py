@@ -163,7 +163,7 @@ class Staging:
                      'wgdashboard_expirations','hysteria2_credentials','tuic_credentials','update_checker',
                      'flow_wireguard_versions','flow_wireguard_links',
                      'flow_wireguard_device_versions','flow_wireguard_device_links',
-                     'flow_auto_policy','flow_auto_grants','flow_owner_extensions','flow_bridge_identities','flow_bridge_devices','flow_bridge_nonces','staff_role_assignments','staff_role_policies','shop_runtime_settings','staff_permission_limits','shop_payment_policy','shop_finance_entries','shop_finance_actions','server_routing_policy','server_routing_nodes','server_probe_history','shop_id_policy','shop_id_links','shop_id_requests','shop_id_sessions','mtproxy_web_requests'}
+                     'flow_auto_policy','flow_auto_grants','flow_guest_trials','flow_owner_extensions','flow_bridge_identities','flow_bridge_devices','flow_bridge_nonces','staff_role_assignments','staff_role_policies','shop_runtime_settings','staff_permission_limits','shop_payment_policy','shop_finance_entries','shop_finance_actions','server_routing_policy','server_routing_nodes','server_probe_history','shop_id_policy','shop_id_links','shop_id_requests','shop_id_sessions','mtproxy_web_requests'}
         added=sorted(set(new)-set(old))
         for table in ('flow_wireguard_device_links','flow_wireguard_device_versions'):
             check(table not in added or current['counts'].get(table)==0,
@@ -177,6 +177,8 @@ class Staging:
         for table in ('flow_bridge_identities','flow_bridge_devices','flow_bridge_nonces'):
             check(table not in added or current['counts'].get(table) == 0,
                   'Automatic identity bridge created users/devices during migration')
+        check('flow_guest_trials' not in added or current['counts'].get('flow_guest_trials') == 0,
+              'Unexpected guest trials during migration')
         check('flow_auto_grants' not in added or current['counts'].get('flow_auto_grants') == 0,
               'Unexpected automatic starter grants during migration')
         check('admin_subscription_revocations' not in added or
