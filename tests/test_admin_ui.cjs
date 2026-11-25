@@ -20,7 +20,7 @@ function adminPage(options={}) {
   const context = vm.createContext({
     document:{getElementById:element, querySelector:()=>({content:'/shop'})},
     crypto:require('node:crypto').webcrypto, URLSearchParams, FormData:options.FormData || FormData,
-    fetch:(url,opts)=>new Promise(resolve=>{ requests.push(url); bodies.push(opts.body ? JSON.parse(opts.body) : null); replies.push((body,status=200)=>resolve({ok:status<400,json:async()=>body})); }),
+    fetch:(url,opts)=>new Promise(resolve=>{ requests.push(url); bodies.push(opts.body ? JSON.parse(opts.body) : null); replies.push((body,status=200)=>resolve({ok:status<400,status,json:async()=>body})); }),
   });
   vm.runInContext(fs.readFileSync('app/static/admin.js','utf8'), context);
   vm.runInContext("token='admin-test-token'", context);
@@ -1329,4 +1329,35 @@ test('WireGuard peer diagnosis appears for developer only and contains no creden
   admin.reply(response);await other;
   assert.doesNotMatch(admin.element('user-subscriptions').innerHTML,/data-peer-check=/);
   assert.doesNotMatch(admin.element('user-subscriptions').innerHTML,/data-peer-retry=/);
+});
+
+test('restore staff session from server on reload without a saved password',async()=>{
+  const page=adminPage();
+  page.run('refresh=async()=>{}');
+  const request=page.run('restoreStaffSession()');
+  assert.equal(page.requests[0],'/shop/api/admin/auth/me');
+  page.replyAt(0,{id:7,role:'owner',email:'owner@example.invalid'});
+  await request;
+  assert.equal(page.element('dashboard').hidden,false);
+  assert.equal(page.element('admin-login').hidden,true);
+  assert.equal(page.element('staff-password').value,'');
+  assert.equal(page.run('role'),'owner');
+});
+test('expired session restores login and never opens dashboard',async()=>{
+  const page=adminPage();
+  page.element('dashboard').hidden=true;
+  const request=page.run('restoreStaffSession()');
+  page.replyAt(0,{detail:'Войдите'},401);
+  await request;
+  assert.equal(page.element('dashboard').hidden,true);
+  assert.equal(page.element('admin-login').hidden,false);
+});
+test('a dashboard data failure is not a login failure',async()=>{
+  const page=adminPage();
+  page.run("refresh=async()=>{throw new Error('offline')}");
+  const request=page.run('restoreStaffSession()');
+  page.replyAt(0,{id:7,role:'owner'});
+  await request;
+  assert.equal(page.element('dashboard').hidden,false);
+  assert.match(page.element('error').textContent,/offline/);
 });
