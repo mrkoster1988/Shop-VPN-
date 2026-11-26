@@ -908,9 +908,9 @@ test('updates schedule conflict can be recovered by loading saved settings',asyn
  page.reply(updatesStatus({settings:{enabled:false,check_time:'18:00',timezone:'UTC',version:2}}));await reset;
  assert.equal(page.element('updates-time').value,'18:00');assert.equal(page.run('updatesVersion'),2);
 });
-test('updates date falls back to explicitly labelled UTC for a newer server timezone',()=>{
+test('update timestamps use Moscow time even for an unknown legacy server timezone',()=>{
  const page=adminPage();
- assert.match(page.run("updatesDate(1794502800,'Unknown/New-Timezone')"),/ UTC$/);
+ assert.equal(page.run("updatesDate(1794502800,'Unknown/New-Timezone')"),"12.11.2026, 20:00:00 МСК");
 });
 
 function hostReady(extra={}) {return {enabled:true,reachable:true,job:{id:'11111111-1111-4111-8111-111111111111',kind:'plan',tag:'v0.056',previous:'v0.055',state:'ready',can_apply:true,commit:'a'.repeat(40),expires:Math.floor(Date.now()/1000)+600,...extra}};}
