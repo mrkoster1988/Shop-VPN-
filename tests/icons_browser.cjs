@@ -77,7 +77,7 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
       const shot=await page.screenshot({type:'jpeg',quality:45});
       console.log('ICON_PREVIEW '+name+' '+shot.toString('base64'));
      }
-     await page.locator('.hero a.button').click();assert.equal(new URL(page.url()).hash,'#plans');
+     await page.locator('.hero a[href="#plans"]').click();assert.equal(new URL(page.url()).hash,'#plans');
      if(theme==='browser'){
       await page.locator('#account-btn').click();await page.locator('#auth-dialog').waitFor({state:'visible'});
      }else{
@@ -86,7 +86,7 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
       await page.locator('[data-close="account-dialog"]').click();
       await page.locator('[data-miniapp-route="help"]').click();assert.equal(new URL(page.url()).hash,'#help');
       await page.locator('#miniapp-account').click();await page.locator('[data-account-section="settings"]').click();await page.locator('#logout').click();
-      await page.waitForFunction(()=>document.getElementById('account-label').textContent==='Личный кабинет ↗' && !document.getElementById('account-dialog').open);
+      await page.waitForFunction(()=>document.getElementById('account-label').textContent==='Войти' && !document.getElementById('account-dialog').open);
       assert.equal(await page.locator('#account-btn .pushok-icon').count(),1,'Выход сохраняет значок');
      }
      assert.deepEqual(errors,[]);assert.deepEqual(unexpected,[]);cases++;
