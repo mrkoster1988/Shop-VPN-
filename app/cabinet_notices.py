@@ -6,6 +6,7 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from typing import Literal
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -176,10 +177,32 @@ class Receipt(BaseModel):
 
 
 @router.post('/api/flow/cabinet-notices/{operation}')
-async def exchange(operation: Literal['claim','finish','resume-chat'], request: Request):
+async def exchange(operation: Literal['claim','finish','resume-chat','history'], request: Request):
     raw = await request.body()
     authorize(operation.encode()+b':'+raw,request.headers.get('X-Pushok-Management',''),DOMAIN)
     now = int(time.time())
+    if operation == 'history':
+        try:
+            query=json.loads(raw)
+            subject=str(UUID(query['subject']))
+            offset=query.get('offset',0)
+            if type(offset) is not int or not 0<=offset<=2147483600:raise ValueError()
+        except (TypeError,KeyError,ValueError,AttributeError):
+            raise HTTPException(422,'Invalid history request') from None
+        policy=runtime_settings.get('notifications')
+        with db() as conn:
+            rows=conn.execute("""SELECT n.* FROM cabinet_vpn_notices n
+                JOIN flow_bridge_identities b ON b.shop_user_id=n.user_id
+                JOIN users u ON u.id=b.shop_user_id AND u.telegram_id=b.telegram_id
+                WHERE b.mtproxy_uuid=? ORDER BY n.id DESC LIMIT 21 OFFSET ?""",(subject,offset)).fetchall()
+        items=[]
+        for row in rows[:20]:
+            delivery=row['outcome'] or ('unknown' if row['delivered'] is not None else 'queued')
+            if row['delivered'] is None and not policy['expiry_enabled' if row['kind']=='reminder' else 'order_ready_enabled']:
+                delivery='paused'
+            items.append({'created':row['created'],'kind':row['kind'],'delivery':delivery,
+                          'text':message(row,policy).removeprefix('Pushok ИИ').strip()})
+        return {'items':items,'next':offset+20 if len(rows)>20 else None}
     if operation == 'claim':
         data = json.loads(raw or b'{}')
         return {'items':claim(now,data.get('scheduled_by_cabinet') is True,

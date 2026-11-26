@@ -112,3 +112,24 @@ def test_sender_switch_claims_only_confirmed_failures_from_old_bot(client):
     for e in items:
         execute("UPDATE cabinet_vpn_notices SET delivered=?,lease=NULL,outcome='blocked' WHERE id=?",(now,e['id']))
     assert not notices.claim(now+2,True,True)
+
+
+def test_signed_history_is_per_recipient_and_paginated(client,monkeypatch):
+    import hashlib,hmac,json
+    setup_user(client)
+    subject,now=str(uuid4()),int(time.time())
+    execute('UPDATE users SET telegram_id=9218 WHERE id=1')
+    execute('INSERT INTO flow_bridge_identities VALUES (?,?,1,?)',(subject,9218,now))
+    for i in range(22):
+        execute("INSERT INTO cabinet_vpn_notices(user_id,kind,payload,outcome) VALUES(1,'premium','{}','waiting_chat')")
+    monkeypatch.setenv('FLOW_SHOP_BRIDGE_SECRET','aa'*32)
+    def page(who,offset):
+        raw=json.dumps({'subject':who,'offset':offset}).encode()
+        mac=hmac.new(bytes.fromhex('aa'*32),notices.DOMAIN+str(now).encode()+b':history:'+raw,hashlib.sha256).hexdigest()
+        return client.post('/api/flow/cabinet-notices/history',content=raw,headers={'X-Pushok-Management':str(now)+':'+mac})
+    assert page(str(uuid4()),0).json()=={'items':[],'next':None}
+    first=page(subject,0).json()
+    assert len(first['items'])==20 and first['next']==20
+    assert {row['delivery'] for row in first['items']}=={'waiting_chat'}
+    assert len(page(subject,20).json()['items'])==2 and page(subject,20).json()['next'] is None
+    assert page(subject,-1).status_code==422
