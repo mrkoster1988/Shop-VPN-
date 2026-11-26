@@ -60,6 +60,9 @@ def router_for(purchase_model, purchase, order_status):
     @router.post('/plans')
     async def plans(identity: Identity, request: Request):
         user = await account('plans',identity,request)
+        from . import premium
+        if premium.checkout_blocked(user['id']):
+            return reply({'plans':[],'available':False,'premium':True,'terms':shop_settings.terms()})
         items = all_rows('SELECT id,name,days,stars AS amount,version FROM plans WHERE enabled=1 AND is_free=0 AND stars>0 ORDER BY position,id')
         options,_ = runtime_settings.catalog_options(user,providers.available)
         policy = payment_policy.catalog(user)

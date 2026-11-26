@@ -1359,7 +1359,7 @@ async function loadUser(page) {
           <p class="record-note">Сначала отзываются пиры на сервере. Оплаченные заказы и финансовая история сохраняются.</p>`
         : '';
       return `<article class="subscription"><b>${esc(protocolLabel(sub.protocol))}</b>
-        <p>${esc(status)} · Срок: ${esc(dateTime(sub.expires))}</p>
+        <p>${esc(status)} · Срок: ${esc(sub.expires===253402214400?'Premium · бессрочно':dateTime(sub.expires))}</p>
         ${sub.protocol==='wg' ? '<p>Доступ закреплён за аккаунтом Pushok — без привязки к телефону.</p>'
           : '<p>Дополнительных профилей: '+(sub.device_limit ?? 4)+'</p>'}
         ${tools}</article>`;

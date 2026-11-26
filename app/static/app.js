@@ -112,6 +112,7 @@ function show(id) {
   if (id === 'account-dialog') {setMiniappActive('account');setShopMobileActive('account');}
   syncTelegramBackButton();
 }
+function accessTerm(ts){return ts===253402214400?'Premium · бессрочно':'доступ до '+date(ts);}
 function date(ts) { return new Date(ts*1000).toLocaleDateString('ru-RU'); }
 function protocolName(id) { return ({wg:'Pushok Flow',xui:'VLESS',vmess:'VMess',hysteria2:'Hysteria2',tuic:'TUIC v5'})[id] || id; }
 function profileAllowance(limit) { return limit===0 ? 'Только основной профиль' : 'Основной + до '+limit+' дополнительных профилей'; }
@@ -202,7 +203,7 @@ async function refreshMe() {
       $('config-dialog').close(); clearConnection();
     } else if (Math.min(current.expires,connection.deviceExpires || Infinity)!==connection.expires) {
       connection.expires=Math.min(current.expires,connection.deviceExpires || Infinity);
-      $('config-summary').textContent=protocolName(current.protocol)+' · доступ до '+date(connection.expires);
+      $('config-summary').textContent=protocolName(current.protocol)+' · '+accessTerm(connection.expires);
       scheduleConnectionExpiry();
     }
   }
@@ -248,7 +249,7 @@ function renderAccount() {
     const renewal=s.state!=='pending'?'<button type="button" class="small secondary" data-renew="'+esc(s.protocol)+'">'+(active?'Продлить подписку':'Возобновить подписку')+'</button>':'';
     return '<article class="subscription"><div class="subscription-top"><h3>'+esc(protocolName(s.protocol))+'</h3><span class="status '+stateClass+'">'+accessLabel+'</span></div>'+
       (s.access_source==='trial'?'<p class="subscription-kind">Пробный доступ</p>':'')+
-      '<p class="subscription-expiry">'+(active?'Доступ до '+date(s.expires):s.state==='pending'?'Подключение готовится':s.state==='revoked'?'Доступ отозван':'Подписка закончилась')+'</p><p>'+esc(profileAllowance(s.device_limit ?? 4))+'</p>'+
+      '<p class="subscription-expiry">'+(active?(s.expires===253402214400?'Premium · бессрочно':'Доступ до '+date(s.expires)):s.state==='pending'?'Подключение готовится':s.state==='revoked'?'Доступ отозван':'Подписка закончилась')+'</p><p>'+esc(profileAllowance(s.device_limit ?? 4))+'</p>'+
       (s.primary_key_state==='rotating'?'<p>Меняем основной ключ'+(s.primary_retrying?' · повторим после ошибки':'')+'. Дополнительные профили не меняются.</p>':'')+
       '<div class="subscription-primary">'+flow+configure+renewal+'</div>'+
       (options.length?'<details class="subscription-options" data-subscription-options="'+esc(s.id)+'"'+(expanded.has(s.id)?' open':'')+'><summary>Управление подключением</summary><div class="actions">'+options.join('')+'</div></details>':'')+'</article>';
@@ -575,7 +576,7 @@ async function openConnection(sid, device=null) {
     connection = {id:sid,deviceId:device?.id,deviceExpires:device?.expires,protocol:sub.protocol,remoteSubscription:sub.protocol==='xui' && result.config.startsWith('https://'),expires:Math.min(sub.expires,device?.expires || Infinity),path};
     if (!connectionReady()) return;
     $('config-value').value = result.config;
-    $('config-summary').textContent = (device ? device.name+' · ' : '')+protocolName(sub.protocol)+' · доступ до '+date(connection.expires);
+    $('config-summary').textContent = (device ? device.name+' · ' : '')+protocolName(sub.protocol)+' · '+accessTerm(connection.expires);
     $('config-status').textContent = 'Настройки готовы. Следуйте трём шагам ниже.';
     $('config-support').textContent = catalog.support;
     $('download-config').href = basePath+path+'/download';
@@ -869,7 +870,7 @@ async function refreshDevices() {
   if (connection?.deviceId) {
     const current=result.devices.find(d=>d.id===connection.deviceId);
     if (!current?.ready || !parent) { $('config-dialog').close();clearConnection(); }
-    else { connection.deviceExpires=current.expires;connection.expires=Math.min(current.expires,parent.expires);$('config-summary').textContent=current.name+' · '+protocolName(current.protocol)+' · доступ до '+date(connection.expires);scheduleConnectionExpiry(); }
+    else { connection.deviceExpires=current.expires;connection.expires=Math.min(current.expires,parent.expires);$('config-summary').textContent=current.name+' · '+protocolName(current.protocol)+' · '+accessTerm(connection.expires);scheduleConnectionExpiry(); }
   }
 }
 $('devices-refresh').onclick=()=>refreshDevices().catch(e=>toast(e.message));

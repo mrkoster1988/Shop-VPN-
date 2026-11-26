@@ -370,12 +370,15 @@ async def tick():
         if not previous:
             await fulfill(order['id'])
     async with lock:
-        for sub in all_rows("SELECT * FROM subscriptions WHERE state='active' AND expires<=?", (now,)):
+        from .premium import NO_EXPIRY
+        for sub in all_rows("SELECT * FROM subscriptions WHERE state='active' AND expires<=? AND expires!=?", (now,NO_EXPIRY)):
             try:
                 await disable_subscription_peers(sub)
                 execute("UPDATE subscriptions SET state='expired' WHERE id=?", (sub['id'],))
             except Exception as exc:
                 log.warning('Expiry retry subscription=%s error=%s', sub['id'], type(exc).__name__)
+    from . import premium
+    await premium.resume_pending()
     await process_devices()
     from . import flow_auto_provision
     await flow_auto_provision.process_pending()
@@ -572,7 +575,10 @@ def stars_match(order, tg_id, payment):
 
 
 def reserve_checkout(query):
+    from . import premium
     order = one('SELECT * FROM orders WHERE id=?', (query.get('invoice_payload', ''),))
+    if order and order['protocol']=='wg' and premium.checkout_blocked(order['user_id']):
+        return False
     if not stars_match(order, query.get('from', {}).get('id'), query):
         return False
     if order['status'] == 'checkout' and order['checkout_id'] == query['id']:

@@ -12,7 +12,7 @@ import httpx
 from fastapi import HTTPException
 
 from . import servers, service, wgdashboard
-from . import wg_client_platform
+from . import premium, wg_client_platform
 from .db import db, all_rows
 
 DOMAIN = 'pushok-vpn-presence-v1'
@@ -116,7 +116,8 @@ async def snapshot(maintenance=False):
                  'online':None,'last_seen':None,'received':None,'sent':None,'activity_known':False,
                  'legacy_reminder':bool(sub['reminder']),'expected':0,'observed':0,'has_recent':False}
             row.update(renewal_version=sub['renewal_version'] or 0,renewal_name=sub['renewal_name'],renewal_plan_id=sub['renewal_plan_id'])
-            row['tariff_name']=sub['assigned_name'] or sub['tariff'] or (
+            row['is_premium']=premium.active(sub)
+            row['tariff_name']=('Premium' if row['is_premium'] else None) or sub['assigned_name'] or sub['tariff'] or (
                 'Гостевой доступ' if sub['wg_configuration']==servers.GUEST_CONFIGURATION else
                 'Пробный доступ' if sub['access_source']=='trial' else None)
             # An auto-grant reservation can exist before there is a profile to download.
@@ -131,8 +132,13 @@ async def snapshot(maintenance=False):
                      'action':'shorten' if sub['target_expires']<sub['before_expires'] else 'extend'}
             if sid in changes:
                 operation=changes[sid]
-                row['pending_change']={k:operation[k] for k in ('request_id','action')}
-                row['pending_change'].update(value=operation['days'],before=operation['before_expiry'])
+                if operation['action']=='tariff':
+                    import json
+                    proposal=json.loads(operation['identity'])
+                    row['tariff_retry']={k:proposal[k] for k in ('plan_id','plan_version','name')}
+                else:
+                    row['pending_change']={k:operation[k] for k in ('request_id','action')}
+                    row['pending_change'].update(value=operation['days'],before=operation['before_expiry'])
             if state=='revoked':row['revoked_at']=revoked.get(sid)
             if state!='active':continue
             for device in [None,*devices.get(sid,[])]:

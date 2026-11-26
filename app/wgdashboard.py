@@ -183,6 +183,38 @@ class WGDashboard:
         if await self.peer(client, public_key) is not None:
             raise PanelError('WGDashboardPeerDeleteNotConfirmed')
 
+    async def clear_expiration(self, client, private_key, server_id, credential_id):
+        from .db import db
+        key = self.identity(private_key)
+        with db() as conn:
+            record = conn.execute('SELECT job_id FROM wgdashboard_expirations WHERE server_id=? AND credential_id=?',
+                                  (server_id, credential_id)).fetchone()
+
+        async def scheduled():
+            peer = await self.peer(client, key)
+            if not peer or peer[0] != 'configurationPeers':
+                raise PanelError('WGDashboardPeerUnavailable')
+            jobs = peer[1].get('jobs')
+            if not isinstance(jobs,list) or not all(isinstance(j,dict) for j in jobs):
+                raise PanelError('UnsupportedWGDashboardJobsSchema')
+            result = []
+            for job in jobs:
+                if job.get('Action') in ('delete','restrict') or (record and job.get('JobID')==record['job_id']):
+                    if not record or job.get('JobID')!=record['job_id']:
+                        raise PanelError('UnmanagedWGDashboardSchedule')
+                    result.append(job)
+            return result
+
+        if await scheduled():
+            payload = {'JobID':record['job_id'], 'Configuration':self.profile['configuration'], 'Peer':key}
+            await self.request(client,'DELETE','PeerScheduleJob',json=payload)
+            if await scheduled():
+                raise PanelError('WGDashboardExpiryRemovalNotConfirmed')
+        if record:
+            with db() as conn:
+                conn.execute('DELETE FROM wgdashboard_expirations WHERE server_id=? AND credential_id=? AND job_id=?',
+                             (server_id, credential_id, record['job_id']))
+
     async def ensure_expiration(self, client, private_key, expires_at, server_id, credential_id):
         """Create/update the panel's delete job and confirm it before returning access."""
         import time

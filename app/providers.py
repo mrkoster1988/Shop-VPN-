@@ -54,6 +54,9 @@ async def provision(sub):
     if sub['protocol'] in ('hysteria2', 'tuic'):
         return await sui_client(sub)
     row, profile = servers.for_subscription(sub)
+    from .premium import NO_EXPIRY
+    if sub['expires']==NO_EXPIRY and profile.get('api')!='wgdashboard':
+        raise ValueError('Permanent peer requires WGDashboard')
     if profile.get('api') == 'wgdashboard':
         if sub.get('require_existing_wg_key', False):
             private_key = wgdashboard.stored_private_key(row['id'], sub['id'], create=False)
@@ -62,7 +65,9 @@ async def provision(sub):
         async with httpx.AsyncClient(timeout=25, follow_redirects=False, trust_env=False) as client:
             adapter = wgdashboard.WGDashboard(profile)
             await adapter.ensure_peer(client, private_key, wg_activity.display(sub.get('user_id'),sub['id'],sub.get('wg_device_name')))
-            if profile.get('schedule_expiry'):
+            if sub['expires']==NO_EXPIRY:
+                await adapter.clear_expiration(client,private_key,row['id'],sub['id'])
+            elif profile.get('schedule_expiry'):
                 await adapter.ensure_expiration(
                     client, private_key, sub['expires'], row['id'], sub['id'])
             return await adapter.download_config(client, private_key)

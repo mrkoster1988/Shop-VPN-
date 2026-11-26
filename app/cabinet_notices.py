@@ -76,10 +76,14 @@ def message(row, policy):
     kind, data = row['kind'], json.loads(row['payload'])
     if kind == 'reminder':
         lines = [policy['expiry_text'], 'Доступ до '+date(row['expiry'])+'.']
+    elif kind == 'premium':
+        lines = ['✨ Вам подарили бессрочный Premium!',
+                 'Спасибо, что вы с Пушком. Пусть на связи всегда будут те, по кому вы скучаете, а хорошие новости находят вас почаще. 💛',
+                 'Оплата за счёт заведения. Продлевать подписку не придётся. Обнимаем лапками! 🐾']
     elif kind == 'renewal_plan':
         price = f"⭐ {data['stars']} Stars" if data['stars'] else 'Бесплатно'
         lines = ['✨ Ваш новый тариф — «'+data['name']+'».',
-                 f"{price} · {data['days']} дн.\n📱 Дополнительные профили · {data['device_limit']}",'Срок действующей подписки сохранён. За смену тарифа деньги не списывались.']
+                 f"{price} · {data['days']} дн.\n📱 Дополнительные профили · {data['device_limit']}",'Доступ до '+date(data['new_expiry'])+'.' if data.get('new_expiry') else 'Срок действующей подписки сохранён. За смену тарифа деньги не списывались.']
     elif kind == 'removed':
         lines = ['🗂 Подписка удалена. Когда снова понадобится VPN, откройте раздел подключения.']
     elif kind == 'created':

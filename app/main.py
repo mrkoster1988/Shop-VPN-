@@ -812,6 +812,9 @@ async def purchase_for_user(data, user, *, order_id=None, cabinet_checkout=False
     if not providers.available(data.protocol, user['id']):
         raise HTTPException(503, 'Этот способ подключения ещё не настроен')
     async with service.lock:
+        from . import premium
+        if data.protocol=='wg' and premium.checkout_blocked(user['id']):
+            raise HTTPException(409,'Бессрочный Premium уже активен.')
         selected = one('SELECT is_free FROM plans WHERE id=? AND enabled=1',(data.plan,))
         # Free plans are issued without creating an invoice, even when a
         # payment provider is not configured.

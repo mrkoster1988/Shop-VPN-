@@ -71,6 +71,8 @@ async def revoke_locked(sid, request_id=None):
         if not found:
             raise HTTPException(404, 'Подписка не найдена')
         sub = dict(found)
+        if conn.execute("SELECT 1 FROM vpn_access_changes WHERE subscription_id=? AND action='tariff' AND applied IS NULL",(sid,)).fetchone():
+            raise HTTPException(409,'vpn_pending_operation')
         if conn.execute("SELECT 1 FROM flow_owner_extensions WHERE subscription_id=? AND status='pending'",
                         (sid,)).fetchone():
             raise HTTPException(409, 'Есть незавершённое продление WireGuard. Сначала выполните сверку.')

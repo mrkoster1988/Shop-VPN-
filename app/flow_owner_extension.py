@@ -141,6 +141,8 @@ def proposal(user_id, days, shorten=False):
             (sub['id'],)).fetchone()
         if blocked:
             raise HTTPException(409, 'Предыдущее продление не завершено; повторите его запрос.')
+        from . import premium
+        if premium.active(sub):raise HTTPException(409,'Измените бессрочный тариф в карточке подписки.')
         new_expiry = target_expiry(int(sub['expires']), days, shorten, int(time.time()))
         return {
             'subscription_id': sub['id'],
@@ -176,6 +178,8 @@ async def extend(user_id, command: Extension, staff_id=None):
                 raise HTTPException(409, 'Срок подписки изменился. Пересчитайте продление.')
             shorten = command.confirm == 'SHORTEN_ACCOUNT_WIREGUARD'
             # The owner must first obtain a short-lived server-side plan.
+            from . import premium
+            if premium.active(sub):raise HTTPException(409,'Измените бессрочный тариф в карточке подписки.')
             expected = target_expiry(command.before_expires, command.days, shorten, int(time.time()))
             if ((shorten or command.before_expires >= int(time.time())) and command.target_expires != expected
                     or abs(command.target_expires - expected) > 300):
