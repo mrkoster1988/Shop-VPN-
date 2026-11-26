@@ -858,6 +858,7 @@ test('storefront applies customer-facing text safely and sales pause independent
  const p=await customerPage();
  p.state.catalog.appearance={brand_name:'Shop <img>',headline:'<script>headline</script>',description:'Описание',announcement:'<b>Объявление</b>',theme:'ocean'};
  Object.assign(p.state.catalog.protocols[0],{available:false,sales_allowed:false,trial_available:true});
+ p.run("protocol='xui'");
  p.state.catalog.sale_notice='Продажи временно закрыты';
  p.state.catalog.trial={enabled:true,eligible:true,days:1,version:1,claim:null};
  await p.run('refreshMe()');
@@ -866,7 +867,7 @@ test('storefront applies customer-facing text safely and sales pause independent
  assert.equal(p.element('shop-headline-default').hidden,true);
  assert.equal(p.element('shop-announcement').textContent,'<b>Объявление</b>');
  assert.equal(p.element('provider-note').textContent,'Продажи временно закрыты');
- assert.match(p.element('plan-list').innerHTML,/disabled/);
+ assert.doesNotMatch(p.element('plan-list').innerHTML,/data-plan/);
  assert.equal(p.element('trial-start').disabled,false);
  await assert.rejects(p.run("beginCheckout('month')"),/Продажи временно закрыты/);
 });
@@ -980,4 +981,19 @@ test('Shop only reserves a guest on click and opens the issued subscription from
   await p.run('refreshGuest(false)');
   assert.match(p.element('guest-open').href,/^pushokflow:\/\/subscription/);
   assert.match(p.element('guest-note').textContent,/Гостевой доступ до/);
+});
+
+test('storefront selects an active Flow sale, hides disabled protocols and handles an empty catalog',async()=>{
+ const p=await customerPage();
+ assert.equal(p.run('protocol'),'wg');
+ const items=p.state.catalog.protocols;
+ items[0].available=false;
+ p.run('renderPlans()');assert.equal(p.element('connection-options').hidden,true);
+ assert.doesNotMatch(p.element('protocols').innerHTML,/VLESS/);
+ items[1].available=false;
+ p.run('protocol=defaultConnection();renderPlans()');
+ assert.doesNotMatch(p.element('plan-list').innerHTML,/data-plan/);
+ assert.match(p.element('plan-list').innerHTML,/Связаться с поддержкой/);
+ items[0].available=true;
+ assert.equal(p.run('defaultConnection()'),'xui');
 });

@@ -1,0 +1,73 @@
+/* Customer storefront. All colours are local to Shop, including embedded checkout. */
+html body.shop-public-ui {
+  color-scheme:light; --bg:#f6f8f5; --ink:#14362e; --muted:#4d655e; --line:#ccdcd3;
+  --shop-accent:#08694f; --green:var(--shop-accent); --white:#fff; --shop-card:#fff; --shop-card-raised:#eef5f0;
+  color:var(--ink); background:var(--bg); font-family:Inter,system-ui,sans-serif;
+}
+html[data-shop-theme=ocean] body.shop-public-ui {--shop-accent:#14627b}
+html[data-shop-theme=graphite] body.shop-public-ui {--shop-accent:#414e56}
+html[data-shop-theme=violet] body.shop-public-ui {--shop-accent:#694b8d}
+body.shop-public-ui [hidden] {display:none!important}
+body.shop-public-ui header.nav {background:var(--bg);border-color:var(--line);backdrop-filter:none}
+body.shop-public-ui .nav .brand, body.shop-public-ui footer .brand {color:var(--ink)}
+body.shop-public-ui .nav .brand .muted, body.shop-public-ui .text-link, body.shop-public-ui a:not(.button):hover {color:var(--shop-accent)}
+body.shop-public-ui .nav nav>a, body.shop-public-ui .lead, body.shop-public-ui footer, body.shop-public-ui .steps p {color:var(--muted)}
+body.shop-public-ui .hero {margin-top:22px;padding:clamp(20px,4vw,50px);border-radius:26px;
+  background:linear-gradient(118deg,#eff6eb,#e2f2e7 65%,#d1ebdf);border:1px solid #d7e8db;
+  grid-template-columns:minmax(0,1.6fr) minmax(210px,.85fr)}
+body.shop-public-ui .hero h1 {font-size:clamp(36px,5.3vw,70px);letter-spacing:-.06em;margin:0;line-height:1.02}
+body.shop-public-ui .hero h1 em {background:none;color:var(--shop-accent);padding:0}
+body.shop-public-ui .hero .lead {max-width:34em;margin:14px 0 20px}
+body.shop-public-ui .hero .visual {display:grid;place-items:center;height:236px;background:none;border:0}
+body.shop-public-ui .visual img {width:100%;height:100%;object-fit:contain;max-height:236px}
+html body.shop-public-ui :is(.button,button:not(.secondary,.text-link,.close)):not(:disabled) {
+  background:var(--shop-accent);color:white;box-shadow:none}
+html body.shop-public-ui :is(.button,button:not(.secondary,.text-link,.close)):hover:not(:disabled) {background:color-mix(in srgb,var(--shop-accent) 85%,black);color:white}
+html body.shop-public-ui button.secondary, body.shop-public-ui .secondary {color:var(--ink);background:#fff;border:1px solid #acc6b9}
+html body.shop-public-ui button.secondary:hover:not(:disabled) {background:#eaf4ec}
+body.shop-public-ui :is(a,button,input,textarea,select,summary):focus-visible {outline:3px solid #237965;outline-offset:2px}
+body.shop-public-ui .hero .button .pushok-icon {filter:none}
+body.shop-public-ui .section {padding-top:32px}
+body.shop-public-ui #connection-options {margin:8px 0;width:fit-content}
+body.shop-public-ui summary {cursor:pointer}
+body.shop-public-ui #connection-options>summary {min-height:44px;align-content:center;color:var(--shop-accent)}
+body.shop-public-ui .segmented {background:#fff}
+html body.shop-public-ui .segmented button:not(.chosen) {background:#fff;color:var(--ink)}
+body.shop-public-ui .plans {gap:14px}
+body.shop-public-ui .plan {background:#fff;border:1px solid var(--line);border-radius:19px;padding:22px;min-height:200px}
+body.shop-public-ui .plan h3 {padding:0;color:var(--ink);font-size:18px;min-height:0}
+body.shop-public-ui .price {color:var(--ink)}
+body.shop-public-ui .price small {color:var(--muted)}
+body.shop-public-ui .plan p,body.shop-public-ui .plan ul,body.shop-public-ui .faq details p {color:var(--muted);font-size:14px}
+body.shop-public-ui .plan ul {margin:5px 0 16px}
+body.shop-public-ui .trial-offer, body.shop-public-ui .store-announcement {color:var(--ink);background:#e9f4ea;border-color:#c1dccb}
+body.shop-public-ui .how-guide, body.shop-public-ui .steps article {background:#fff;border-color:var(--line)}
+body.shop-public-ui .faq summary, body.shop-public-ui .steps h3 {color:var(--ink)}
+body.shop-public-ui .faq details {border-color:var(--line)}
+html body.shop-public-ui dialog {background:#fff;color:var(--ink);border-color:var(--line);box-shadow:0 18px 64px #17382b38}
+body.shop-public-ui dialog::backdrop {background:#152b2380}
+html body.shop-public-ui dialog :is(p,label,li,small,summary),body.shop-public-ui .subscription-options summary {color:var(--muted)}
+html body.shop-public-ui dialog :is(input,textarea,select),body.shop-public-ui dialog .close {background:#fff;color:var(--ink);border-color:#afc4b8}
+html body.shop-public-ui dialog :is(.subscription,.account-empty,.checkout-summary:not(:empty),.connection-steps li,#pushok-id-account,#referrals-panel,#config-status) {background:#eef5f0;color:var(--ink);border-color:var(--line)}
+body.shop-public-ui #account-dialog .account-shortcuts {background:white}
+body.shop-public-ui #account-dialog .account-shortcuts button {background:#f2f6f3;color:var(--ink);border-color:var(--line)}
+body.shop-public-ui #account-dialog .account-shortcuts button[aria-pressed=true] {color:white;background:var(--shop-accent)}
+body.shop-public-ui .status {background:#d9eee1;color:#164e36}
+body.shop-public-ui .status.pending {background:#fff1d4;color:#644917}
+body.shop-public-ui .status.canceled {background:#fae1e0;color:#773a3b}
+html body.shop-public-ui :is(.shop-mobile-nav,#miniapp-nav):not([hidden]) {background:#fff;border-color:var(--line);box-shadow:0 -4px 16px #2447330b}
+html body.shop-public-ui :is(.shop-mobile-nav,#miniapp-nav) :is(a,button):not(:disabled) {color:var(--muted);background:transparent}
+html body.shop-public-ui :is(.shop-mobile-nav,#miniapp-nav) [aria-current=page]:not(:disabled) {color:var(--shop-accent);background:#eaf4ed}
+@media(max-width:680px) {
+  body.shop-public-ui .wrap {width:calc(100% - 24px)}
+  body.shop-public-ui .hero {margin-top:10px;border-radius:18px;padding:20px 14px;grid-template-columns:minmax(0,1fr)}
+  body.shop-public-ui .hero .visual {display:none}
+  body.shop-public-ui .hero .actions {display:flex;flex-wrap:wrap}
+  body.shop-public-ui .hero .actions :is(.button,button) {flex:1 1 120px;padding-inline:7px}
+  body.shop-public-ui .hero .lead {margin:8px 0 14px}
+  body.shop-public-ui .section {padding-top:20px}
+  body.shop-public-ui .plans {gap:9px}
+  body.shop-public-ui .plan {min-height:0;padding:15px;grid-template-areas:"title buy" "price buy" "info buy" "features features"}
+  body.shop-public-ui .plan ul {margin:5px 0 0}
+  body.shop-public-ui .plan button {margin:auto 0}
+}

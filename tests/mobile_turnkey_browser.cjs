@@ -12,14 +12,14 @@ const catalog={protocols:[{id:'xui',available:true},{id:'wg',available:true}],pl
 const subscription={id:'fixture-wg',protocol:'wg',state:'active',expires:expiry,device_limit:4,primary_key_state:'active',access_source:'purchase'};
 const order={id:'fixture-order',protocol:'wg',plan:'month',plan_name:'Месяц',days:30,device_limit:4,amount:179,base_amount:199,discount:20,promo_code:'MOBILE',currency:'RUB',status:'pending',method:'manual',kind:'purchase',created:1,instructions:'Только тестовый платёж.',progress:{title:'Ожидает оплаты',message:'Тестовый счёт'}};
 const customer={id:1,email:'fixture@example.invalid',telegram_id:123,subscriptions:[subscription,{...subscription,id:'fixture-pending',state:'pending'}],orders:[],can_change_password:true,pushok_id:{linked:false},referrals:{policy:{enabled:true,days:1,min_rub:1,min_stars:1},balance_days:2,earned_days:2,spent_days:0,invited:1,rewarded:1,history:[],can_bind:false,can_share:false}};
-const assets=new Set(['app.js','admin.js','flow-links.js','style.css','pushok-icons.svg']);
+const assets=new Set(['app.js','admin.js','flow-links.js','style.css','storefront.css','pushok-cat.webp','pushok-icons.svg']);
 async function staticResponse(route,url){
  const p=url.pathname;
  if(p===base+'/'||p===base+'/admin'){
   await route.fulfill({contentType:'text/html',body:fs.readFileSync(root+'/app/static/'+(p.endsWith('/admin')?'admin.html':'index.html'),'utf8').replaceAll('__BASE_PATH__',base)});return true;
  }
  if(p.startsWith(base+'/static/')&&assets.has(p.split('/').at(-1))){
-  const file=p.split('/').at(-1),types={js:'text/javascript',css:'text/css',svg:'image/svg+xml'};
+  const file=p.split('/').at(-1),types={js:'text/javascript',css:'text/css',svg:'image/svg+xml',webp:'image/webp'};
   await route.fulfill({contentType:types[file.split('.').at(-1)],body:fs.readFileSync(root+'/app/static/'+file)});return true;
  }
  return false;
@@ -74,6 +74,7 @@ async function runShop(browser,engine,width,height,telegram,guest){
   await nav.waitFor({state:'visible'});
   assert.equal(await page.locator('#shop-mobile-nav').isVisible(),!telegram);
   assert.ok((await nav.boundingBox()).height>=44);
+  await page.locator('#connection-options summary').click();
   await page.locator('#protocols [data-protocol="wg"]').click();
   await page.locator('#plan-list [data-plan="month"]').click();
   if(guest){

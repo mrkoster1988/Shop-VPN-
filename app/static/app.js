@@ -13,7 +13,7 @@ let adsPolicy=null,adsPage=1,adsRequest=0,adsMutation=0,adsIntent=new Map();
 let passwordOperation=null, logoutPending=false, supportRequest=0, selectedSupportCase=null;
 let paymentOrder=null,paymentRequest=0,paymentBusy=false;
 let paidRenewal = new URLSearchParams(location.search).get('renew') === 'wg';
-let catalog, me, protocol = 'xui', selectedPlan, checkoutTrial=null, register = false, toastTimer;
+let catalog, me, protocol = 'wg', selectedPlan, checkoutTrial=null, register = false, toastTimer;
 let linkSubscription=null, linkDeviceId=null, linkProtocol=null, linkRequest=0, linkState=null, flowLaunchUrl=null;
 let sessionEpoch = 0, meRequest = 0, connectionRequest = 0, connection = null, connectionTimer;
 let deviceSubscription=null, deviceRequest=0, deviceIntent=null, deviceCache=[], rotationIntents=new Map(), primaryRotationIntents=new Map();
@@ -134,16 +134,40 @@ function trialProtocolAvailable(){
  const item=catalog.protocols.find(p=>p.id===protocol);
  return !!(item?.trial_available??item?.available);
 }
+function storefrontConnections() {
+  return catalog.protocols.filter(p => (p.available && p.sales_allowed !== false) || p.trial_available === true);
+}
+function defaultConnection() {
+  const items = storefrontConnections();
+  const forSale = items.filter(p => p.available && p.sales_allowed !== false);
+  return (forSale.find(p => p.id === 'wg') || forSale[0] || items[0])?.id;
+}
 function renderPlans() {
   renderPushokIdentity();
   renderAppearance();
-  $('protocols').innerHTML = catalog.protocols.map(p => `<button class="${p.id===protocol?'chosen':''}" data-protocol="${p.id}" aria-pressed="${p.id===protocol}">${esc(protocolName(p.id))}${p.available?'':' · скоро'}</button>`).join('');
-  const selected=catalog.protocols.find(p=>p.id===protocol);
-  const available=!!selected?.available && selected?.sales_allowed!==false;
-  const paymentReady=catalog.payment_available!==false;
-  $('provider-note').textContent = available && (paymentReady || catalog.plans.some(p=>p.price===0)) ? '' : !paymentReady && available ? (catalog.payment_notice||'Оплата временно недоступна. Бесплатные тарифы доступны.') : selected?.sales_allowed===false ? (catalog.sale_notice||'Продажи временно приостановлены.') : 'Подключение этого протокола ещё не настроено. Покупки временно недоступны.';
-  const visiblePlans = paidRenewal ? catalog.plans.filter(plan => plan.price > 0) : catalog.plans;
-  $('plan-list').innerHTML = visiblePlans.length ? visiblePlans.map((p,i) => `<article class="plan ${i===1?'featured':''}">${i===1?'<span class="badge">УДОБНЫЙ ВЫБОР</span>':''}<h3>${esc(p.name)}</h3><div class="price">${p.price===0?'Бесплатно':p.price.toLocaleString('ru-RU')}${p.price===0?'':' <small>'+(catalog.currency==='XTR'?'★':'₽')+'</small>'}</div><p>${p.days} дней доступа · ${esc(protocolName(protocol))}</p><ul><li>${esc(profileAllowance(p.device_limit ?? 4))}</li><li>Настройки и QR-код в кабинете</li><li>${p.price===0?(p.free_auto_renew?'Автопродление: '+p.free_max_renewals+' раз(а)':'Без автоматического продления'):'Продление с сохранением дней'}</li>${p.price===0&&p.free_traffic_gb?'<li>Лимит '+p.free_traffic_gb+' ГБ на профиль 3x-ui</li>':''}${p.price===0&&p.free_activation_limit?'<li>Всего активаций: '+p.free_activation_limit+'</li>':''}</ul><button data-plan="${p.id}" ${available&&(paymentReady||p.price===0)&&!(p.price===0&&p.free_traffic_gb>0&&!['xui','vmess'].includes(protocol))?'':'disabled'}>${p.price===0&&p.free_traffic_gb>0&&!['xui','vmess'].includes(protocol)?'Только для 3x-ui':available&&(paymentReady||p.price===0)?(p.price===0?'Получить бесплатно ↗':'Выбрать тариф ↗'):'Скоро'}</button></article>`).join('') : '<p class="plans-empty">Тарифы временно недоступны. Пожалуйста, обратитесь в поддержку.</p>';
+  const items = storefrontConnections();
+  const selected = catalog.protocols.find(p => p.id === protocol);
+  const available = !!selected?.available && selected.sales_allowed !== false;
+  const paymentReady = catalog.payment_available !== false;
+  $('connection-options').hidden = paidRenewal || items.length < 2;
+  $('connection-name').textContent = selected ? protocolName(protocol) : '';
+  $('protocols').innerHTML = items.map(p => `<button type="button" class="${p.id===protocol?'chosen':''}" data-protocol="${esc(p.id)}" aria-pressed="${p.id===protocol}">${esc(protocolName(p.id))}</button>`).join('');
+  $('provider-note').textContent = !available && (paidRenewal || selected)
+    ? (catalog.sale_notice || 'Продажи временно приостановлены.')
+    : available && !paymentReady ? (catalog.payment_notice || 'Оплата временно недоступна.') : '';
+  const visiblePlans = available ? catalog.plans.filter(p => (!paidRenewal || p.price > 0) &&
+    !(p.price === 0 && p.free_traffic_gb > 0 && !['xui','vmess'].includes(protocol))) : [];
+  $('plan-list').innerHTML = visiblePlans.map(p => {
+    const money = p.price === 0 ? 'Бесплатно' : p.price.toLocaleString('ru-RU') + ' <small>' + (catalog.currency==='XTR'?'★':'₽') + '</small>';
+    const limits = [profileAllowance(p.device_limit ?? 4)];
+    if (p.price === 0 && p.free_auto_renew) limits.push('Автопродление: '+p.free_max_renewals+' раз(а)');
+    if (p.price === 0 && p.free_traffic_gb) limits.push('Лимит '+p.free_traffic_gb+' ГБ на профиль');
+    if (p.price === 0 && p.free_activation_limit) limits.push('Всего активаций: '+p.free_activation_limit);
+    const enabled = paymentReady || p.price === 0;
+    return `<article class="plan"><h3>${esc(p.name)}</h3><div class="price">${money}</div>
+      <p>${p.days} дн. · ${esc(protocolName(protocol))}</p><ul>${limits.map(l => '<li>'+esc(l)+'</li>').join('')}</ul>
+      <button data-plan="${esc(p.id)}" ${enabled?'':'disabled'}>${!enabled?'Оплата на паузе':p.price===0?'Получить бесплатно':'Выбрать тариф'}</button></article>`;
+  }).join('') || '<p class="plans-empty">Сейчас нет доступных тарифов. <a href="#help">Связаться с поддержкой</a></p>';
   renderTrial();
 }
 function clearConnection() {
@@ -632,7 +656,7 @@ $('subscriptions').onclick = async event => {
   const renew=event.target.closest('[data-renew]');
   if (renew) {
     const item=catalog.protocols.find(p=>p.id===renew.dataset.renew);
-    if (!item?.available) { toast('Продление временно недоступно. Обратитесь в поддержку.'); return; }
+    if (!item?.available || item.sales_allowed===false) { toast('Продление временно недоступно. Обратитесь в поддержку.'); return; }
     protocol=item.id; selectedPlan=null; renderPlans(); $('account-dialog').close();
     setShopMobileActive('plans');setMiniappActive('plans');
     $('plans').scrollIntoView({behavior:'smooth',block:'start'}); toast('Выберите срок продления. Оставшиеся дни сохранятся.'); return;
@@ -960,7 +984,8 @@ $('logout').onclick = async () => {
         if (saved && Date.now()-saved.at >= 0 && Date.now()-saved.at < 15*60*1000) { paidRenewal=true; resumed=saved.plan; }
       } catch {}
     }
-    catalog=await api('/api/catalog'); protocol=paidRenewal?'wg':catalog.protocols.find(p=>p.available)?.id || 'xui'; renderPlans(); $('support').textContent=catalog.support;
+    catalog=await api('/api/catalog'); protocol=paidRenewal?'wg':defaultConnection(); renderPlans(); $('support').textContent=catalog.support;
+    $('shop-ai-help').hidden=!catalog.mtproxy_login;
     $('auth-mtproxy').hidden=!catalog.mtproxy_login;
     $('auth-methods').textContent=catalog.mtproxy_login?'Подтвердите вход в кабинете MTProxy или войдите по email.':catalog.bot_username?'Войдите по email или откройте магазин из Telegram-бота.':'Войдите по email.';
     if(catalog.bot_username) { for(const id of ['bot-link','auth-bot']) { $(id).href='https://t.me/'+encodeURIComponent(catalog.bot_username); $(id).hidden=false; } }

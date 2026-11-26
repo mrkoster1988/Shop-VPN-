@@ -45,8 +45,8 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
     if(p==='/shop/')return route.fulfill({contentType:'text/html',body:fs.readFileSync(root+'/app/static/index.html','utf8').replaceAll('__BASE_PATH__','/shop')});
     if(p.startsWith('/shop/static/')){
      const file=p.split('/').at(-1);
-     if(['app.js','flow-links.js','style.css','pushok-icons.svg'].includes(file)){
-      const contentType=file.endsWith('.js')?'text/javascript':file.endsWith('.svg')?'image/svg+xml':'text/css';
+     if(['app.js','flow-links.js','style.css','storefront.css','pushok-cat.webp','pushok-icons.svg'].includes(file)){
+      const contentType=file.endsWith('.js')?'text/javascript':file.endsWith('.webp')?'image/webp':file.endsWith('.svg')?'image/svg+xml':'text/css';
       return route.fulfill({contentType,body:fs.readFileSync(root+'/app/static/'+file)});
      }
     }
@@ -85,6 +85,7 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
      assert.ok(metrics.plans.top<520,'Plans must start near the top on mobile');
      assert.equal(metrics.mobileNav,telegram?'none':'grid');
     }else assert.equal(metrics.mobileNav,'none');
+    await page.locator('#connection-options summary').click();
     await page.locator('#protocols [data-protocol="wg"]').click();
     assert.equal(await page.locator('#protocols [data-protocol="wg"]').getAttribute('aria-pressed'),'true');
     await page.locator('#protocols [data-protocol="xui"]').click();

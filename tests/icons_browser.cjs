@@ -30,9 +30,9 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
      if(p===base+'/')return route.fulfill({contentType:'text/html',body:fs.readFileSync(root+'/app/static/index.html','utf8').replaceAll('__BASE_PATH__',base)});
      if(p.startsWith(base+'/static/')){
       const file=p.slice((base+'/static/').length);
-      if(['app.js','flow-links.js','style.css','pushok-icons.svg'].includes(file)){
+      if(['app.js','flow-links.js','style.css','storefront.css','pushok-cat.webp','pushok-icons.svg'].includes(file)){
        if(file==='pushok-icons.svg'){sprites.push(p);if(missing)return route.fulfill({status:404,body:''});}
-       return route.fulfill({contentType:file.endsWith('.js')?'text/javascript':file.endsWith('.svg')?'image/svg+xml':'text/css',body:fs.readFileSync(root+'/app/static/'+file)});
+       return route.fulfill({contentType:file.endsWith('.js')?'text/javascript':file.endsWith('.webp')?'image/webp':file.endsWith('.svg')?'image/svg+xml':'text/css',body:fs.readFileSync(root+'/app/static/'+file)});
       }
      }
      if(p===base+'/api/catalog')return route.fulfill({json:catalog});
@@ -65,9 +65,9 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
       emphasis:getComputedStyle(document.querySelector('.hero h1 em')).color,
       navBackground:getComputedStyle(document.getElementById('miniapp-account')).backgroundColor,
      }));
-     assert.equal(colors.heroFilter==='none',theme!=='dark','Контраст значка на заливке кнопки');
+     assert.equal(colors.heroFilter,'none','Контраст значка на заливке кнопки');
      if(theme==='dark'){
-      assert.equal(colors.emphasis,'rgb(24, 60, 48)','Тёмный текст на светлом выделении');
+      assert.equal(colors.emphasis,'rgb(8, 105, 79)','Тёмный текст на светлом выделении');
       assert.equal(colors.navBackground,'rgba(0, 0, 0, 0)','Неактивный кабинет без заливки основной кнопки');
      }
      const name=engine+'-'+(base?'shop':'root')+'-'+theme+'-'+width+(missing?'-no-sprite':'');

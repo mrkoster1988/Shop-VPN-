@@ -42,7 +42,7 @@ logging.getLogger('httpcore').setLevel(logging.WARNING)
 STATIC = Path(__file__).parent / 'static'
 # Content fingerprints prevent older cached CSS/JS from surviving a deployment.
 ASSET_VERSIONS = {name: hashlib.sha256((STATIC / name).read_bytes()).hexdigest()[:16]
-                  for name in ('style.css', 'admin.js', 'app.js', 'flow-links.js')}
+                  for name in ('style.css', 'storefront.css', 'admin.js', 'app.js', 'flow-links.js')}
 
 @asynccontextmanager
 async def lifespan(app):
