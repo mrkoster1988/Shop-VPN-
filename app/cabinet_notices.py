@@ -31,6 +31,10 @@ def install(conn):
             WHERE kind='reminder';
         CREATE INDEX IF NOT EXISTS cabinet_vpn_notice_due ON cabinet_vpn_notices(delivered,next_attempt,id);
     """)
+    if 'outcome' not in {col[1] for col in conn.execute('PRAGMA table_info(cabinet_vpn_notices)')}:
+        conn.execute('ALTER TABLE cabinet_vpn_notices ADD COLUMN outcome TEXT')
+    conn.execute("""CREATE INDEX IF NOT EXISTS cabinet_vpn_plan_history ON cabinet_vpn_notices(subscription_id,id)
+                    WHERE kind IN ('premium','renewal_plan')""")
     def snapshot(row):
         return 'json_object('+','.join(f"'{field}',{row}.{field}" for field in FIELDS)+')'
     changed = ' OR '.join(f'OLD.{field} IS NOT NEW.{field}' for field in (*FIELDS,'server_id'))
@@ -158,16 +162,29 @@ class Receipt(BaseModel):
     model_config = {'extra':'forbid'}
     id: int = Field(gt=0,strict=True)
     lease: str = Field(pattern=r'^[0-9a-f]{32}$')
-    status: Literal['sent','retry','blocked']
+    status: Literal['sent','retry','blocked','waiting_chat']
 
 
 @router.post('/api/flow/cabinet-notices/{operation}')
-async def exchange(operation: Literal['claim','finish'], request: Request):
+async def exchange(operation: Literal['claim','finish','resume-chat'], request: Request):
     raw = await request.body()
     authorize(operation.encode()+b':'+raw,request.headers.get('X-Pushok-Management',''),DOMAIN)
     now = int(time.time())
     if operation == 'claim':
         return {'items':claim(now,json.loads(raw or b'{}').get('scheduled_by_cabinet') is True)}
+    if operation == 'resume-chat':
+        try:
+            uid=json.loads(raw)['telegram_id']
+            if type(uid) is not int or not 0<uid<2**52:raise ValueError()
+        except (TypeError,KeyError,ValueError):
+            raise HTTPException(422,'Invalid recipient') from None
+        with db() as conn:
+            conn.execute("""UPDATE cabinet_vpn_notices SET next_attempt=0,delivered=NULL,outcome=NULL
+                WHERE kind IN ('renewal_plan','premium') AND lease IS NULL
+                AND (outcome='blocked' OR (delivered IS NULL AND next_attempt>0))
+                AND user_id IN (SELECT b.shop_user_id FROM flow_bridge_identities b
+                    JOIN users u ON u.id=b.shop_user_id AND u.telegram_id=b.telegram_id WHERE b.telegram_id=?)""",(uid,))
+        return {'ok':True}
     from pydantic import ValidationError
     try: receipt = Receipt.model_validate_json(raw)
     except ValidationError: raise HTTPException(422,'Invalid receipt') from None
@@ -176,11 +193,11 @@ async def exchange(operation: Literal['claim','finish'], request: Request):
         row=conn.execute('SELECT * FROM cabinet_vpn_notices WHERE id=? AND lease=? AND delivered IS NULL',
                          (receipt.id,receipt.lease)).fetchone()
         if row:
-            if receipt.status=='retry':
-                conn.execute('UPDATE cabinet_vpn_notices SET lease=NULL,next_attempt=? WHERE id=?',
-                             (now+min(3600,30*2**min(row['attempts'],7)),receipt.id))
+            if receipt.status in ('waiting_chat','retry'):
+                conn.execute('UPDATE cabinet_vpn_notices SET lease=NULL,outcome=?,next_attempt=? WHERE id=?',
+                             (receipt.status,now+min(3600,30*2**min(row['attempts'],7)),receipt.id))
             else:
-                conn.execute('UPDATE cabinet_vpn_notices SET delivered=?,lease=NULL WHERE id=?',(now,receipt.id))
+                conn.execute('UPDATE cabinet_vpn_notices SET delivered=?,outcome=?,lease=NULL WHERE id=?',(now,receipt.status,receipt.id))
                 if receipt.status=='sent' and row['kind']=='reminder':
                     conn.execute('UPDATE subscriptions SET reminder=1 WHERE id=? AND expires=?',(row['subscription_id'],row['expiry']))
     return {'ok':True}

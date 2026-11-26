@@ -12,7 +12,7 @@ import httpx
 from fastapi import HTTPException
 
 from . import servers, service, wgdashboard
-from . import premium, wg_client_platform
+from . import premium, runtime_settings, wg_client_platform
 from .db import db, all_rows
 
 DOMAIN = 'pushok-vpn-presence-v1'
@@ -83,12 +83,12 @@ def metrics(peer, sampled_at):
 
 
 async def snapshot(maintenance=False):
-    from . import wg_activity
+    from . import cabinet_notices, wg_activity
     global _cached, _until
     async with _lock:
         if not maintenance and _cached is not None and time.monotonic()<_until:return _cached
         now=int(time.time())
-        subscriptions=all_rows("""SELECT s.*,u.telegram_id,b.mtproxy_uuid,x.request_id,x.days,x.before_expires,x.target_expires,c.version AS renewal_version,c.assigned_name,rp.name AS renewal_name,rp.id AS renewal_plan_id,
+        subscriptions=all_rows("""SELECT s.*,u.telegram_id,b.mtproxy_uuid,x.request_id,x.days,x.before_expires,x.target_expires,n.kind AS notice_kind,n.payload AS notice_payload,n.created AS notice_created,n.outcome AS notice_outcome,n.delivered AS notice_finished,c.version AS renewal_version,c.assigned_name,rp.name AS renewal_name,rp.id AS renewal_plan_id,
             EXISTS(SELECT 1 FROM flow_auto_grants g WHERE g.subscription_id=s.id
                    AND g.state IN ('pending','expired')) AS first_grant_waiting,
             (SELECT COALESCE(NULLIF(TRIM(o.plan_name),''),p.name) FROM orders o LEFT JOIN plans p ON p.id=o.plan
@@ -96,6 +96,8 @@ async def snapshot(maintenance=False):
              AND o.kind NOT IN ('referral','free_renewal')
              ORDER BY o.target_expires DESC,o.created DESC,o.id DESC LIMIT 1) AS tariff
             FROM subscriptions s JOIN users u ON u.id=s.user_id LEFT JOIN flow_bridge_identities b ON b.shop_user_id=u.id
+            LEFT JOIN cabinet_vpn_notices n ON n.id=(SELECT id FROM cabinet_vpn_notices
+                WHERE subscription_id=s.id AND user_id=s.user_id AND kind IN ('premium','renewal_plan') ORDER BY id DESC LIMIT 1)
             LEFT JOIN vpn_renewal_choices c ON c.subscription_id=s.id
             LEFT JOIN plans rp ON rp.id=c.plan_id AND rp.enabled=1
             LEFT JOIN flow_owner_extensions x ON x.subscription_id=s.id AND x.status='pending'
@@ -107,6 +109,7 @@ async def snapshot(maintenance=False):
         revoked={r['subscription_id']:r['revoked_at'] for r in all_rows('SELECT subscription_id,revoked_at FROM admin_subscription_revocations')}
         with db() as conn:
             platform_observations = wg_client_platform.current(conn,now)
+            notices_enabled=runtime_settings.read(conn,'notifications')['order_ready_enabled']
         latest_endpoint = {}
         rows={}; accounts={}; nodes={}; unlinked={}; samples=[]; renames=[]
         for sub in subscriptions:
@@ -116,6 +119,13 @@ async def snapshot(maintenance=False):
                  'online':None,'last_seen':None,'received':None,'sent':None,'activity_known':False,
                  'legacy_reminder':bool(sub['reminder']),'expected':0,'observed':0,'has_recent':False}
             row.update(renewal_version=sub['renewal_version'] or 0,renewal_name=sub['renewal_name'],renewal_plan_id=sub['renewal_plan_id'])
+            if sub['notice_kind']:
+                # Older terminal rows did not distinguish delivery from a blocked chat.
+                outcome=sub['notice_outcome'] or ('unknown' if sub['notice_finished'] is not None else 'queued')
+                if sub['notice_finished'] is None and not notices_enabled:
+                    outcome='paused'
+                row['plan_notice']={'created':sub['notice_created'],'delivery':outcome,
+                    'text':cabinet_notices.message({'kind':sub['notice_kind'],'payload':sub['notice_payload']},{}).removeprefix('Pushok ИИ').strip()}
             row['is_premium']=premium.active(sub)
             row['tariff_name']=('Premium' if row['is_premium'] else None) or sub['assigned_name'] or sub['tariff'] or (
                 'Гостевой доступ' if sub['wg_configuration']==servers.GUEST_CONFIGURATION else

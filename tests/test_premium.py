@@ -85,3 +85,18 @@ def test_only_shop_owned_peer_schedule_is_removed(client,monkeypatch):
     asyncio.run(adapter.clear_expiration(None,private,'test-wg',SID))
     asyncio.run(adapter.clear_expiration(None,private,'test-wg',SID))
     assert not jobs and not one('SELECT 1 FROM wgdashboard_expirations WHERE credential_id=?',(SID,))
+
+
+def test_miniapp_owner_assigning_a_plan_addresses_the_subscriber(client):
+    req=grant_request(client)
+    now=int(time.time())
+    execute('UPDATE users SET telegram_id=12345678 WHERE id=1')
+    execute('INSERT INTO users(telegram_id,created) VALUES(?,?)',(87654321,now))
+    owner=one('SELECT id FROM users WHERE telegram_id=87654321')
+    execute('INSERT INTO flow_bridge_identities VALUES(?,?,?,?)',(str(req.actor),87654321,owner['id'],now))
+    rate=one('SELECT * FROM plans WHERE enabled AND NOT is_free ORDER BY days LIMIT 1')
+    regular=req.model_copy(update={'plan_id':rate['id'],'plan_version':rate['version']})
+    asyncio.run(vpn_plans.choose(regular))
+    asyncio.run(vpn_plans.choose(regular))
+    events=cabinet_notices.claim(now+1,True)
+    assert [(n['category'],n['telegram_id']) for n in events]==[('renewal_plan',12345678)]
