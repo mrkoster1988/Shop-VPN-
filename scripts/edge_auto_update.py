@@ -181,7 +181,7 @@ def timer_contents():
 Description=Check published Pushok Shop release every five minutes
 
 [Timer]
-OnCalendar=*-*-* *:00/5:00
+OnCalendar=*-*-* *:00/5:00 Europe/Moscow
 AccuracySec=10s
 RandomizedDelaySec=10
 Persistent=true

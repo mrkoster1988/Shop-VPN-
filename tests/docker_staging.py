@@ -290,7 +290,7 @@ class Staging:
         self.host_update(temp);self.compare(managed,cleared=True)
         update_config={'enabled':False,'check_time':'22:30','timezone':'UTC','version':1}
         saved,_=self.http('/api/admin/updates/schedule',body=update_config,method='PUT')
-        check(json.loads(saved)['settings']=={**update_config,'version':2},'Update schedule API mismatch')
+        check(json.loads(saved)['settings']=={**update_config,'version':2,'check_time':'01:30','timezone':'Europe/Moscow'},'Update schedule API mismatch')
         expected_updates=self.data('updates')
         self.event('update_schedule_saved_without_network_check')
         managed=self.snapshot()

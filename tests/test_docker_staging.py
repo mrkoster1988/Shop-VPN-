@@ -157,7 +157,7 @@ def test_custom_update_schedule_survives_real_encrypted_backup_restore(client,tm
     b.create(c.DB,('ENCRYPTION_KEY='+os.environ['ENCRYPTION_KEY']+'\n').encode(),archive,'test-backup-password-long')
     b.restore(archive,'test-backup-password-long',tmp_path/'restored-schedule')
     with sqlite3.connect(tmp_path/'restored-schedule/shop.db') as conn:after=conn.execute('SELECT * FROM update_checker').fetchall()
-    assert after==before and after[0][1:4]==(0,'22:30','UTC')
+    assert after==before and after[0][1:4]==(0,'01:30','Europe/Moscow')
 
 
 

@@ -22,13 +22,13 @@ def compose(selected, images, public_ip=''):
         if name == 'xui':
             service.update(ports=['127.0.0.1:2053:2053/tcp', '8443:8443/tcp'],
                            volumes=['xui_db:/etc/x-ui', 'xui_cert:/root/cert'],
-                           environment={'XUI_ENABLE_FAIL2BAN': 'false'})
+                           environment={'XUI_ENABLE_FAIL2BAN': 'false', 'TZ': 'Europe/Moscow'})
             volumes.update(xui_db={}, xui_cert={})
         else:
             ipaddress.IPv4Address(public_ip)
             service.update(ports=['127.0.0.1:10086:10086/tcp', '51820:51820/udp'],
                            volumes=['wg_conf:/etc/wireguard', 'wg_data:/data', 'awg_conf:/etc/amnezia/amneziawg'],
-                           cap_add=['NET_ADMIN'], environment={'public_ip': public_ip, 'tz': 'UTC'})
+                           cap_add=['NET_ADMIN'], environment={'public_ip': public_ip, 'tz': 'Europe/Moscow', 'TZ': 'Europe/Moscow'})
             volumes.update(wg_conf={}, wg_data={}, awg_conf={})
         services[name] = service
     return {'services': services, 'volumes': volumes}

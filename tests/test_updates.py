@@ -183,6 +183,16 @@ def test_schedule_off_manual_check_and_conflict(clock, client, monkeypatch):
     assert client.post('/api/admin/updates/check', headers=admin_headers()).status_code == 429
 
 
+def test_moscow_migration_keeps_due_instant_and_is_idempotent(clock):
+    due = stamp('2026-11-12T22:30:00+00:00')
+    with updates.db() as conn:
+        conn.execute("UPDATE update_checker SET timezone='UTC',check_time='22:30',next_check=? WHERE id=1", (due,))
+    init_db()
+    init_db()
+    row = one('SELECT timezone,check_time,next_check,version FROM update_checker')
+    assert (row['timezone'],row['check_time'],row['next_check'],row['version']) == ('Europe/Moscow','01:30',due,2)
+
+
 def test_schedule_survives_migration_and_long_downtime(clock, monkeypatch):
     monkeypatch.setenv('BACKGROUND_TASKS','true')
     network(monkeypatch, lambda _: httpx.Response(200,json=release()))

@@ -8,11 +8,8 @@ const updatesErrors = {network_error:'Нет связи с GitHub. Повтор�
   rate_limited:'GitHub временно ограничил запросы. Дождитесь следующей попытки.',
   source_unavailable:'Источник релизов временно недоступен.', invalid_release:'Не удалось подтвердить стабильный релиз.',
   interrupted:'Предыдущая проверка была прервана. Она будет повторена.', check_error:'Проверка не завершилась. Повторите позже.'};
-function updatesDate(value, zone) {
-  if (!value) return 'ещё не выполнялась';
-  const date = new Date(value * 1000);
-  try {return date.toLocaleString('ru-RU', {timeZone:zone});}
-  catch {return date.toLocaleString('ru-RU', {timeZone:'UTC'})+' UTC';}
+function updatesDate(value) {
+  return value ? new Date(value * 1000).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})+' МСК' : 'ещё не выполнялась';
 }
 function updateLinks(tag) {
   if (typeof tag !== 'string' || !/^v(?:0|[1-9][0-9]{0,5})\.[0-9]{3}$/.test(tag)) return null;
@@ -47,9 +44,9 @@ function renderUpdates(data) {
     data.error_code ? updatesErrors[data.error_code] || updatesErrors.check_error : labels[data.state] || '';
   const zone = data.settings.timezone;
   const schedule = !data.settings.enabled ? 'Проверка по расписанию выключена.' : !data.scheduler_running ?
-    'Фоновые задачи магазина выключены. Доступна ручная проверка.' : 'Следующая проверка списка релизов в админке: '+updatesDate(data.next_check,zone)+'.';
-  $('updates-timing').textContent = 'Последняя попытка: '+updatesDate(data.last_attempt,zone)+
-    '. Успешная проверка: '+updatesDate(data.last_success,zone)+'. '+schedule+' Часовой пояс: '+zone+'.'+
+    'Фоновые задачи магазина выключены. Доступна ручная проверка.' : 'Следующая проверка списка релизов в админке: '+updatesDate(data.next_check)+'.';
+  $('updates-timing').textContent = 'Последняя попытка: '+updatesDate(data.last_attempt)+
+    '. Успешная проверка: '+updatesDate(data.last_success)+'. '+schedule+' Часовой пояс: '+zone+'.'+
     (data.stale ? ' Сведения о релизе сохранены ранее; доступность обновления нужно подтвердить.' : '');
   if (!updatesDirty) {
     updatesVersion = data.settings.version;
@@ -168,7 +165,7 @@ function renderHostUpdate(data){
  const ready=hostCanApply();$('host-update-confirm').hidden=!ready;
  $('host-update-apply').disabled=!ready || !$('host-update-ack').checked;
  $('host-update-review').textContent=job?.kind==='plan'&&job.state==='ready'?
-  job.previous+' → '+job.tag+' · коммит '+job.commit+' · план до '+updatesDate(job.expires,'Europe/Moscow')+'.'+(ready?'':' План сейчас недоступен для установки; подготовьте новый.'):
+  job.previous+' → '+job.tag+' · коммит '+job.commit+' · план до '+updatesDate(job.expires)+'.'+(ready?'':' План сейчас недоступен для установки; подготовьте новый.'):
   job ? (hostStates[job.state]||'Проверяем состояние') : '';
  scheduleHostPoll();
 }
@@ -1297,7 +1294,7 @@ $('create-plan-form').onsubmit = async event => {
 
 const orderStatus = {pending:'Ожидает оплаты', checkout:'Оплата не завершена', paid:'Готовим доступ', active:'Доступ выдан', canceled:'Отменён'};
 const protocolLabel = value => ({wg:'WireGuard',xui:'VLESS',vmess:'VMess AEAD',hysteria2:'Hysteria2',tuic:'TUIC v5'})[value] || value;
-const dateTime = value => value ? new Date(value * 1000).toLocaleString('ru-RU') : '—';
+const dateTime = value => value ? new Date(value * 1000).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})+' МСК' : '—';
 async function refreshUsers() {
   const request = ++usersRequest;
   $('users-prev').disabled = true; $('users-next').disabled = true;
@@ -1640,7 +1637,7 @@ const serverProfileLabel = {legacy_vless:'Legacy API', clients_vless:'Clients JS
 const serverState = {active:'Принимать новых', draining:'Только продления', maintenance:'Обслуживание', disabled:'Выдача выключена'};
 function serverCard(server) {
   const health = server.health === 'ok' ? 'API доступен' : server.health === 'error' ? 'Ошибка API' : 'Ещё не проверен';
-  const panelExpiry = server.profile === 'wgdashboard' ? `<label><input name="schedule_expiry" type="checkbox" ${server.schedule_expiry?'checked':''}> Дублировать срок подписки заданием WGDashboard</label><label>Часовой пояс ОС панели<input name="panel_timezone" value="${esc(server.panel_timezone || 'UTC')}" maxlength="100" placeholder="Europe/Moscow" required></label><p class="muted">Панель удалит peer по расписанию, даже если Shop временно выключен. Укажите часовой пояс самого сервера WGDashboard.</p>` : '';
+  const panelExpiry = server.profile === 'wgdashboard' ? `<label><input name="schedule_expiry" type="checkbox" ${server.schedule_expiry?'checked':''}> Дублировать срок подписки заданием WGDashboard</label><label>Часовой пояс ОС панели<input name="panel_timezone" value="${esc(server.panel_timezone || 'Europe/Moscow')}" maxlength="100" placeholder="Europe/Moscow" required></label><p class="muted">Панель удалит peer по расписанию, даже если Shop временно выключен. Укажите часовой пояс самого сервера WGDashboard.</p>` : '';
   return `<form class="plan-editor" data-server="${esc(server.id)}" data-version="${server.version}"><h3>${esc(server.name)}</h3><p>${esc(protocolLabel(server.protocol))} · ${esc(serverProfileLabel[server.profile] || server.profile)} · ${health}</p><p>Проверка: ${esc(dateTime(server.checked_at))}</p><p class="muted">🔒 Профиль подключения сохранён в Shop. API-адрес и секреты намеренно не отображаются; это не подтверждение доступности сервера.</p><p>Занято: ${server.occupied} · Всего привязано: ${server.bound_subscriptions}</p><label>Название<input name="name" value="${esc(server.name)}" maxlength="80" required></label><label>Локация<input name="location" value="${esc(server.location)}" maxlength="80"></label><label>Лимит занятых подписок (0 — без лимита)<input name="capacity" type="number" min="0" max="1000000" value="${server.capacity}" required></label><label>Режим<select name="state">${Object.entries(serverState).map(([id,label])=>`<option value="${id}" ${server.state===id?'selected':''}>${label}</option>`).join('')}</select></label>${panelExpiry}<button type="submit" class="small">Сохранить настройки сервера</button><button type="button" class="small secondary" data-server-check="${esc(server.id)}">Проверить API</button><button type="button" class="text-link" data-server-edit="${esc(server.id)}">Профиль подключения</button><button type="button" class="text-link" data-server-credentials="${esc(server.id)}">Обновить доступ</button>
     ${role==='owner' && server.state==='disabled' && !server.bound_subscriptions
       ? '<button type="button" class="danger-action" data-server-delete="'+esc(server.id)+'">Удалить пустой сервер</button>' : ''}
@@ -1872,7 +1869,7 @@ $('server-list').onsubmit = async event => {
   event.preventDefault(); const form=event.target.closest('[data-server]'); if (!form) return;
   const values=new FormData(form), button=form.querySelector('button[type="submit"]'); button.disabled=true;
   try {
-    await api('servers/'+encodeURIComponent(form.dataset.server), {method:'PUT',data:{name:String(values.get('name')),location:String(values.get('location') || ''),capacity:Number(values.get('capacity')),state:String(values.get('state')),version:Number(form.dataset.version),...(form.elements?.schedule_expiry ? {schedule_expiry:form.elements.schedule_expiry.checked,panel_timezone:String(values.get('panel_timezone') || 'UTC')} : {})}});
+    await api('servers/'+encodeURIComponent(form.dataset.server), {method:'PUT',data:{name:String(values.get('name')),location:String(values.get('location') || ''),capacity:Number(values.get('capacity')),state:String(values.get('state')),version:Number(form.dataset.version),...(form.elements?.schedule_expiry ? {schedule_expiry:form.elements.schedule_expiry.checked,panel_timezone:String(values.get('panel_timezone') || 'Europe/Moscow')} : {})}});
     await refreshServers();
     showServerNotice('✅ Настройки сервера сохранены.');
     $('error').textContent='';
@@ -1974,13 +1971,13 @@ $('trial-policy-editor').onsubmit=async event=>{
 
 function couponDate(ts) {
   if(!ts)return '';
-  const d=new Date(ts*1000);return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);
+  const d=new Date(ts*1000);return new Date(d.getTime()+3*3600000).toISOString().slice(0,16);
 }
 function couponForm(p) {
-  return `<form class="plan-editor" data-coupon="${esc(p.id)}" data-version="${p.version}"><h3>${esc(p.code)}</h3><p>Оформлено: ${p.used} из ${p.max_uses}. Применения не сбрасываются.</p><label>Скидка, %<input name="percent" type="number" min="1" max="90" required value="${p.percent}"></label><label>Лимит заказов<input name="max_uses" type="number" min="1" max="100000" required value="${p.max_uses}"></label><label>Окончание (часовой пояс браузера)<input name="expires_at" type="datetime-local" value="${couponDate(p.expires_at)}"></label><label>Код тарифа (пусто — все)<input name="plan_id" maxlength="32" value="${esc(p.plan_id || '')}"></label><label>Протокол<select name="protocol">${[['all','Все'],['xui','VLESS'],['wg','WireGuard'],['vmess','VMess AEAD'],['hysteria2','Hysteria2'],['tuic','TUIC v5']].map(([id,label])=>`<option value="${id}" ${p.protocol===id?'selected':''}>${label}</option>`).join('')}</select></label><label class="plan-enabled"><input name="enabled" type="checkbox" ${p.enabled?'checked':''}> Включён</label><button type="submit" class="small">Сохранить</button></form>`;
+  return `<form class="plan-editor" data-coupon="${esc(p.id)}" data-version="${p.version}"><h3>${esc(p.code)}</h3><p>Оформлено: ${p.used} из ${p.max_uses}. Применения не сбрасываются.</p><label>Скидка, %<input name="percent" type="number" min="1" max="90" required value="${p.percent}"></label><label>Лимит заказов<input name="max_uses" type="number" min="1" max="100000" required value="${p.max_uses}"></label><label>Окончание (МСК)<input name="expires_at" type="datetime-local" value="${couponDate(p.expires_at)}"></label><label>Код тарифа (пусто — все)<input name="plan_id" maxlength="32" value="${esc(p.plan_id || '')}"></label><label>Протокол<select name="protocol">${[['all','Все'],['xui','VLESS'],['wg','WireGuard'],['vmess','VMess AEAD'],['hysteria2','Hysteria2'],['tuic','TUIC v5']].map(([id,label])=>`<option value="${id}" ${p.protocol===id?'selected':''}>${label}</option>`).join('')}</select></label><label class="plan-enabled"><input name="enabled" type="checkbox" ${p.enabled?'checked':''}> Включён</label><button type="submit" class="small">Сохранить</button></form>`;
 }
 async function refreshCoupons(){const result=await api('coupons');$('coupons-list').innerHTML=result.coupons.map(couponForm).join('');}
-function couponFields(values){return {percent:Number(values.get('percent')),max_uses:Number(values.get('max_uses')),expires_at:values.get('expires_at')?Math.floor(new Date(values.get('expires_at')).getTime()/1000):0,plan_id:String(values.get('plan_id') || '').trim() || null,protocol:String(values.get('protocol')),enabled:values.has('enabled')};}
+function couponFields(values){return {percent:Number(values.get('percent')),max_uses:Number(values.get('max_uses')),expires_at:values.get('expires_at')?Math.floor(Date.parse(values.get('expires_at')+'+03:00')/1000):0,plan_id:String(values.get('plan_id') || '').trim() || null,protocol:String(values.get('protocol')),enabled:values.has('enabled')};}
 $('coupon-create').onsubmit=async event=>{
   event.preventDefault();const button=event.target.querySelector('button'),values=new FormData(event.target);button.disabled=true;
   try {await api('coupons',{method:'POST',data:{...couponFields(values),code:String(values.get('code')).trim().toUpperCase()}});$('coupon-create').reset();await refreshCoupons();$('coupons-error').textContent='';}
@@ -2011,7 +2008,7 @@ const diagnosticWarnings={worker_disabled:'Фоновые задачи выкл�
 const diagnosticWorker={disabled:'Выключен настройками',not_observed:'Ещё не наблюдался',failed:'Ошибка последнего цикла',busy:'Выполняет цикл',slow:'Длительный цикл',stale:'Нет свежего успешного цикла',recent_success:'Недавно завершил цикл'};
 function diagnosticsMarkup(r) {
   const labels={issuance:'Выдача и продление',payment_poll:'Сверка ЮKassa',devices:'Создание/отзыв устройств',device_rotations:'Смена ключей устройств',primary_rotations:'Смена основного ключа'};
-  return `<p><b>${r.status==='local_checks_ok'?'Локальные проверки без замечаний':'Требуется внимание'}</b> · ${esc(new Date(r.generated_at*1000).toLocaleString('ru-RU'))}</p><p>Worker: ${esc(diagnosticWorker[r.worker.state] || r.worker.state)}. Последний успешный цикл: ${r.worker.last_success?esc(new Date(r.worker.last_success*1000).toLocaleString('ru-RU')):'не наблюдался'}.</p>${r.warnings.length?'<ul>'+r.warnings.map(w=>'<li>'+esc(diagnosticWarnings[w] || w)+'</li>').join('')+'</ul>':''}<div class="table-scroll"><table><thead><tr><th>Очередь</th><th>Ожидает</th><th>Срок повтора наступил</th><th>С ошибкой</th><th>Возраст старейшего, сек.</th></tr></thead><tbody>${Object.entries(r.queues).map(([key,q])=>`<tr><td>${esc(labels[key] || key)}</td><td>${esc(q.pending)}</td><td>${esc(q.due)}</td><td>${esc(q.with_error)}</td><td>${esc(q.oldest_age_seconds ?? '—')}</td></tr>`).join('')}</tbody></table></div><p>Подписок с истёкшим сроком в состоянии active: ${esc(r.expiry.pending)}. Это очередь проверки отзыва, а не доказательство текущего доступа на узле.</p><p>Серверы для новых назначений / недавние успешные API-проверки: ${Object.entries(r.servers).map(([id,s])=>esc(protocolLabel(id))+": "+esc(s.assignable)+" / "+esc(s.cached_api_ok_24h)).join(" · ")}.</p><p>Статус относится только к локальным наблюдениям. Проверка трафика, платежа и восстановления копии выполняется отдельно.</p>`;
+  return `<p><b>${r.status==='local_checks_ok'?'Локальные проверки без замечаний':'Требуется внимание'}</b> · ${esc(new Date(r.generated_at*1000).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})+' МСК')}</p><p>Worker: ${esc(diagnosticWorker[r.worker.state] || r.worker.state)}. Последний успешный цикл: ${r.worker.last_success?esc(new Date(r.worker.last_success*1000).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})+' МСК'):'не наблюдался'}.</p>${r.warnings.length?'<ul>'+r.warnings.map(w=>'<li>'+esc(diagnosticWarnings[w] || w)+'</li>').join('')+'</ul>':''}<div class="table-scroll"><table><thead><tr><th>Очередь</th><th>Ожидает</th><th>Срок повтора наступил</th><th>С ошибкой</th><th>Возраст старейшего, сек.</th></tr></thead><tbody>${Object.entries(r.queues).map(([key,q])=>`<tr><td>${esc(labels[key] || key)}</td><td>${esc(q.pending)}</td><td>${esc(q.due)}</td><td>${esc(q.with_error)}</td><td>${esc(q.oldest_age_seconds ?? '—')}</td></tr>`).join('')}</tbody></table></div><p>Подписок с истёкшим сроком в состоянии active: ${esc(r.expiry.pending)}. Это очередь проверки отзыва, а не доказательство текущего доступа на узле.</p><p>Серверы для новых назначений / недавние успешные API-проверки: ${Object.entries(r.servers).map(([id,s])=>esc(protocolLabel(id))+": "+esc(s.assignable)+" / "+esc(s.cached_api_ok_24h)).join(" · ")}.</p><p>Статус относится только к локальным наблюдениям. Проверка трафика, платежа и восстановления копии выполняется отдельно.</p>`;
 }
 async function refreshDiagnostics() {
   const request=++diagnosticsRequest,epoch=authEpoch;$('diagnostics-refresh').disabled=true;
@@ -2151,9 +2148,9 @@ async function refreshStopQueue(){
   try{
     const result=await api('ads/stop-queue?view='+encodeURIComponent(view)+'&page='+page);
     if(epoch!==authEpoch || request!==adsStopRequest)return;
-    $('ads-stop-counts').textContent='Требуют остановки: '+result.counts.due+' · предстоящие: '+result.counts.upcoming+' · на паузе: '+result.counts.paused+' · снимок: '+new Date(result.generated_at*1000).toLocaleString('ru-RU')+' (время браузера)';
+    $('ads-stop-counts').textContent='Требуют остановки: '+result.counts.due+' · предстоящие: '+result.counts.upcoming+' · на паузе: '+result.counts.paused+' · снимок: '+new Date(result.generated_at*1000).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})+' МСК';
     const labels={due:'Требуется проверка и остановка',upcoming:'Предстоящее окончание',paused:'На паузе · площадка удерживается'};
-    $('ads-stop-list').innerHTML=result.requests.map(r=>'<article class="subscription"><h3>'+esc('@'+r.channel)+'</h3><p>'+esc(labels[r.queue_status] || r.queue_status)+'</p><p>Клиент '+r.user_id+' · заявка '+esc(r.id)+'</p>'+(r.placement.expected_stop_at?'<p>План остановки: '+esc(new Date(r.placement.expected_stop_at*1000).toLocaleString('ru-RU'))+' (время браузера)</p>':'')+(r.queue_status==='due'?'<p>Просрочка: '+r.overdue_seconds+' сек.</p>':'')+adsPlacementForm(r).replace('<form data-ads-placement','<form data-ads-queue="true" data-ads-placement')+'</article>').join('') || '<p>В выбранной очереди размещений нет.</p>';
+    $('ads-stop-list').innerHTML=result.requests.map(r=>'<article class="subscription"><h3>'+esc('@'+r.channel)+'</h3><p>'+esc(labels[r.queue_status] || r.queue_status)+'</p><p>Клиент '+r.user_id+' · заявка '+esc(r.id)+'</p>'+(r.placement.expected_stop_at?'<p>План остановки: '+esc(new Date(r.placement.expected_stop_at*1000).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})+' МСК')+'</p>':'')+(r.queue_status==='due'?'<p>Просрочка: '+r.overdue_seconds+' сек.</p>':'')+adsPlacementForm(r).replace('<form data-ads-placement','<form data-ads-queue="true" data-ads-placement')+'</article>').join('') || '<p>В выбранной очереди размещений нет.</p>';
     $('ads-stop-page').textContent='Страница '+page+' · всего '+result.total;
     $('ads-stop-prev').disabled=page===1;$('ads-stop-next').disabled=page*result.page_size>=result.total;
   }catch(e){
@@ -2170,17 +2167,17 @@ $('ads-stop-list').onsubmit=event=>{
   const form=event.target.closest('[data-ads-placement]');if(!form)return;event.preventDefault();return saveAdsPlacement(form);
 };
 
-function bookingTime(value){return new Date(value*1000).toLocaleString('ru-RU');}
+function bookingTime(value){return new Date(value*1000).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})+' МСК';}
 function adsBookingForm(r){
   const b=r.booking;
   const labels={reserved:'Бронь ожидает запуска',canceled:'Бронь отменена',consumed:'Бронь использована при запуске'};
-  const status=b?'<p>'+esc(labels[b.state] || b.state)+' · '+esc(b.site_name)+' · '+esc(bookingTime(b.starts_at))+' — '+esc(bookingTime(b.ends_at))+' (время браузера)'+(b.expired?' · окно старта истекло':'')+'</p>':'<p>Плановой брони нет.</p>';
+  const status=b?'<p>'+esc(labels[b.state] || b.state)+' · '+esc(b.site_name)+' · '+esc(bookingTime(b.starts_at))+' — '+esc(bookingTime(b.ends_at))+(b.expired?' · окно старта истекло':'')+'</p>':'<p>Плановой брони нет.</p>';
   const history=(b?.actions || []).map(a=>'<p>'+esc(({reserve:'Резерв',cancel:'Отмена',reschedule:'Перенос'})[a.action] || a.action)+' · '+esc(a.note)+'</p>').join('');
   if(r.placement || r.state!=='approved' || r.payment?.status!=='confirmed')return status+history;
   const cancel=b?.state==='reserved';
   const options=adsSitesCache.filter(s=>s.enabled && s.verified && !s.occupied).map(s=>'<option value="'+esc(s.id)+'">'+esc(s.name)+'</option>').join('');
   if(!cancel && !options)return status+history+'<p>Нет свободной проверенной площадки для брони.</p>';
-  const form=(action,title,period)=>'<form data-ads-booking="'+esc(r.id)+'" data-action="'+action+'" data-request-version="'+r.version+'" data-payment-version="'+r.payment.version+'" data-booking-version="'+(b?.version || 0)+'">'+(period?'<label>Новая площадка<select name="site_id" required>'+options+'</select></label><label>Новое начало, местное время браузера<input type="datetime-local" name="starts_at" required></label>':'')+'<label>Основание (только владельцу)<textarea name="note" maxlength="500" required></textarea></label><p>Перенос проверяется целиком; при конфликте прежняя бронь сохраняется. Запуска узла и движения денег нет.</p><button>'+title+'</button></form>';
+  const form=(action,title,period)=>'<form data-ads-booking="'+esc(r.id)+'" data-action="'+action+'" data-request-version="'+r.version+'" data-payment-version="'+r.payment.version+'" data-booking-version="'+(b?.version || 0)+'">'+(period?'<label>Новая площадка<select name="site_id" required>'+options+'</select></label><label>Новое начало, МСК<input type="datetime-local" name="starts_at" required></label>':'')+'<label>Основание (только владельцу)<textarea name="note" maxlength="500" required></textarea></label><p>Перенос проверяется целиком; при конфликте прежняя бронь сохраняется. Запуска узла и движения денег нет.</p><button>'+title+'</button></form>';
   return status+history+(cancel?form('cancel','Отменить бронь',false)+(options?form('reschedule','Перенести бронь одним действием',true):'<p>Нет свободной проверенной площадки для переноса.</p>'):form('reserve','Забронировать период',true));
 }
 async function saveAdsBooking(form){
@@ -2189,7 +2186,7 @@ async function saveAdsBooking(form){
   const errorId=fromCalendar?'ads-bookings-error':'ads-admin-error';
   const data={request_version:Number(form.dataset.requestVersion),payment_version:Number(form.dataset.paymentVersion),booking_version:Number(form.dataset.bookingVersion),note:String(fields.get('note') || '').trim()};
   if(['reserve','reschedule'].includes(form.dataset.action)){
-    const site=adsSitesCache.find(s=>s.id===fields.get('site_id')),date=Date.parse(String(fields.get('starts_at') || ''));
+    const site=adsSitesCache.find(s=>s.id===fields.get('site_id')),date=Date.parse(String(fields.get('starts_at') || '')+'+03:00');
     if(!site || !Number.isFinite(date)){$(errorId).textContent='Выберите площадку и корректное время';return;}
     data.site_id=site.id;data.site_version=site.version;data.starts_at=Math.floor(date/1000);
   }
@@ -2229,7 +2226,7 @@ $('ads-bookings-list').onsubmit=event=>{
   const placement=event.target.closest('[data-ads-placement]');if(placement)return saveAdsPlacement(placement);
 };
 
-function expenseDate(value){const n=Date.parse(value);return Number.isFinite(n)?Math.floor(n/1000):null;}
+function expenseDate(value){const n=Date.parse(value+'+03:00');return Number.isFinite(n)?Math.floor(n/1000):null;}
 function expenseInput(){return {amount:Number($('ads-expense-amount').value),category:$('ads-expense-category').value,incurred_at:expenseDate($('ads-expense-date').value),reference:$('ads-expense-reference').value.trim(),note:$('ads-expense-note').value.trim()};}
 async function refreshAdsFinance(){
   const epoch=authEpoch,request=++adsFinanceRequest,page=adsFinancePage;
@@ -2241,7 +2238,7 @@ async function refreshAdsFinance(){
     if(start){const a=expenseDate(start),b=expenseDate(end);if(a===null || b===null || a>=b)throw new Error('Проверьте границы периода');query.set('start',String(a));query.set('end',String(b));}
     const result=await api('ads/finance?'+query.toString());
     if(epoch!==authEpoch || request!==adsFinanceRequest)return;
-    $('ads-finance-summary').textContent='Период: '+bookingTime(result.period.start)+' — '+bookingTime(result.period.end)+' (конец не включается, время браузера). Поступления: '+result.cash.received+' ₽; возвраты: '+result.cash.refunded+' ₽; учтённые расходы: '+result.expenses.amount+' ₽; остаток после учтённых расходов: '+result.cash_after_recorded_expenses+' ₽. Чистая прибыль не рассчитывается.';
+    $('ads-finance-summary').textContent='Период: '+bookingTime(result.period.start)+' — '+bookingTime(result.period.end)+' (конец не включается, МСК). Поступления: '+result.cash.received+' ₽; возвраты: '+result.cash.refunded+' ₽; учтённые расходы: '+result.expenses.amount+' ₽; остаток после учтённых расходов: '+result.cash_after_recorded_expenses+' ₽. Чистая прибыль не рассчитывается.';
     const labels={not_started:'Не запущены',active:'Активны по ручному журналу',paused:'На паузе',early_stopped:'Остановлены с неоказанным остатком',completed:'Полный срок и остановка подтверждены'};
     $('ads-finance-obligations').innerHTML=Object.entries(result.current_paid_requests).map(([key,r])=>'<p>'+esc(labels[key] || key)+': '+r.requests+' заявок · сумма заявок '+r.contract_amount+' ₽ · неоказанный остаток '+r.remaining_seconds+' сек.</p>').join('')+'<p>Суммы заявок не являются суммой к возврату или заработанной выручкой. Здесь только заявки без учтённого полного возврата, независимо от выбранного периода.</p>';
     const categories={server:'Сервер',commission:'Комиссия',marketing:'Привлечение',other:'Прочее'};

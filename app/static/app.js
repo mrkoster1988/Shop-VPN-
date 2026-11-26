@@ -113,7 +113,7 @@ function show(id) {
   syncTelegramBackButton();
 }
 function accessTerm(ts){return ts===253402214400?'Premium · бессрочно':'доступ до '+date(ts);}
-function date(ts) { return new Date(ts*1000).toLocaleDateString('ru-RU'); }
+function date(ts) { return new Date(ts*1000).toLocaleDateString('ru-RU',{timeZone:'Europe/Moscow'}); }
 function protocolName(id) { return ({wg:'Pushok Flow',xui:'VLESS',vmess:'VMess',hysteria2:'Hysteria2',tuic:'TUIC v5'})[id] || id; }
 function profileAllowance(limit) { return limit===0 ? 'Только основной профиль' : 'Основной + до '+limit+' дополнительных профилей'; }
 function displayOrderStatus(order) { if(order.progress?.title)return order.progress.title; return order.method==='free'&&order.status==='paid'?'Бесплатный доступ готовится':order.kind==='referral'&&order.status==='paid'?'Добавляем бонусные дни':order.kind==='referral'&&order.status==='active'?'Бонусные дни добавлены':order.kind==='trial'&&order.status==='paid'?'Готовим пробный VPN':order.kind==='trial'&&order.status==='active'?'Пробный доступ выдан':statusLabel[order.status] || order.status; }
@@ -1062,7 +1062,7 @@ function adsPlacementLabel(p){
 function adsBookingLabel(b){
   if(!b)return 'Плановой брони нет.';
   const labels={reserved:'Забронировано владельцем',canceled:'Бронь отменена',consumed:'Бронь использована при запуске'};
-  return (labels[b.state] || b.state)+' · '+b.site_name+' · '+new Date(b.starts_at*1000).toLocaleString('ru-RU')+' — '+new Date(b.ends_at*1000).toLocaleString('ru-RU')+' (время браузера)'+(b.expired?' · ожидается перенос или отмена':'');
+  return (labels[b.state] || b.state)+' · '+b.site_name+' · '+new Date(b.starts_at*1000).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})+' — '+new Date(b.ends_at*1000).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})+' (МСК)'+(b.expired?' · ожидается перенос или отмена':'');
 }
 async function refreshAds() {
   const request=++adsRequest,epoch=sessionEpoch,page=adsPage;

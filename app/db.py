@@ -421,6 +421,8 @@ def init_db():
             conn.execute('ALTER TABLE orders ADD COLUMN plan_version INTEGER NOT NULL DEFAULT 1')
         if 'plan_name' not in columns:
             conn.execute('ALTER TABLE orders ADD COLUMN plan_name TEXT')
+        from .updates import migrate_schedule
+        migrate_schedule(conn)
         migrate_booking_actions(conn)
         sub_columns = {row['name'] for row in conn.execute('PRAGMA table_info(subscriptions)')}
         if 'server_id' not in sub_columns:

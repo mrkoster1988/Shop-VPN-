@@ -61,6 +61,18 @@ def next_daily(now, check_time, zone):
     raise ValueError('Не удалось рассчитать расписание')
 
 
+MOSCOW = ZoneInfo('Europe/Moscow')
+
+
+def migrate_schedule(conn):
+    row = conn.execute('SELECT check_time, timezone FROM update_checker WHERE id=1').fetchone()
+    if row and row['timezone'] != MOSCOW.key:
+        upcoming = next_daily(int(time.time()), row['check_time'], row['timezone'])
+        clock = datetime.fromtimestamp(upcoming, MOSCOW).strftime('%H:%M')
+        conn.execute('UPDATE update_checker SET check_time=?,timezone=?,version=version+1 WHERE id=1',
+                     (clock, MOSCOW.key))
+
+
 def scheduler_enabled():
     return os.getenv('BACKGROUND_TASKS', 'true') == 'true' and os.getenv('MAINTENANCE_MODE') != 'true'
 
@@ -120,9 +132,11 @@ def save_schedule(data):
         row = _row(conn)
         if row['version'] != data.version:
             raise HTTPException(409, 'Расписание уже изменено. Обновите раздел и повторите.')
+        upcoming = next_daily(now, data.check_time, data.timezone)
+        clock = datetime.fromtimestamp(upcoming, MOSCOW).strftime('%H:%M')
         conn.execute('''UPDATE update_checker SET enabled=?,check_time=?,timezone=?,version=version+1,
             next_check=?,retry_at=CASE WHEN error_code='rate_limited' OR lease_token IS NOT NULL THEN retry_at ELSE 0 END WHERE id=1''',
-            (int(data.enabled), data.check_time, data.timezone, next_daily(now, data.check_time, data.timezone)))
+            (int(data.enabled), clock, MOSCOW.key, upcoming))
     return status()
 
 
