@@ -127,13 +127,37 @@ def gate_cmd(operation):
     return cmd + 'done'
 
 
-def create_copy(old, image, folder, name, paths):
+def persist_autostart(ini, interfaces):
+    # The dashboard stores interface names separated by a literal double bar.
+    # Edit just this setting without rewriting or logging credentials elsewhere in the INI.
+    with ini.open('r+', encoding='utf-8', newline='') as file:
+        lines = file.readlines()
+        start = next((i for i, line in enumerate(lines) if line.strip() == '[WireGuardConfiguration]'), None)
+        if start is None:
+            return False
+        end = next((i for i in range(start+1,len(lines)) if lines[i].lstrip().startswith('[')),len(lines))
+        pos = next((i for i in range(start+1,end) if re.match(r'^\s*autostart\s*=',lines[i],re.I)),end)
+        configured = lines[pos].split('=',1)[1].strip().split('||') if pos < end else []
+        names = list(dict.fromkeys([name for name in configured if name] + list(interfaces)))
+        value = 'autostart = ' + '||'.join(names) + '\n'
+        if pos == end and pos and not lines[pos-1].endswith('\n'):
+            lines[pos-1] += '\n'
+        lines[pos:pos+int(pos<end)] = [value]
+        file.seek(0)
+        file.writelines(lines)
+        file.truncate()
+    return True
+
+
+def create_copy(old, image, folder, name, paths, saved_autostart):
     config = dict(old['Config'])
     host = dict(old['HostConfig'])
     host['Binds'] = [f'{folder / key}:{dest}:rw' for key, dest in paths.items()]
     config['HostConfig'] = host
     config['Image'] = image
     config['Env'] = [v for v in config['Env'] if v.split('=', 1)[0] not in ('tz','TZ')] + ['TZ='+MSK, 'tz='+MSK]
+    if saved_autostart:
+        config['Env'] = [v for v in config['Env'] if not v.startswith('wg_autostart=')] + ['wg_autostart=']
     original = (config.get('Entrypoint') or []) + (config.get('Cmd') or [])
     require(original, 'Исходная команда запуска не найдена.')
     wrapper = f'if test -e /data/{HOLD}; then {gate_cmd("hold")}; fi; exec "$@"'
@@ -177,7 +201,13 @@ def firewall(cid):
                    f'if command -v {binary} >/dev/null; then {binary}; fi')
         lines = [re.sub(r'\[\d+:\d+\]', '[0:0]', x) for x in s.splitlines() if x and not x.startswith('#') and GATE not in x]
         # Inserting the IPv6 maintenance rule may materialize a previously unused filter table.
-        rules = [x for x in lines if x.startswith('-A') or (x.startswith(':') and ' ACCEPT ' not in x)]
+        rules = []
+        table = ''
+        for line in lines:
+            if line.startswith('*'):
+                table = line
+            elif line.startswith('-A') or (line.startswith(':') and ' ACCEPT ' not in line):
+                rules.append(table + ' ' + line)
         result[binary] = rules
     return result
 
@@ -248,7 +278,7 @@ def stage(expected, backups):
     require(set(h['PortBindings']) == {'10086/tcp','51820/udp'}, 'Состав опубликованных портов изменился.')
     require(any(x == 'TZ=Europe/Amsterdam' for x in old['Config']['Env']), 'Пояс исходной панели изменился.')
     backup = next((p for p in sorted(backups.glob('wg-clock-*/BACKUP_OK'), key=lambda p:p.stat().st_mtime, reverse=True)
-                   if json.loads((p.parent/'container.json').read_text())[0]['Id'] == cid), None)
+                   if json.loads((p.parent/'container.json').read_text())['Id'] == cid), None)
     require(backup, 'Нет подтверждённой копии этого контейнера.')
     dbfile = backup.parent/'data/db/wgdashboard_job.db'
     with sqlite3.connect(dbfile.as_uri()+'?mode=ro&immutable=1', uri=True) as db:
@@ -276,8 +306,9 @@ def stage(expected, backups):
         state['target'] = convert(folder/'data/db/wgdashboard_job.db', expected)
         (folder/'data'/HOLD).touch()
         # The unnamed local snapshot preserves custom changes outside the mounted directories.
+        saved_autostart = persist_autostart(folder/'data/wg-dashboard.ini',before)
         image = docker('commit',cid).strip()
-        new = create_copy(old,image,folder,state['saved']+'-candidate',paths)
+        new = create_copy(old,image,folder,state['saved']+'-candidate',paths,saved_autostart)
         state['new'] = new
         mark(folder/'state.json',state)
         docker('rename',cid,state['saved'])
@@ -302,6 +333,10 @@ def finish(folder,s):
     require((folder/'STAGED').exists() and not (folder/'ROLLED_BACK').exists(), 'Нет подготовленной панели.')
     new = s['new']
     require(inspect(s['name'])['Id'] == new, 'Имя узла теперь указывает на другой контейнер.')
+    if (folder/'DONE').exists():
+        ready(new)
+        print('WG_MSK_OK · переключение уже завершено.')
+        return
     wait_interfaces(new,s['interfaces'])
     require(docker('exec',new,'date','+%Z %z').strip() == 'MSK +0300', 'Пояс отличается.')
     if not (folder/'COMMITTING').exists():

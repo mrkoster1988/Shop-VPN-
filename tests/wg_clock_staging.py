@@ -14,7 +14,7 @@ BACKUP = ROOT/'scripts/backup_wgdashboard_clock.py'
 ENTRY = """#!/bin/sh
 set -eu
 mkdir -p /data/db /etc/wireguard
-touch /data/wg-dashboard.ini
+if [ ! -f /data/wg-dashboard.ini ]; then printf '[WireGuardConfiguration]\\nautostart = wg0\\n' > /data/wg-dashboard.ini; fi
 for interface in wg0 wg-guest; do
     file="/etc/wireguard/$interface.conf"
     if [ ! -f "$file" ]; then
@@ -45,7 +45,7 @@ def main():
         (root/'Dockerfile').write_text('FROM python:3.12-slim\nRUN apt-get update && apt-get install -y --no-install-recommends wireguard-tools iproute2 iptables tzdata && rm -rf /var/lib/apt/lists/*\nENV TZ=Europe/Amsterdam\nCOPY start /start\nENTRYPOINT ["/bin/sh","/start"]\n')
         (root/'start').write_text(ENTRY)
         run('docker','build','-q','-t','clock-ci',tmp)
-        original=run('docker','run','-d','--name','wgdashboard','--cap-add','NET_ADMIN','--restart','unless-stopped','-p','127.0.0.1:10086:10086','-p','127.0.0.1:51820:51820/udp','clock-ci')
+        original=run('docker','run','-d','--network','bridge','--name','wgdashboard','--cap-add','NET_ADMIN','--restart','unless-stopped','-p','127.0.0.1:10086:10086','-p','127.0.0.1:51820:51820/udp','clock-ci')
         for _ in range(40):
             ok=subprocess.run(['curl','--noproxy','*','-fsS','--max-time','2','http://127.0.0.1:10086'],capture_output=True).returncode==0
             if ok: break
