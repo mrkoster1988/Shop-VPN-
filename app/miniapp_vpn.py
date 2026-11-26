@@ -65,7 +65,9 @@ def router_for(purchase_model, purchase, order_status):
         policy = payment_policy.catalog(user)
         enabled = (any(o['id']=='wg' and o['available'] for o in options) and policy['payment_available']
                    and (bool(config.BOT_TOKEN) or cabinet_stars.available(user,'wg')) and shop_settings.terms_configured())
-        return reply({'plans':items,'available':bool(enabled),'issuer':'cabinet' if cabinet_stars.available(user,'wg') else 'shop','terms':shop_settings.terms(),
+        preference = all_rows("""SELECT p.id FROM vpn_renewal_choices c JOIN subscriptions s ON s.id=c.subscription_id
+            JOIN plans p ON p.id=c.plan_id WHERE s.user_id=? AND s.protocol='wg' AND p.enabled=1 AND p.is_free=0""",(user['id'],))
+        return reply({'preferred_plan':preference[0]['id'] if preference else None,'plans':items,'available':bool(enabled),'issuer':'cabinet' if cabinet_stars.available(user,'wg') else 'shop','terms':shop_settings.terms(),
                       'policy_version':policy['payment_policy_version']})
 
     @router.post('/checkout')

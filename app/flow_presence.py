@@ -12,7 +12,8 @@ import httpx
 from fastapi import HTTPException
 
 from . import servers, service, wgdashboard
-from .db import all_rows
+from . import wg_client_platform
+from .db import db, all_rows
 
 DOMAIN = 'pushok-vpn-presence-v1'
 _lock = asyncio.Lock()
@@ -81,7 +82,7 @@ async def snapshot(maintenance=False):
     async with _lock:
         if not maintenance and _cached is not None and time.monotonic()<_until:return _cached
         now=int(time.time())
-        subscriptions=all_rows("""SELECT s.*,u.telegram_id,b.mtproxy_uuid,x.request_id,x.days,x.before_expires,x.target_expires,
+        subscriptions=all_rows("""SELECT s.*,u.telegram_id,b.mtproxy_uuid,x.request_id,x.days,x.before_expires,x.target_expires,c.version AS renewal_version,c.assigned_name,rp.name AS renewal_name,rp.id AS renewal_plan_id,
             EXISTS(SELECT 1 FROM flow_auto_grants g WHERE g.subscription_id=s.id
                    AND g.state IN ('pending','expired')) AS first_grant_waiting,
             (SELECT COALESCE(NULLIF(TRIM(o.plan_name),''),p.name) FROM orders o LEFT JOIN plans p ON p.id=o.plan
@@ -89,6 +90,8 @@ async def snapshot(maintenance=False):
              AND o.kind NOT IN ('referral','free_renewal')
              ORDER BY o.target_expires DESC,o.created DESC,o.id DESC LIMIT 1) AS tariff
             FROM subscriptions s JOIN users u ON u.id=s.user_id LEFT JOIN flow_bridge_identities b ON b.shop_user_id=u.id
+            LEFT JOIN vpn_renewal_choices c ON c.subscription_id=s.id
+            LEFT JOIN plans rp ON rp.id=c.plan_id AND rp.enabled=1
             LEFT JOIN flow_owner_extensions x ON x.subscription_id=s.id AND x.status='pending'
             AND x.reason LIKE 'Кабинет MTProxy · %' WHERE s.protocol='wg'""")
         devices={}
@@ -96,6 +99,9 @@ async def snapshot(maintenance=False):
             devices.setdefault(device['subscription_id'],[]).append(device)
         changes={r['subscription_id']:r for r in all_rows('SELECT * FROM vpn_access_changes WHERE applied IS NULL')}
         revoked={r['subscription_id']:r['revoked_at'] for r in all_rows('SELECT subscription_id,revoked_at FROM admin_subscription_revocations')}
+        with db() as conn:
+            platform_observations = wg_client_platform.current(conn,now)
+        latest_endpoint = {}
         rows={}; accounts={}; nodes={}; unlinked={}; samples=[]; renames=[]
         for sub in subscriptions:
             sid=sub['id']
@@ -103,7 +109,8 @@ async def snapshot(maintenance=False):
             row={'state':state,'expires_at':sub['expires'] or None,'subscription_id':sid,'device_limit':sub['device_limit'],
                  'online':None,'last_seen':None,'received':None,'sent':None,'activity_known':False,
                  'legacy_reminder':bool(sub['reminder']),'expected':0,'observed':0,'has_recent':False}
-            row['tariff_name']=sub['tariff'] or (
+            row.update(renewal_version=sub['renewal_version'] or 0,renewal_name=sub['renewal_name'],renewal_plan_id=sub['renewal_plan_id'])
+            row['tariff_name']=sub['assigned_name'] or sub['tariff'] or (
                 'Гостевой доступ' if sub['wg_configuration']==servers.GUEST_CONFIGURATION else
                 'Пробный доступ' if sub['access_source']=='trial' else None)
             # An auto-grant reservation can exist before there is a profile to download.
@@ -147,7 +154,15 @@ async def snapshot(maintenance=False):
                     if data['last_seen'] is not None or peer.get('latest_handshake')=='No Handshake':
                         row['observed']+=1
                     row['has_recent']|=data['online'] is True
-                    if device is None:row.update(peer_addresses(peer))
+                    addresses = peer_addresses(peer)
+                    if device is None and sub['id'] not in latest_endpoint:
+                        row.update(addresses)
+                    seen = data['last_seen']
+                    if seen and addresses['endpoint_ip'] and seen > latest_endpoint.get(sub['id'],0):
+                        latest_endpoint[sub['id']] = seen
+                        row.update(addresses)
+                        row['endpoint_platform'] = wg_client_platform.match_peer(
+                            platform_observations,peer['id'],addresses['endpoint_ip'],seen)
                     if maintenance:
                         name=wg_activity.display(sub['user_id'],ident,device['name'] if device else None)
                         old=peer.get('name','')

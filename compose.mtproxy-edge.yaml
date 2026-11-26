@@ -12,6 +12,7 @@ services:
       - .env
     environment:
       DATA_DIR: /app/data
+      SHOP_PLATFORM_EDGE_PROXY: mtproxy-pushok-caddy-1
     command:
       - python
       - -m

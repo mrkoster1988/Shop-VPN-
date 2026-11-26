@@ -1,5 +1,6 @@
 """Durable subscription messages for the Telegram bot of the MTProxy cabinet."""
 import json
+from html import escape
 import secrets
 import time
 from datetime import datetime
@@ -75,8 +76,12 @@ def message(row, policy):
     kind, data = row['kind'], json.loads(row['payload'])
     if kind == 'reminder':
         lines = [policy['expiry_text'], 'Доступ до '+date(row['expiry'])+'.']
+    elif kind == 'renewal_plan':
+        price = f"⭐ {data['stars']} Stars" if data['stars'] else 'Бесплатно'
+        lines = ['✨ Ваш новый тариф — «'+data['name']+'».',
+                 f"{price} · {data['days']} дн.\n📱 Дополнительные профили · {data['device_limit']}",'Срок действующей подписки сохранён. За смену тарифа деньги не списывались.']
     elif kind == 'removed':
-        lines = ['VPN-подписка удалена.']
+        lines = ['🗂 Подписка удалена. Когда снова понадобится VPN, откройте раздел подключения.']
     elif kind == 'created':
         lines = ['VPN-подписка '+STATES.get(data['state'],'создана')+'.']
         if data['expires']: lines.append('Срок доступа до '+date(data['expires'])+'.')
@@ -92,9 +97,13 @@ def message(row, policy):
     else:
         old,new = data['old'],data['new']
         lines = []
-        if old['state']!=new['state']: lines.append('VPN-подписка '+STATES.get(new['state'],'обновлена')+'.')
-        if old['expires']!=new['expires'] and new['expires']: lines.append('Новый срок доступа до '+date(new['expires'])+'.')
-        if old['device_limit']!=new['device_limit']: lines.append(f"Лимит дополнительных профилей: {old['device_limit']} → {new['device_limit']}.")
+        if old['state']!=new['state']:
+            lines.append({'active':'🟢 Подписка активна. Можно подключаться!',
+                          'expired':'⏳ Срок подписки закончился. Её можно продлить в кабинете.',
+                          'revoked':'🔒 Подписка отозвана. Прежний профиль отключён.',
+                          'pending':'🐾 Готовим ваш профиль подключения.'}.get(new['state'],'🐾 Подписка обновлена.'))
+        if old['expires']!=new['expires'] and new['expires']: lines.append('🗓 Доступ до '+date(new['expires'])+'.')
+        if old['device_limit']!=new['device_limit']: lines.append(f"📱 Дополнительные профили · {old['device_limit']} → {new['device_limit']}.")
         if old['free_traffic_gb']!=new['free_traffic_gb']: lines.append('Лимит трафика: '+(str(new['free_traffic_gb'])+' ГБ' if new['free_traffic_gb'] else 'без ограничения')+'.')
         if old['free_auto_renew']!=new['free_auto_renew']: lines.append('Автопродление включено.' if new['free_auto_renew'] else 'Автопродление выключено.')
         if old['primary_key_state']!=new['primary_key_state']:
@@ -102,7 +111,7 @@ def message(row, policy):
                           'revoked':'Основной профиль отозван.'}.get(new['primary_key_state'],'Состояние основного профиля изменено.'))
         if data['moved']: lines.append('Изменился узел подключения.')
         if not lines: lines.append('Условия доступа к VPN обновлены.')
-    return 'Pushok ИИ\n\n'+'\n'.join(lines)
+    return 'Pushok ИИ\n\n'+'\n\n'.join(lines)
 
 
 def claim(now, scheduled_by_cabinet=False):
@@ -130,8 +139,13 @@ def claim(now, scheduled_by_cabinet=False):
             lease = secrets.token_hex(16)
             conn.execute('UPDATE cabinet_vpn_notices SET lease=?,next_attempt=?,attempts=attempts+1 WHERE id=?',
                          (lease,now+90,row['id']))
+            text = message(row,policy)
+            paragraphs = text.removeprefix('Pushok ИИ').strip().split('\n\n')
+            rendered = [escape(line) for line in paragraphs]
+            if row['kind'] in ('changed','created','renewal_plan','device','link','removed') and rendered:
+                rendered[0] = '<b>'+rendered[0]+'</b>'
             items.append({'id':row['id'],'lease':lease,'telegram_id':row['telegram_id'],
-                          'category':row['kind'],'text':message(row,policy),'renew':row['kind']=='reminder' or row['kind']=='changed'
+                          'category':row['kind'],'text':text,'formatted_body':'\n\n'.join(rendered),'renew':row['kind']=='reminder' or row['kind']=='changed'
                           and json.loads(row['payload'])['new']['state']=='expired'})
         return items
 

@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field, field_validator, ValidationError, model_v
 from starlette.applications import Starlette
 from starlette.routing import Mount
 from . import ads_bookings as bookings, ads_finance as finance
+from . import wg_client_platform
 from . import support as support_cases
 from . import shop_settings, runtime_settings, payment_policy, shop_finance, platforms, protocols, bot_menu as menu_editor, payment_events
 from . import config as c, providers, service, servers, server_routing, trials, promos, referrals, diagnostics, order_progress, ads, ads_placements as placements
@@ -1034,8 +1035,9 @@ async def device_config(did: str,user=Depends(current_user)):
     return {'config':c.decrypt(row['secret']),'protocol':row['protocol']}
 
 @app.get('/api/devices/{did}/download')
-async def device_download(did: str,user=Depends(current_user)):
+async def device_download(request: Request, did: str,user=Depends(current_user)):
     result=await device_config(did,user)
+    if result['protocol']=='wg': wg_client_platform.observe_import(request,result['config'])
     extension='conf' if result['protocol']=='wg' else 'txt'
     return Response(result['config'],media_type='text/plain',headers={'Content-Disposition':f'attachment; filename="pushok-device.{extension}"'})
 
@@ -1134,8 +1136,8 @@ async def flow_wireguard_link_change(sid: str, data: FlowWireGuardLinkAction,
 
 
 @app.get('/flow/wireguard/{token}')
-async def flow_wireguard_public_feed(token: str):
-    document = flow_wireguard.feed_for_link(token)
+async def flow_wireguard_public_feed(request: Request, token: str):
+    document = wg_client_platform.feed(request,flow_wireguard.feed_for_link(token))
     return JSONResponse(document, headers={'Cache-Control':'no-store',
         'Pragma':'no-cache','X-Robots-Tag':'noindex, nofollow, noarchive',
         'Referrer-Policy':'no-referrer'})
@@ -1154,14 +1156,14 @@ async def flow_device_link_change(did: str,data: FlowWireGuardLinkAction,user=De
 
 
 @app.get('/api/flow/wireguard/devices/{did}')
-async def flow_device_feed(did: str,user=Depends(current_user)):
-    return JSONResponse(flow_wireguard_devices.feed_for_user(user['id'],did),
+async def flow_device_feed(request: Request, did: str,user=Depends(current_user)):
+    return JSONResponse(wg_client_platform.feed(request,flow_wireguard_devices.feed_for_user(user['id'],did)),
         headers={'Cache-Control':'no-store','Pragma':'no-cache','X-Robots-Tag':'noindex, nofollow, noarchive'})
 
 
 @app.get('/flow/wireguard/device/{token}')
-async def flow_device_public_feed(token: str):
-    return JSONResponse(flow_wireguard_devices.feed_for_link(token),
+async def flow_device_public_feed(request: Request, token: str):
+    return JSONResponse(wg_client_platform.feed(request,flow_wireguard_devices.feed_for_link(token)),
         headers={'Cache-Control':'no-store','Pragma':'no-cache','X-Robots-Tag':'noindex, nofollow, noarchive',
                  'Referrer-Policy':'no-referrer'})
 
@@ -1208,8 +1210,8 @@ async def flow_wireguard_connections(user=Depends(current_user)):
     return flow_wireguard.discover(user['id'])
 
 @app.get('/api/flow/wireguard/subscriptions/{sid}')
-async def flow_wireguard_feed(sid: str, user=Depends(current_user)):
-    document = flow_wireguard.feed_for_owned_subscription(user['id'], sid)
+async def flow_wireguard_feed(request: Request, sid: str, user=Depends(current_user)):
+    document = wg_client_platform.feed(request,flow_wireguard.feed_for_owned_subscription(user['id'], sid))
     return JSONResponse(document, headers={'Cache-Control': 'no-store',
         'Pragma': 'no-cache', 'X-Robots-Tag': 'noindex, nofollow, noarchive'})
 
@@ -1221,8 +1223,9 @@ async def config_file(sid: str, user=Depends(current_user)):
     return {'config': c.decrypt(sub['secret']), 'protocol': sub['protocol']}
 
 @app.get('/api/subscriptions/{sid}/download')
-async def download(sid: str, user=Depends(current_user)):
+async def download(request: Request, sid: str, user=Depends(current_user)):
     result = await config_file(sid, user)
+    if result['protocol']=='wg': wg_client_platform.observe_import(request,result['config'])
     extension = 'conf' if result['protocol'] == 'wg' else 'txt'
     return Response(result['config'], media_type='text/plain', headers={
         'Content-Disposition': f'attachment; filename="pushok.{extension}"'})

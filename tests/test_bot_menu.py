@@ -23,7 +23,7 @@ def test_current_settings_and_long_terms(client,monkeypatch):
     monkeypatch.setattr(service,'send',send)
     execute("UPDATE store_settings SET support_text='Новый контакт',terms_text=?",('🐾'*5000,))
     asyncio.run(service.answer_info_callback(query()))
-    assert sent==[(123,'Новый контакт')]
+    assert len(sent)==1 and sent[0][0]==123 and 'Pushok ИИ' in sent[0][1]
     sent.clear()
     asyncio.run(service.answer_info_callback(query('shop:terms')))
     assert ''.join(text for _,text in sent)=='🐾'*5000

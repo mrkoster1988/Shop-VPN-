@@ -5,7 +5,6 @@ import secrets
 import time
 import uuid
 from decimal import Decimal, InvalidOperation
-from urllib.parse import parse_qsl, urlencode, urlsplit
 import httpx
 from fastapi import HTTPException
 from . import config as c, providers, servers, referrals, shop_settings, runtime_settings, bot_menu as menu_editor
@@ -196,6 +195,8 @@ async def fulfill(order_id):
                       sub['free_auto_renew'] if order['kind'] in ('referral','free_renewal') else (order['free_auto_renew'] if order['method']=='free' else 0),
                       sub['free_max_renewals'] if order['kind'] in ('referral','free_renewal') else (order['free_max_renewals'] if order['method']=='free' else 0),
                       sub['free_renewals_used']+1 if order['kind']=='free_renewal' else (sub['free_renewals_used'] if order['kind']=='referral' else 0),sub['id']))
+                if order['protocol']=='wg' and order['kind'] not in ('referral','free_renewal'):
+                    conn.execute('UPDATE vpn_renewal_choices SET assigned_name=NULL,plan_id=NULL,version=version+1 WHERE subscription_id=?',(sub['id'],))
                 if reissuing:
                     conn.execute('DELETE FROM admin_subscription_revocations WHERE subscription_id=?', (sub['id'],))
                 conn.execute("UPDATE orders SET status='active',error=NULL WHERE id=?", (order_id,))
@@ -301,14 +302,6 @@ async def process_devices():
                 log.warning('Device retry id=%s error=%s',device['id'],type(exc).__name__)
 
 
-def notification_button(label):
-    # Только навигация: URL не содержит учётных данных или одноразового билета.
-    parts = urlsplit(c.PUBLIC_URL)
-    query = [(key, value) for key, value in parse_qsl(parts.query) if key != 'view']
-    url = parts._replace(query=urlencode(query + [('view', 'account')])).geturl()
-    return {'inline_keyboard': [[{'text': label, 'web_app': {'url': url}}]]}
-
-
 def enqueue_free_renewals(now):
     """Queue at most one renewal per expiring free subscription.
 
@@ -393,8 +386,24 @@ async def tick():
         conn.execute('DELETE FROM shop_id_requests WHERE expires<=?',(now,))
 
 
+async def send_service_notice(tg_id,text):
+    import hmac
+    import json
+    import os
+    import re
+    key=os.getenv('FLOW_SHOP_BRIDGE_SECRET','')
+    if not re.fullmatch('[0-9a-f]{64}',key):raise RuntimeError('CabinetNoticeBridgeUnavailable')
+    raw=json.dumps({'chat_id':tg_id,'text':text},ensure_ascii=False,separators=(',',':')).encode()
+    stamp=str(int(time.time()))
+    signature=hmac.digest(bytes.fromhex(key),b'pushok-shop-telegram-notice-v1:'+stamp.encode()+b':'+raw,'sha256').hex()
+    async with httpx.AsyncClient(timeout=15,trust_env=False,follow_redirects=False) as client:
+        result=await client.post('https://pushok.shop/api/v1/vpn/shop-service-message',content=raw,
+            headers={'Content-Type':'application/json','X-Pushok-Management':stamp+':'+signature})
+        result.raise_for_status()
+        if result.json()!={'sent':True}:raise RuntimeError('CabinetNoticeUnconfirmed')
+
+
 async def notify_customers(now):
-    if not c.BOT_TOKEN:return
     try:
         policy=runtime_settings.get('notifications')
     except Exception as exc:
@@ -405,14 +414,14 @@ async def notify_customers(now):
         for order in all_rows("SELECT o.*,u.telegram_id FROM orders o JOIN users u ON u.id=o.user_id WHERE o.status='active' AND o.notified=0 AND u.telegram_id IS NOT NULL AND NOT (o.protocol='wg' AND EXISTS (SELECT 1 FROM flow_bridge_identities b WHERE b.shop_user_id=o.user_id))"):
             message=policy['trial_text'] if order['kind']=='trial' else policy['bonus_text'] if order['kind']=='referral' else policy['purchase_text']
             try:
-                await send(order['telegram_id'],message,reply_markup=notification_button('Открыть кабинет'))
+                await send_service_notice(order['telegram_id'],message)
                 execute('UPDATE orders SET notified=1 WHERE id=?',(order['id'],))
             except Exception:
                 pass
     if policy['expiry_enabled']:
         for sub in all_rows("SELECT s.*,u.telegram_id FROM subscriptions s JOIN users u ON u.id=s.user_id WHERE s.state='active' AND s.expires>? AND s.expires<? AND s.reminder=0 AND u.telegram_id IS NOT NULL AND NOT (s.protocol='wg' AND EXISTS (SELECT 1 FROM flow_bridge_identities b WHERE b.shop_user_id=s.user_id))",(now,now+policy['expiry_hours']*3600)):
             try:
-                await send(sub['telegram_id'],policy['expiry_text'],reply_markup=notification_button('Продлить VPN'))
+                await send_service_notice(sub['telegram_id'],policy['expiry_text'])
                 # Не отмечаем напоминание нового срока, если подписку продлили во время отправки.
                 execute('UPDATE subscriptions SET reminder=1 WHERE id=? AND expires=?',(sub['id'],sub['expires']))
             except Exception:
@@ -430,6 +439,11 @@ async def worker():
 
 def bot_menu(user_id):
     return menu_editor.keyboard(user_id, ticket)
+
+
+async def open_support_chat(tg_id):
+    await send(tg_id,'🐾 Вопросы о подключении, подписке и тарифах принимает Pushok ИИ.',
+               reply_markup={'inline_keyboard':[[{'text':'Открыть Pushok ИИ','url':'https://pushok.shop/ai-support'}]]})
 
 
 async def send_shop_info(tg_id, section):
@@ -464,7 +478,10 @@ async def answer_info_callback(query):
             # Просроченное подтверждение кнопки не блокирует следующие обновления.
             log.warning('Callback acknowledgement error=%s', type(exc).__name__)
     if valid:
-        await send_shop_info(tg_id, action.split(':')[1])
+        if action=='shop:terms':
+            await send_shop_info(tg_id,'terms')
+        else:
+            await open_support_chat(tg_id)
 
 
 class BotOwnershipError(RuntimeError):
@@ -519,7 +536,6 @@ async def bot_loop():
                     msg = update.get('message', {})
                     if msg.get('chat', {}).get('type') == 'private' and not msg.get('from', {}).get('is_bot'):
                         tg_id = msg['from']['id']
-                        user = telegram_account(tg_id)
                         if msg.get('successful_payment'):
                             try:
                                 record_stars(tg_id, msg['successful_payment'])
@@ -530,26 +546,13 @@ async def bot_loop():
                             continue
                         text = msg.get('text', '').split('@')[0].split(' ')[0]
                         if text in ('/start', '/buy', '/account'):
+                            user = telegram_account(tg_id)
                             await send(tg_id, 'Pushok VPN 🐾\nВыберите тариф, оплатите и получите подключение.\nСсылка входа в браузере одноразовая и действует 5 минут.',
                                        reply_markup=bot_menu(user['id']))
-                        elif text == '/subscriptions' and msg['chat'].get('id') == tg_id:
-                            from datetime import datetime, timezone
-                            rows = all_rows('SELECT protocol,expires,state FROM subscriptions WHERE user_id=? ORDER BY protocol', (user['id'],))
-                            lines = []
-                            for sub in rows:
-                                end = datetime.fromtimestamp(sub['expires'], timezone.utc).strftime('%d.%m.%Y %H:%M UTC') if sub['expires'] else 'срок ещё не назначен'
-                                name = 'Pushok Flow' if sub['protocol'] == 'wg' else sub['protocol'].upper()
-                                lines.append(f"{name} · {end}")
-                            await send(tg_id, '\n'.join(lines) or 'У вас пока нет подписок.', reply_markup={'inline_keyboard': [
-                                [{'text':'Моя подписка и продление', 'url':ticket(user['id'])}],
-                                [{'text':'Управление для владельца', 'web_app':{'url':c.PUBLIC_URL.rstrip('/')+'/admin?section=users'}}],
-                            ]})
-                        elif text in ('/support', '/paysupport'):
-                            await send_shop_info(tg_id, 'support')
-                        elif text == '/terms':
-                            await send_shop_info(tg_id, 'terms')
+                        elif text in ('/terms','/paysupport'):
+                            await send_shop_info(tg_id,'terms' if text=='/terms' else 'support')
                         else:
-                            await send(tg_id, 'Команды: /buy — купить VPN, /account — личный кабинет, /subscriptions — сроки подписок, /support — поддержка')
+                            await open_support_chat(tg_id)
                     offset = update['update_id'] + 1
                     execute("INSERT OR REPLACE INTO meta VALUES ('bot_offset',?)", (str(offset),))
         except BotOwnershipError:

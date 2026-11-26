@@ -131,7 +131,7 @@ def test_notifications_pause_resume_threshold_and_retry(client,monkeypatch):
     sent=[]
     async def deliver(tg_id,text,**kwargs):
         sent.append((tg_id,text))
-    monkeypatch.setattr(service,'send',deliver)
+    monkeypatch.setattr(service,'send_service_notice',deliver)
     save(client,'notifications',order_ready_enabled=False,expiry_enabled=False)
     asyncio.run(service.notify_customers(now))
     assert sent==[] and one('SELECT notified FROM orders')['notified']==0
@@ -141,10 +141,10 @@ def test_notifications_pause_resume_threshold_and_retry(client,monkeypatch):
     assert one('SELECT reminder FROM subscriptions')['reminder']==0
     save(client,'notifications',expiry_hours=72)
     async def failed(*args,**kwargs):raise TimeoutError('fixture')
-    monkeypatch.setattr(service,'send',failed)
+    monkeypatch.setattr(service,'send_service_notice',failed)
     asyncio.run(service.notify_customers(now))
     assert one('SELECT reminder FROM subscriptions')['reminder']==0
-    monkeypatch.setattr(service,'send',deliver)
+    monkeypatch.setattr(service,'send_service_notice',deliver)
     asyncio.run(service.notify_customers(now))
     asyncio.run(service.notify_customers(now))
     assert sent==[(123456789,'Профиль готов'),(123456789,'Срок заканчивается')]

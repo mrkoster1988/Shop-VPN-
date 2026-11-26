@@ -550,7 +550,11 @@ def init_db():
         from . import cabinet_notices
         cabinet_notices.install(conn)
         from . import wg_activity,vpn_lifecycle
+        from . import wg_client_platform
+        wg_client_platform.install(conn)
         wg_activity.install(conn)
+        from . import vpn_plans
+        vpn_plans.install(conn)
         vpn_lifecycle.install(conn)
 
 

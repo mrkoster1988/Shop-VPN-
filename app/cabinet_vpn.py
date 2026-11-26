@@ -116,12 +116,16 @@ async def manage(cmd: Command, request: Request):
 
 
 @router.post('/vpn-settings/{action}',include_in_schema=False)
-async def settings(action: Literal['read','access'],request:Request):
+async def settings(action: Literal['read','access','plans','plan-create','plan-update','plan-choice'],request:Request):
     from . import flow_auto_provision as access
     from pydantic import ValidationError
     body=await request.body()
     authorize(action.encode()+b':'+body,request.headers.get('X-Pushok-Management',''),b'pushok-vpn-settings-v1:')
     try:
+        if action.startswith('plan'):
+            from . import vpn_plans
+            try: return await vpn_plans.catalog(action,body)
+            except (KeyError,TypeError,ValueError):raise HTTPException(422,'vpn_plan_invalid') from None
         result=access.policy() if action=='read' else await access.update_policy(access.PolicyUpdate.model_validate_json(body))
     except ValidationError: raise HTTPException(422) from None
     return {k:result[k] for k in ('enabled','days','max_users','version','used','remaining')}

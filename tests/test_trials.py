@@ -14,7 +14,7 @@ def trial_env(client,monkeypatch):
     async def send(tg,text,**kwargs):messages.append(text)
     async def disable(sub):calls.append({**sub,'disabled':True})
     monkeypatch.setattr(providers,'disable',disable)
-    monkeypatch.setattr(providers,'provision',provision);monkeypatch.setattr(providers,'stars_invoice',no_payment);monkeypatch.setattr(providers,'payment',no_payment);monkeypatch.setattr(service,'send',send)
+    monkeypatch.setattr(providers,'provision',provision);monkeypatch.setattr(providers,'stars_invoice',no_payment);monkeypatch.setattr(providers,'payment',no_payment);monkeypatch.setattr(service,'send_service_notice',send)
     return client,calls,messages
 
 
