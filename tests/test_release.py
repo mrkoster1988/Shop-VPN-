@@ -21,6 +21,11 @@ def published(tag, **extra):
     return {'tag_name': tag, 'draft': False, 'prerelease': False, **extra}
 
 class ReleaseTests(unittest.TestCase):
+    def test_consecutive_edge_updates_require_individual_releases(self):
+        entries = CHANGELOG.replace('1.0', '2.0')
+        with self.assertRaisesRegex(ValueError, 'each missing Shop version'):
+            release.plan(entries, [published('v2.008')])
+
     def test_single_version(self):
         result = release.plan(CHANGELOG, [published('v1.009')])
         self.assertEqual(result['tag_name'], 'v1.010')

@@ -1,0 +1,70 @@
+name: Publish a missing Shop update
+on:
+  push:
+    branches: [main]
+    paths: [release-requests/backfill.json]
+permissions:
+  contents: read
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+jobs:
+  request:
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      tag: ${{ steps.source.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: source
+        name: Validate version and source in main history
+        run: |
+          python - <<'PY'
+          import json, os, re, subprocess
+          from pathlib import Path
+          request = json.loads(Path('release-requests/backfill.json').read_text())
+          sha, tag = request['sha'], request['tag']
+          if not re.fullmatch('[0-9a-f]{40}', sha) or not re.fullmatch('v[0-9]+[.][0-9]{3}', tag):
+              raise ValueError('Invalid release request')
+          subprocess.run(['git', 'merge-base', '--is-ancestor', sha, 'HEAD'], check=True)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              print('sha='+sha, 'tag='+tag, sep='\n', file=output)
+          PY
+  checks:
+    needs: request
+    uses: ./.github/workflows/ci.yml
+    with:
+      source_ref: ${{ needs.request.outputs.sha }}
+  publish:
+    needs: [request, checks]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.request.outputs.sha }}
+          persist-credentials: false
+      - name: Publish the tested intermediate without replacing the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.request.outputs.tag }}
+          SHA: ${{ needs.request.outputs.sha }}
+        run: |
+          python - <<'PY'
+          import os, subprocess
+          from pathlib import Path
+          from scripts import release, update_source
+          tag, sha = os.environ['TAG'], os.environ['SHA']
+          if sha != subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip():
+              raise ValueError('Unexpected source commit')
+          update_source.check_version(Path('.'), tag)
+          first, notes = release.sections(Path('CHANGELOG.md').read_text())[0]
+          if first != tag:
+              raise ValueError('Changelog and runtime versions differ')
+          Path(os.environ['RUNNER_TEMP'],'notes.md').write_text(notes)
+          PY
+          gh release create "$TAG" --target "$SHA" --latest=false --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"

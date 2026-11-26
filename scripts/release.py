@@ -64,6 +64,8 @@ def plan(text, releases):
     pending = [(tag, body) for tag, body in entries if version(tag) > baseline]
     if not pending:
         return None
+    if baseline >= (2, 0) and len(pending) > 1:
+        raise ValueError('Publish each missing Shop version with its tested source before publishing the latest.')
     tag = pending[0][0]
     if any(r.get('tag_name') == tag for r in releases):
         raise ValueError(f'{tag} already exists as a draft or prerelease; resolve it before publishing')
