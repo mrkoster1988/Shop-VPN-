@@ -1,0 +1,20 @@
+name: WGDashboard clock migration staging
+on:
+  push:
+    paths:
+      - 'scripts/wg_clock_switch.py'
+      - 'scripts/backup_wgdashboard_clock.py'
+      - 'tests/wg_clock_staging.py'
+      - '.github/workflows/wg-clock-staging.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  cutover-and-rollback:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: sudo env GITHUB_ACTIONS=true python3 tests/wg_clock_staging.py --disposable
