@@ -16,37 +16,56 @@ def install(conn):
 
 async def change(cmd):
     sid=cmd.subscription_id; rid=str(cmd.request_id); days=cmd.value
-    if (cmd.action=='revoke' and days!=0) or (cmd.action=='restore' and not 1<=days<=365):
+    if (cmd.action in ('expire','revoke') and days!=0) or (cmd.action=='restore' and not 1<=days<=365):
         raise HTTPException(422,'vpn_days_range')
     async with service.lock:
         with db() as conn:
             conn.execute('BEGIN IMMEDIATE')
             job=conn.execute('SELECT * FROM vpn_access_changes WHERE request_id=?',(rid,)).fetchone()
-            if job and (job['subscription_id'],job['actor'],job['action'],job['before_expiry'],job['days'])!=(
-                sid,str(cmd.actor),cmd.action,cmd.before,days):raise HTTPException(409,'vpn_changed')
+            if job and (job['subscription_id'],job['action'],job['before_expiry'],job['days'])!=(
+                sid,cmd.action,cmd.before,days):raise HTTPException(409,'vpn_changed')
             if job and job['applied']:return
             raw=conn.execute('SELECT * FROM subscriptions WHERE id=?',(sid,)).fetchone()
             if not raw:raise HTTPException(404,'vpn_subscription_missing')
             sub=dict(raw)
             if sub['expires']!=cmd.before or (sub['state']=='revoked')!=(cmd.action=='restore'):
                 raise HTTPException(409,'vpn_changed')
-            if admin_cleanup._blocked_orders(conn,sub['user_id'],'wg') or admin_cleanup._unfinished_rotation(conn,sid):
-                raise HTTPException(409,'vpn_change_conflict')
+            if cmd.action=='expire' and sub['state']!='active' and not (job and sub['state']=='expired'):
+                raise HTTPException(409,'vpn_changed')
+            if not job and admin_cleanup._blocked_orders(conn,sub['user_id'],'wg'):
+                raise HTTPException(409,'vpn_order_in_progress')
+            if admin_cleanup._unfinished_rotation(conn,sid):
+                raise HTTPException(409,'vpn_key_rotation')
             if cmd.action=='restore':
                 try:
                     _,profile=servers.for_subscription(sub)
                 except Exception:
-                    raise HTTPException(409,'vpn_change_conflict') from None
+                    raise HTTPException(409,'vpn_node_unavailable') from None
                 if profile.get('api')!='wgdashboard' or not profile.get('schedule_expiry'):
-                    raise HTTPException(409,'vpn_change_conflict')
+                    raise HTTPException(409,'vpn_expiry_schedule_required')
             if conn.execute("SELECT 1 FROM flow_owner_extensions WHERE subscription_id=? AND status='pending'",(sid,)).fetchone():
-                raise HTTPException(409,'vpn_change_conflict')
+                raise HTTPException(409,'vpn_pending_operation')
             if not job:
                 if conn.execute('SELECT 1 FROM vpn_access_changes WHERE subscription_id=? AND applied IS NULL',(sid,)).fetchone():
-                    raise HTTPException(409,'vpn_change_conflict')
+                    raise HTTPException(409,'vpn_pending_operation')
                 conn.execute('INSERT INTO vpn_access_changes VALUES(?,?,?,?,?,?,?,?,NULL)',
                     (rid,sid,str(cmd.actor),cmd.action,cmd.before,days,int(time.time())+days*86400,str(uuid4())))
                 job=conn.execute('SELECT * FROM vpn_access_changes WHERE request_id=?',(rid,)).fetchone()
+        if cmd.action=='expire':
+            try:
+                await service.disable_subscription_peers(sub)
+            except Exception:
+                raise HTTPException(502,'vpn_node_unconfirmed') from None
+            with db() as conn:
+                conn.execute('BEGIN IMMEDIATE')
+                end=min(sub['expires'],job['target'])
+                if not conn.execute("""UPDATE subscriptions SET state='expired',expires=?,free_auto_renew=0
+                        WHERE id=? AND state IN ('active','expired') AND expires=?""",(end,sid,cmd.before)).rowcount:
+                    raise HTTPException(409,'vpn_changed')
+                conn.execute("UPDATE devices SET expires=MIN(expires,?) WHERE subscription_id=? AND state='active'",(end,sid))
+                conn.execute("UPDATE flow_auto_grants SET state='expired',target_expires=? WHERE subscription_id=? AND state='active'",(end,sid))
+                conn.execute('UPDATE vpn_access_changes SET applied=? WHERE request_id=?',(int(time.time()),rid))
+            return
         if cmd.action=='revoke':
             await admin_cleanup.revoke_locked(sid,request_id=rid)
             return

@@ -21,7 +21,7 @@ class Command(BaseModel):
     model_config = {'extra': 'forbid'}
     actor: UUID
     subject: UUID
-    action: Literal['extend', 'shorten', 'limit', 'retry', 'revoke', 'restore']
+    action: Literal['extend', 'shorten', 'limit', 'retry', 'revoke', 'restore', 'expire']
     subscription_id: str = Field(min_length=1, max_length=100)
     request_id: UUID
     before: int = Field(ge=0, strict=True)
@@ -70,7 +70,7 @@ async def manage(cmd: Command, request: Request):
                     raise HTTPException(409, 'vpn_changed')
                 conn.execute('INSERT INTO cabinet_vpn_limits VALUES (?,?,?,?,?,?,?)',
                              (rid, fingerprint, str(cmd.actor), sub['id'], cmd.before, cmd.value, int(time.time())))
-    elif cmd.action in ('revoke','restore'):
+    elif cmd.action in ('revoke','restore','expire'):
         from . import vpn_lifecycle
         try:
             await vpn_lifecycle.change(cmd)

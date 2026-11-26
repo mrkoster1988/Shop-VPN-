@@ -81,7 +81,11 @@ async def snapshot(maintenance=False):
     async with _lock:
         if not maintenance and _cached is not None and time.monotonic()<_until:return _cached
         now=int(time.time())
-        subscriptions=all_rows("""SELECT s.*,u.telegram_id,b.mtproxy_uuid,x.request_id,x.days,x.before_expires,x.target_expires
+        subscriptions=all_rows("""SELECT s.*,u.telegram_id,b.mtproxy_uuid,x.request_id,x.days,x.before_expires,x.target_expires,
+            (SELECT COALESCE(NULLIF(TRIM(o.plan_name),''),p.name) FROM orders o LEFT JOIN plans p ON p.id=o.plan
+             WHERE o.user_id=s.user_id AND o.protocol=s.protocol AND o.status='active'
+             AND o.kind NOT IN ('referral','free_renewal')
+             ORDER BY o.target_expires DESC,o.created DESC,o.id DESC LIMIT 1) AS tariff
             FROM subscriptions s JOIN users u ON u.id=s.user_id LEFT JOIN flow_bridge_identities b ON b.shop_user_id=u.id
             LEFT JOIN flow_owner_extensions x ON x.subscription_id=s.id AND x.status='pending'
             AND x.reason LIKE 'Кабинет MTProxy · %' WHERE s.protocol='wg'""")
@@ -97,6 +101,9 @@ async def snapshot(maintenance=False):
             row={'state':state,'expires_at':sub['expires'] or None,'subscription_id':sid,'device_limit':sub['device_limit'],
                  'online':None,'last_seen':None,'received':None,'sent':None,'activity_known':False,
                  'legacy_reminder':bool(sub['reminder']),'expected':0,'observed':0,'has_recent':False}
+            row['tariff_name']=sub['tariff'] or (
+                'Гостевой доступ' if sub['wg_configuration']==servers.GUEST_CONFIGURATION else
+                'Пробный доступ' if sub['access_source']=='trial' else None)
             rows[sid]=row
             if sub['mtproxy_uuid']:accounts[sub['mtproxy_uuid']]=row
             elif sub['telegram_id']:unlinked[str(sub['telegram_id'])]=row

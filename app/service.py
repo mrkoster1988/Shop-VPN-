@@ -148,6 +148,8 @@ async def fulfill(order_id):
                         (sid,order['user_id'],order['protocol'],0,'pending',server['id']))
                     raw = conn.execute('SELECT * FROM subscriptions WHERE id=?',(sid,)).fetchone()
                 sub = dict(raw)
+                if conn.execute('SELECT 1 FROM vpn_access_changes WHERE subscription_id=? AND applied IS NULL',(sub['id'],)).fetchone():
+                    raise RuntimeError('SubscriptionChangePending')
                 if not sub['server_id']:
                     raise RuntimeError('ServerBindingMissing')
                 if sub['primary_key_state']=='rotating' or conn.execute("SELECT 1 FROM primary_rotations WHERE subscription_id=? AND state NOT IN ('completed','canceled')",(sub['id'],)).fetchone():
@@ -327,6 +329,12 @@ def enqueue_free_renewals(now):
                  'paid','free_renewal',sub['free_traffic_gb'],1,sub['free_max_renewals']))
 
 
+async def disable_subscription_peers(sub):
+    for device in all_rows("SELECT * FROM devices WHERE subscription_id=? AND state='active'",(sub['id'],)):
+        await providers.disable({**sub,'wg_device_name':device.get('name'),'id':device_identity(device),'expires':device['expires']})
+    await providers.disable({**sub,'id':primary_identity(sub)})
+
+
 async def tick():
     now = int(time.time())
     enqueue_free_renewals(now)
@@ -346,9 +354,7 @@ async def tick():
     async with lock:
         for sub in all_rows("SELECT * FROM subscriptions WHERE state='active' AND expires<=?", (now,)):
             try:
-                for device in all_rows("SELECT * FROM devices WHERE subscription_id=? AND state='active'",(sub['id'],)):
-                    await providers.disable({**sub,'wg_device_name':device.get('name'),'id':device_identity(device),'expires':device['expires']})
-                await providers.disable({**sub,'id':primary_identity(sub)})
+                await disable_subscription_peers(sub)
                 execute("UPDATE subscriptions SET state='expired' WHERE id=?", (sub['id'],))
             except Exception as exc:
                 log.warning('Expiry retry subscription=%s error=%s', sub['id'], type(exc).__name__)

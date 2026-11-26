@@ -79,6 +79,8 @@ def _subscription(conn, user_id):
             sub['primary_key_state'] != 'active' or
             not sub['secret'] or not sub['server_id']):
         raise HTTPException(409, 'Для продления нужен сохранённый WireGuard-ключ. Проверьте подписку и пир.')
+    if conn.execute("SELECT 1 FROM vpn_access_changes WHERE subscription_id=? AND applied IS NULL",(sub['id'],)).fetchone():
+        raise HTTPException(409, 'vpn_pending_operation')
     if conn.execute(
         "SELECT 1 FROM orders WHERE user_id=? AND protocol='wg' "
         "AND status IN ('pending','checkout','paid') LIMIT 1",

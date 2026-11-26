@@ -74,7 +74,7 @@ async def revoke_locked(sid, request_id=None):
         if conn.execute("SELECT 1 FROM flow_owner_extensions WHERE subscription_id=? AND status='pending'",
                         (sid,)).fetchone():
             raise HTTPException(409, 'Есть незавершённое продление WireGuard. Сначала выполните сверку.')
-        if _blocked_orders(conn, sub['user_id'], sub['protocol']):
+        if request_id is None and _blocked_orders(conn, sub['user_id'], sub['protocol']):
             raise HTTPException(409, 'Есть незавершённый заказ этого протокола. '
                                 'Сначала завершите оплату или разберите заказ.')
         if _unfinished_rotation(conn, sid):
@@ -126,7 +126,7 @@ async def revoke_locked(sid, request_id=None):
     now = int(time.time())
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
-        if _blocked_orders(conn, sub['user_id'], sub['protocol']):
+        if request_id is None and _blocked_orders(conn, sub['user_id'], sub['protocol']):
             raise HTTPException(409, 'Во время удаления появился незавершённый заказ.')
         conn.execute("UPDATE subscriptions SET state='revoked',expires=MIN(expires,?),"
                      "secret=NULL,primary_key_state='revoked',free_auto_renew=0,"
