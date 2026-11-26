@@ -21,6 +21,12 @@ _cached = None
 _until = 0.0
 
 
+async def invalidate():
+    global _until
+    async with _lock:
+        _until = 0
+
+
 def authorize(header):
     secret = os.getenv('FLOW_SHOP_BRIDGE_SECRET', '')
     if not re.fullmatch(r'[0-9a-f]{64}', secret):

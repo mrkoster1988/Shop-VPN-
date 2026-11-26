@@ -74,6 +74,8 @@ def test_catalog_bridge_rejects_unsigned_and_creates_with_signature(client,monke
     assert client.post(route,content=body).status_code==403
     stamp=str(int(time.time()))
     signature=hmac.digest(bytes.fromhex(raw_key),b'pushok-vpn-settings-v1:'+stamp.encode()+b':plan-create:'+body,'sha256').hex()
+    monkeypatch.setattr(flow_presence,'_until',time.monotonic()+20)
     response=client.post(route,content=body,headers={'X-Pushok-Management':stamp+':'+signature})
     assert response.status_code in (200,201),response.text
     assert response.json()['id']=='new_test'
+    assert flow_presence._until==0

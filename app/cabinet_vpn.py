@@ -76,8 +76,7 @@ async def manage(cmd: Command, request: Request):
             await vpn_lifecycle.change(cmd)
         except HTTPException as error:
             if error.detail == 'vpn_restore_elapsed':
-                async with flow_presence._lock:
-                    flow_presence._until = 0
+                await flow_presence.invalidate()
             raise
         except Exception:
             raise HTTPException(503,"vpn_change_unconfirmed") from None
@@ -110,8 +109,7 @@ async def manage(cmd: Command, request: Request):
             extension = flow_owner_extension.Extension(request_id=cmd.request_id, subscription_id=sub['id'],
                 before_expires=cmd.before, target_expires=target, days=cmd.value, reason=reason, confirm=direction)
             await flow_owner_extension.extend(uid, extension)
-    async with flow_presence._lock:
-        flow_presence._until = 0
+    await flow_presence.invalidate()
     return {'ok': True}
 
 
@@ -124,8 +122,13 @@ async def settings(action: Literal['read','access','plans','plan-create','plan-u
     try:
         if action.startswith('plan'):
             from . import vpn_plans
-            try: return await vpn_plans.catalog(action,body)
-            except (KeyError,TypeError,ValueError):raise HTTPException(422,'vpn_plan_invalid') from None
+            try:
+                result = await vpn_plans.catalog(action,body)
+            except (KeyError,TypeError,ValueError):
+                raise HTTPException(422,'vpn_plan_invalid') from None
+            if action != 'plans':
+                await flow_presence.invalidate()
+            return result
         result=access.policy() if action=='read' else await access.update_policy(access.PolicyUpdate.model_validate_json(body))
     except ValidationError: raise HTTPException(422) from None
     return {k:result[k] for k in ('enabled','days','max_users','version','used','remaining')}
