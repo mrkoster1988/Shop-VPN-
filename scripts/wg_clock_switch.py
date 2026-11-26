@@ -188,17 +188,41 @@ def interface_state(cid):
         addrs = json.loads(docker('exec',cid,'ip','-j','addr','show','dev',iface))[0]
         props['addresses'] = sorted((f"{a['local']}/{a['prefixlen']}" for a in addrs['addr_info'] if a['scope'] != 'link'))
         props['mtu'] = addrs['mtu']
+        props['ipv4_forwarding'] = docker('exec',cid,'cat','/proc/sys/net/ipv4/ip_forward').strip()
         props['peers'] = len(docker('exec',cid,'wg','show',iface,'peers').split())
         result[iface] = props
     return result
 
 
-def firewall(cid):
+def key_routes(text):
+    # Ignore learnt remote endpoints, runtime keepalives and ephemeral listen ports.
+    peers, current, server_key = {}, None, None
+    for line in text.splitlines():
+        line = line.partition('#')[0].strip()
+        if line == '[Peer]':
+            current = {}
+        elif '=' in line:
+            k, v = (part.strip() for part in line.split('=',1))
+            if current is None and k == 'PrivateKey':
+                server_key = v
+            elif current is not None and k in ('PublicKey','PresharedKey','AllowedIPs'):
+                if k == 'AllowedIPs':
+                    current[k] = sorted(set(current.get(k,[])) | {x.strip() for x in v.split(',')})
+                else:
+                    current[k] = v
+                if 'PublicKey' in current:
+                    peers[current['PublicKey']] = current
+    return server_key, peers
+
+
+def firewall(cid, snapshot=None):
     # Compare rules in their original order; counters and generation dates are volatile.
     result = {}
     for binary in ['iptables-save','ip6tables-save']:
         s = docker('exec', cid, 'sh','-ec',
                    f'if command -v {binary} >/dev/null; then {binary}; fi')
+        if snapshot is not None:
+            (snapshot/binary).write_text(s)
         lines = [re.sub(r'\[\d+:\d+\]', '[0:0]', x) for x in s.splitlines() if x and not x.startswith('#') and GATE not in x]
         # Inserting the IPv6 maintenance rule may materialize a previously unused filter table.
         rules = []
@@ -261,7 +285,12 @@ def rollback(folder, s):
     if not inspect(s['old'])['State']['Running']:
         docker('start',s['old'])
     wait_interfaces(s['old'],s['interfaces'])
-    require(firewall(s['old']) == s['firewall'], 'У исходного узла изменились правила фильтрации.')
+    if firewall(s['old']) != s['firewall']:
+        for binary in ('iptables','ip6tables'):
+            rules = (folder/(binary+'-save')).read_bytes()
+            if rules.strip():
+                docker('exec','-i',s['old'],binary+'-restore',data=rules)
+        require(firewall(s['old']) == s['firewall'], 'Требуется сверка правил исходного узла.')
     (folder/'ROLLED_BACK').touch()
     print('ROLLBACK_OK · прежняя панель и интерфейсы запущены.', flush=True)
 
@@ -287,6 +316,9 @@ def stage(expected, backups):
     require(before, 'Нет активных интерфейсов.')
     for iface in before:
         docker('exec',cid,'test','-s',f'/etc/wireguard/{iface}.conf')
+        require(key_routes(docker('exec',cid,'wg-quick','strip',iface))
+                == key_routes(docker('exec',cid,'wg','showconf',iface)),
+                'Сохранённые ключи/маршруты отличаются от работающего '+iface+'. Панель не остановлена.')
     ready(cid)
     require(panel_published(), 'Панель недоступна на порту хоста до переключения.')
     state_root = Path('/var/lib/pushok-wg-clock')
@@ -296,7 +328,7 @@ def stage(expected, backups):
     if (backup.parent/'amneziawg').is_dir():
         paths['amneziawg'] = '/etc/amnezia/amneziawg'
     state = {'name':name,'old':cid,'saved':name+'-before-'+folder.name,'expected':expected,
-             'interfaces':before,'firewall':firewall(cid),'ip':old['NetworkSettings']['Networks']['bridge']['IPAddress']}
+             'interfaces':before,'firewall':firewall(cid,folder),'ip':old['NetworkSettings']['Networks']['bridge']['IPAddress']}
     mark(folder/'state.json',state)
     print('Каталог переключения:',folder,'\nВосстановление при обрыве: python3 wg-msk.py rollback',folder,flush=True)
     try:
