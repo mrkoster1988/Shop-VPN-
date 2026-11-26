@@ -81,11 +81,7 @@ def _subscription(conn, user_id):
         raise HTTPException(409, 'Для продления нужен сохранённый WireGuard-ключ. Проверьте подписку и пир.')
     if conn.execute("SELECT 1 FROM vpn_access_changes WHERE subscription_id=? AND applied IS NULL",(sub['id'],)).fetchone():
         raise HTTPException(409, 'vpn_pending_operation')
-    if conn.execute(
-        "SELECT 1 FROM orders WHERE user_id=? AND protocol='wg' "
-        "AND status IN ('pending','checkout','paid') LIMIT 1",
-        (user_id,)).fetchone() is not None:
-        raise HTTPException(409, 'Есть незавершённый заказ WireGuard; сначала разберите его.')
+    service.check_access_order(conn, user_id)
     if conn.execute(
         "SELECT 1 FROM primary_rotations WHERE subscription_id=? "
         "AND state NOT IN ('completed','canceled') LIMIT 1",

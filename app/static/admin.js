@@ -491,6 +491,9 @@ async function api(path, {method = 'GET', data} = {}) {
   });
   const result = await response.json();
   if (epoch !== authEpoch) throw new Error('Сессия администратора завершена');
+  if (response.status === 409 && result.detail?.code === 'vpn_order_issuing') {
+    throw new Error('Магазин выдаёт доступ по заказу № '+result.detail.order_id+'.');
+  }
   if (!response.ok) throw new Error(typeof result.detail === 'string' ? result.detail : 'Проверьте введённые данные');
   return result;
 }

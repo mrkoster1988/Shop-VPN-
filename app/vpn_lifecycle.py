@@ -32,8 +32,8 @@ async def change(cmd):
                 raise HTTPException(409,'vpn_changed')
             if cmd.action=='expire' and sub['state']!='active' and not (job and sub['state']=='expired'):
                 raise HTTPException(409,'vpn_changed')
-            if not job and admin_cleanup._blocked_orders(conn,sub['user_id'],'wg'):
-                raise HTTPException(409,'vpn_order_in_progress')
+            if not job:
+                service.check_access_order(conn, sub['user_id'], ending=cmd.action in ('expire', 'revoke'))
             if admin_cleanup._unfinished_rotation(conn,sid):
                 raise HTTPException(409,'vpn_key_rotation')
             if cmd.action=='restore':

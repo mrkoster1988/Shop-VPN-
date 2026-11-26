@@ -7,6 +7,7 @@ import uuid
 from decimal import Decimal, InvalidOperation
 from urllib.parse import parse_qsl, urlencode, urlsplit
 import httpx
+from fastapi import HTTPException
 from . import config as c, providers, servers, referrals, shop_settings, runtime_settings, bot_menu as menu_editor
 from .db import db, one, all_rows, execute, insert_user
 from .security import digest
@@ -105,6 +106,16 @@ def device_identity(device):
     return c.decrypt(device['credential_id']) if device.get('credential_id') else device['id']
 
 
+def check_access_order(conn, user_id, *, ending=False):
+    # An invoice or checkout has not started issuing keys. An order with a
+    # fixed target may already have updated the remote peer and owns that term.
+    order = conn.execute("""SELECT id FROM orders WHERE user_id=? AND protocol='wg'
+        AND status='paid' AND (target_expires IS NOT NULL OR ?)
+        ORDER BY created,id LIMIT 1""", (user_id, ending)).fetchone()
+    if order:
+        raise HTTPException(409, {'code': 'vpn_order_issuing', 'order_id': order['id']})
+
+
 async def fulfill(order_id):
     # One process / one uvicorn worker. Persist intent before remote effects, reuse on retry.
     async with lock:
@@ -150,6 +161,8 @@ async def fulfill(order_id):
                 sub = dict(raw)
                 if conn.execute('SELECT 1 FROM vpn_access_changes WHERE subscription_id=? AND applied IS NULL',(sub['id'],)).fetchone():
                     raise RuntimeError('SubscriptionChangePending')
+                if conn.execute("SELECT 1 FROM flow_owner_extensions WHERE subscription_id=? AND status='pending'", (sub['id'],)).fetchone():
+                    raise RuntimeError('SubscriptionChangePending')
                 if not sub['server_id']:
                     raise RuntimeError('ServerBindingMissing')
                 if sub['primary_key_state']=='rotating' or conn.execute("SELECT 1 FROM primary_rotations WHERE subscription_id=? AND state NOT IN ('completed','canceled')",(sub['id'],)).fetchone():
@@ -159,7 +172,17 @@ async def fulfill(order_id):
                     target = max(int(time.time()),sub['expires']) + order['days']*86400
                     conn.execute('UPDATE orders SET target_expires=? WHERE id=?',(target,order_id))
             quota = sub['free_traffic_gb'] if order['kind']=='referral' else (order['free_traffic_gb'] if order['method']=='free' else 0)
-            secret = await providers.provision({**sub, 'id':primary_identity(sub),'expires': target,'free_traffic_gb':quota})
+            identity = primary_identity(sub)
+            credential = sub.get('credential_id') or c.encrypt(identity)
+            reissuing = sub['protocol'] == 'wg' and sub['state'] == 'revoked'
+            if reissuing:
+                # Older partially fulfilled orders may have re-enabled the revoked peer.
+                if order['target_expires'] is not None and one(
+                        'SELECT 1 FROM wgdashboard_keys WHERE server_id=? AND credential_id=?', (sub['server_id'], identity)):
+                    await providers.disable({**sub, 'id': identity})
+                identity = str(uuid.uuid5(uuid.NAMESPACE_URL, 'pushok:wg:order:' + order_id))
+                credential = c.encrypt(identity)
+            secret = await providers.provision({**sub, 'id':identity,'expires': target,'free_traffic_gb':quota})
             encrypted = c.encrypt(secret)
             device_secrets = []
             for device in all_rows("SELECT * FROM devices WHERE subscription_id=? AND state='active'",(sub['id'],)):
@@ -168,11 +191,13 @@ async def fulfill(order_id):
             with db() as conn:
                 conn.executemany("UPDATE devices SET secret=?,expires=?,error=NULL WHERE id=?",device_secrets)
                 conn.execute("UPDATE subscriptions SET expires=?,state='active',secret=?,reminder=0,device_limit=?,credential_id=?,primary_key_state='active',rotation_error=NULL,access_source=?,free_traffic_gb=?,free_plan_id=?,free_auto_renew=?,free_max_renewals=?,free_renewals_used=? WHERE id=?",
-                             (target, encrypted,sub['device_limit'] if order['kind']=='referral' else order['device_limit'],sub.get('credential_id') or c.encrypt(sub['id']),sub['access_source'] if order['kind'] in ('referral','free_renewal') else order['kind'],sub['free_traffic_gb'] if order['kind']=='referral' else quota,
+                             (target, encrypted,sub['device_limit'] if order['kind']=='referral' else order['device_limit'],credential,sub['access_source'] if order['kind'] in ('referral','free_renewal') else order['kind'],sub['free_traffic_gb'] if order['kind']=='referral' else quota,
                       sub['free_plan_id'] if order['kind'] in ('referral','free_renewal') else (order['plan'] if order['method']=='free' else None),
                       sub['free_auto_renew'] if order['kind'] in ('referral','free_renewal') else (order['free_auto_renew'] if order['method']=='free' else 0),
                       sub['free_max_renewals'] if order['kind'] in ('referral','free_renewal') else (order['free_max_renewals'] if order['method']=='free' else 0),
                       sub['free_renewals_used']+1 if order['kind']=='free_renewal' else (sub['free_renewals_used'] if order['kind']=='referral' else 0),sub['id']))
+                if reissuing:
+                    conn.execute('DELETE FROM admin_subscription_revocations WHERE subscription_id=?', (sub['id'],))
                 conn.execute("UPDATE orders SET status='active',error=NULL WHERE id=?", (order_id,))
         except Exception as exc:
             # Do not persist remote responses, URLs, private keys or credentials in logs.
