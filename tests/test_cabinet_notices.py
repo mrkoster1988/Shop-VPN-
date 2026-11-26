@@ -95,3 +95,20 @@ def test_plan_notice_tracks_recipient_and_resumes_only_unsent_tariffs(client,mon
     assert not notices.claim(now+4,True)
     execute("UPDATE cabinet_vpn_notices SET outcome=NULL WHERE kind='premium'")
     assert state()['delivery']=='unknown'
+
+
+def test_sender_switch_claims_only_confirmed_failures_from_old_bot(client):
+    setup_user(client)
+    now = int(time.time())
+    execute('UPDATE users SET telegram_id=789 WHERE id=1')
+    execute('INSERT INTO flow_bridge_identities VALUES (?,?,1,?)',(str(uuid4()),789,now))
+    for outcome in ('sent','blocked','waiting_chat',None):
+        execute("""INSERT INTO cabinet_vpn_notices(user_id,subscription_id,kind,payload,delivered,next_attempt,outcome)
+            VALUES(1,?,'premium','{}',?,?,?)""",(SID,None if outcome=='waiting_chat' else now,now+3600,outcome))
+    assert not notices.claim(now,True)
+    items=notices.claim(now,True,True)
+    assert [e['telegram_id'] for e in items]==[789,789]
+    assert not notices.claim(now+1,True,True)
+    for e in items:
+        execute("UPDATE cabinet_vpn_notices SET delivered=?,lease=NULL,outcome='blocked' WHERE id=?",(now,e['id']))
+    assert not notices.claim(now+2,True,True)

@@ -31,7 +31,12 @@ def install(conn):
             WHERE kind='reminder';
         CREATE INDEX IF NOT EXISTS cabinet_vpn_notice_due ON cabinet_vpn_notices(delivered,next_attempt,id);
     """)
-    if 'outcome' not in {col[1] for col in conn.execute('PRAGMA table_info(cabinet_vpn_notices)')}:
+    columns = {col[1] for col in conn.execute('PRAGMA table_info(cabinet_vpn_notices)')}
+    if 'cabinet_sender' not in columns:
+        conn.execute('ALTER TABLE cabinet_vpn_notices ADD COLUMN cabinet_sender INTEGER NOT NULL DEFAULT 0')
+    if 'chat_reopened' not in columns:
+        conn.execute('ALTER TABLE cabinet_vpn_notices ADD COLUMN chat_reopened INTEGER NOT NULL DEFAULT 0')
+    if 'outcome' not in columns:
         conn.execute('ALTER TABLE cabinet_vpn_notices ADD COLUMN outcome TEXT')
     conn.execute("""CREATE INDEX IF NOT EXISTS cabinet_vpn_plan_history ON cabinet_vpn_notices(subscription_id,id)
                     WHERE kind IN ('premium','renewal_plan')""")
@@ -122,7 +127,7 @@ def message(row, policy):
     return 'Pushok ИИ\n\n'+'\n\n'.join(lines)
 
 
-def claim(now, scheduled_by_cabinet=False):
+def claim(now, scheduled_by_cabinet=False, cabinet_sender=False):
     policy = runtime_settings.get('notifications')
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
@@ -136,6 +141,11 @@ def claim(now, scheduled_by_cabinet=False):
         conn.execute("""DELETE FROM cabinet_vpn_notices WHERE kind='reminder' AND delivered IS NULL
             AND NOT EXISTS(SELECT 1 FROM subscriptions s WHERE s.id=subscription_id AND
             s.state='active' AND s.expires=expiry AND s.expires>?)""",(now,))
+        if cabinet_sender:
+            # Switch known refusals and waiting chats to the new sender once. A delivered
+            # historical row without a receipt may already have reached the recipient.
+            conn.execute("""UPDATE cabinet_vpn_notices SET next_attempt=0,delivered=NULL,outcome=NULL,cabinet_sender=1
+                WHERE cabinet_sender=0 AND lease IS NULL AND outcome IN ('waiting_chat','blocked')""")
         rows = conn.execute("""SELECT n.*,b.telegram_id FROM cabinet_vpn_notices n
             JOIN flow_bridge_identities b ON b.shop_user_id=n.user_id
             JOIN users u ON u.id=b.shop_user_id AND u.telegram_id=b.telegram_id
@@ -145,8 +155,8 @@ def claim(now, scheduled_by_cabinet=False):
         items = []
         for row in rows:
             lease = secrets.token_hex(16)
-            conn.execute('UPDATE cabinet_vpn_notices SET lease=?,next_attempt=?,attempts=attempts+1 WHERE id=?',
-                         (lease,now+90,row['id']))
+            conn.execute('UPDATE cabinet_vpn_notices SET lease=?,next_attempt=?,attempts=attempts+1,cabinet_sender=?,chat_reopened=0 WHERE id=?',
+                         (lease,now+90,cabinet_sender,row['id']))
             text = message(row,policy)
             paragraphs = text.removeprefix('Pushok ИИ').strip().split('\n\n')
             rendered = [escape(line) for line in paragraphs]
@@ -171,7 +181,9 @@ async def exchange(operation: Literal['claim','finish','resume-chat'], request: 
     authorize(operation.encode()+b':'+raw,request.headers.get('X-Pushok-Management',''),DOMAIN)
     now = int(time.time())
     if operation == 'claim':
-        return {'items':claim(now,json.loads(raw or b'{}').get('scheduled_by_cabinet') is True)}
+        data = json.loads(raw or b'{}')
+        return {'items':claim(now,data.get('scheduled_by_cabinet') is True,
+                              data.get('notification_sender') == 'mtproxy_pushok_bot')}
     if operation == 'resume-chat':
         try:
             uid=json.loads(raw)['telegram_id']
@@ -179,9 +191,10 @@ async def exchange(operation: Literal['claim','finish','resume-chat'], request: 
         except (TypeError,KeyError,ValueError):
             raise HTTPException(422,'Invalid recipient') from None
         with db() as conn:
-            conn.execute("""UPDATE cabinet_vpn_notices SET next_attempt=0,delivered=NULL,outcome=NULL
-                WHERE kind IN ('renewal_plan','premium') AND lease IS NULL
-                AND (outcome='blocked' OR (delivered IS NULL AND next_attempt>0))
+            conn.execute("""UPDATE cabinet_vpn_notices
+                SET next_attempt=CASE WHEN lease IS NULL THEN 0 ELSE next_attempt END,delivered=NULL,
+                    outcome=CASE WHEN lease IS NULL THEN NULL ELSE outcome END,chat_reopened=(lease IS NOT NULL)
+                WHERE (outcome='blocked' OR (delivered IS NULL AND next_attempt>0))
                 AND user_id IN (SELECT b.shop_user_id FROM flow_bridge_identities b
                     JOIN users u ON u.id=b.shop_user_id AND u.telegram_id=b.telegram_id WHERE b.telegram_id=?)""",(uid,))
         return {'ok':True}
@@ -193,7 +206,9 @@ async def exchange(operation: Literal['claim','finish','resume-chat'], request: 
         row=conn.execute('SELECT * FROM cabinet_vpn_notices WHERE id=? AND lease=? AND delivered IS NULL',
                          (receipt.id,receipt.lease)).fetchone()
         if row:
-            if receipt.status in ('waiting_chat','retry'):
+            if row['chat_reopened'] and receipt.status in ('blocked','waiting_chat'):
+                conn.execute('UPDATE cabinet_vpn_notices SET next_attempt=0,lease=NULL,outcome=NULL,chat_reopened=0 WHERE id=?',(receipt.id,))
+            elif receipt.status in ('waiting_chat','retry'):
                 conn.execute('UPDATE cabinet_vpn_notices SET lease=NULL,outcome=?,next_attempt=? WHERE id=?',
                              (receipt.status,now+min(3600,30*2**min(row['attempts'],7)),receipt.id))
             else:
