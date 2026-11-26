@@ -74,7 +74,10 @@ async def manage(cmd: Command, request: Request):
         from . import vpn_lifecycle
         try:
             await vpn_lifecycle.change(cmd)
-        except HTTPException:
+        except HTTPException as error:
+            if error.detail == 'vpn_restore_elapsed':
+                async with flow_presence._lock:
+                    flow_presence._until = 0
             raise
         except Exception:
             raise HTTPException(503,"vpn_change_unconfirmed") from None

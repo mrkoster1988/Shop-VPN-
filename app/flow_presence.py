@@ -82,6 +82,8 @@ async def snapshot(maintenance=False):
         if not maintenance and _cached is not None and time.monotonic()<_until:return _cached
         now=int(time.time())
         subscriptions=all_rows("""SELECT s.*,u.telegram_id,b.mtproxy_uuid,x.request_id,x.days,x.before_expires,x.target_expires,
+            EXISTS(SELECT 1 FROM flow_auto_grants g WHERE g.subscription_id=s.id
+                   AND g.state IN ('pending','expired')) AS first_grant_waiting,
             (SELECT COALESCE(NULLIF(TRIM(o.plan_name),''),p.name) FROM orders o LEFT JOIN plans p ON p.id=o.plan
              WHERE o.user_id=s.user_id AND o.protocol=s.protocol AND o.status='active'
              AND o.kind NOT IN ('referral','free_renewal')
@@ -104,6 +106,10 @@ async def snapshot(maintenance=False):
             row['tariff_name']=sub['tariff'] or (
                 'Гостевой доступ' if sub['wg_configuration']==servers.GUEST_CONFIGURATION else
                 'Пробный доступ' if sub['access_source']=='trial' else None)
+            # An auto-grant reservation can exist before there is a profile to download.
+            row['first_profile_unissued'] = bool(
+                state in ('pending','expired') and sub['first_grant_waiting']
+                and sub['secret'] is None and not devices.get(sid))
             rows[sid]=row
             if sub['mtproxy_uuid']:accounts[sub['mtproxy_uuid']]=row
             elif sub['telegram_id']:unlinked[str(sub['telegram_id'])]=row
