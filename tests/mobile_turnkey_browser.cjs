@@ -43,6 +43,7 @@ async function runShop(browser,engine,width,height,telegram,guest){
  const context=await browser.newContext({viewport:{width,height},isMobile:true,hasTouch:true,deviceScaleFactor:2,
  userAgent:engine==='webkit'?'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 Version/18.0 Mobile/15E148 Safari/604.1':'Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 Chrome/140.0.0.0 Mobile Safari/537.36'});
  const page=await context.newPage();let authenticated=!guest,created=false;const errors=[],unexpected=[],writes=[];
+ let linkRequests=0;
  page.on('pageerror',e=>errors.push(e.message));
  if(telegram)await page.addInitScript(()=>{window.Telegram={WebApp:{initData:'fixture',colorScheme:'dark',ready(){},expand(){},onEvent(){},BackButton:{onClick(){},show(){},hide(){}}}};});
  await page.route('**/*',async route=>{
@@ -63,7 +64,7 @@ async function runShop(browser,engine,width,height,telegram,guest){
   if(p===base+'/api/orders/fixture-order')return respond(order);
   if(p===base+'/api/subscriptions/fixture-wg/config')return respond({protocol:'wg',config:'[Interface]\\n# synthetic fixture only\\n[Peer]'});
   if(p===base+'/api/subscriptions/fixture-wg/qr')return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="220" height="220"><rect width="220" height="220" fill="white"/></svg>'});
-  if(p===base+'/api/flow/wireguard/subscriptions/fixture-wg/link')return respond({enabled:true,version:1,url:origin+base+'/flow/wireguard/'+('a'.repeat(43)),follow_rotation:false});
+  if(p===base+'/api/flow/wireguard/subscriptions/fixture-wg/link'){linkRequests++;return respond({enabled:true,version:1,url:origin+base+'/flow/wireguard/'+('a'.repeat(43)),follow_rotation:false});}
   if(p===base+'/api/subscriptions/fixture-wg/devices')return respond({max_extra:4,devices:[{id:'fixture-device',name:'Тестовое устройство',protocol:'wg',state:'active',ready:true,expires:expiry}]});
   unexpected.push(p);return respond({detail:'Unexpected fixture'},404);
  });
@@ -96,10 +97,14 @@ async function runShop(browser,engine,width,height,telegram,guest){
   assert.ok(!(await page.locator('#account-settings-pane').isVisible()));
   assert.equal(await page.locator('[data-config="fixture-pending"]').count(),0);
   await page.screenshot({path:path.join(output,'mobile-'+engine+'-'+width+'-account.png')});
-  await page.locator('[data-link="fixture-wg"]').click();
-  await page.waitForFunction(()=>document.getElementById('link-dialog').open&&!document.getElementById('flow-open').disabled);
-  await layout(page,'link-dialog');await close(page,'link-dialog');
-  await page.waitForFunction(()=>document.getElementById('link-value').value==='');
+  const openFlow=page.getByRole('button',{name:'Открыть в Pushok Flow',exact:true});
+  assert.ok(await openFlow.isVisible());
+  if(engine==='chromium'){
+   await openFlow.click();
+   await page.locator('#toast').filter({hasText:'нажмите «Подключить»'}).waitFor({state:'visible'});
+   assert.equal(await page.locator('#link-dialog').isVisible(),false);
+   assert.equal(linkRequests,0);
+  }
   await page.locator('[data-config="fixture-wg"]').click();
   await page.waitForFunction(()=>document.getElementById('config-dialog').open&&!document.getElementById('copy-config').disabled);
   await layout(page,'config-dialog');
@@ -107,6 +112,11 @@ async function runShop(browser,engine,width,height,telegram,guest){
   await close(page,'config-dialog');await page.waitForFunction(()=>document.getElementById('config-value').value==='');
   assert.equal(await page.locator('#config-qr').getAttribute('src'),null);
   await page.locator('details[data-subscription-options="fixture-wg"] summary').click();
+  await page.getByRole('button',{name:'Ссылка для ручного импорта',exact:true}).click();
+  await page.waitForFunction(()=>document.getElementById('link-dialog').open&&!document.getElementById('flow-open').disabled);
+  await layout(page,'link-dialog');await close(page,'link-dialog');
+  await page.waitForFunction(()=>document.getElementById('link-value').value==='');
+  assert.equal(linkRequests,1);
   await page.locator('[data-devices="fixture-wg"]').click();
   await page.locator('[data-device-config="fixture-device"]').waitFor({state:'visible'});
   await layout(page,'devices-dialog');await close(page,'devices-dialog');
