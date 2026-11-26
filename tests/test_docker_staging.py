@@ -181,3 +181,15 @@ def test_additive_sqlite_columns_do_not_hide_historical_row_changes(tmp_path):
         conn.execute('UPDATE plans SET price=? WHERE id=?',(999,'legacy'))
     tampered=data.snapshot(str(database),projected_columns=before['table_columns'])
     assert tampered['projected_table_digests']['plans']!=before['table_digests']['plans']
+
+
+@pytest.mark.parametrize('table',['vpn_renewal_choices','wg_client_platform'])
+def test_upgrade_keeps_new_vpn_tables_empty(monkeypatch,table):
+    stage=s.Staging(type('Args',(),{})())
+    baseline={'table_digests':{'users':'same'},'counts':{'sessions':1,'tickets':1}}
+    snapshot={'table_digests':{'users':'same',table:'empty'},'counts':{**baseline['counts'],table:0}}
+    monkeypatch.setattr(stage,'snapshot',lambda:snapshot)
+    stage.compare(baseline,cleared=False)
+    snapshot['counts'][table]=1
+    with pytest.raises(s.StageError,match='Unexpected VPN'):
+        stage.compare(baseline,cleared=False)
