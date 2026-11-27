@@ -7,7 +7,7 @@ import uuid
 from decimal import Decimal, InvalidOperation
 import httpx
 from fastapi import HTTPException
-from . import config as c, providers, servers, referrals, shop_settings, runtime_settings, bot_menu as menu_editor
+from . import config as c, providers, platega, servers, referrals, shop_settings, runtime_settings, bot_menu as menu_editor
 from .db import db, one, all_rows, execute, insert_user
 from .security import digest
 from .pushok_button_icons import without_icons
@@ -76,8 +76,23 @@ async def send(tg_id, text, **kwargs):
 
 
 async def reconcile_payment(order):
-    if not order['payment_id'] or order['status'] != 'pending' or order['method'] not in ('yookassa', 'sbp'):
+    if not order['payment_id'] or order['status'] != 'pending':
         return
+    if order['method'] == 'platega':
+        state = await platega.status(order)
+    elif order['method'] in ('yookassa', 'sbp'):
+        state = await yookassa_status(order)
+    else:
+        return
+    if state == 'paid':
+        with db() as conn:
+            changed=conn.execute("UPDATE orders SET status='paid',error=NULL,next_attempt=0 WHERE id=? AND status='pending'", (order['id'],)).rowcount
+            if changed:referrals.award_locked(conn,order['id'])
+    elif state == 'canceled':
+        execute("UPDATE orders SET status='canceled' WHERE id=? AND status='pending'", (order['id'],))
+
+
+async def yookassa_status(order):
     payment = await providers.get_payment(order['payment_id'])
     try:
         valid = (payment['id'] == order['payment_id']
@@ -90,11 +105,8 @@ async def reconcile_payment(order):
     if not valid:
         raise RuntimeError('Payment verification mismatch')
     if payment.get('status') == 'succeeded' and payment.get('paid') is True:
-        with db() as conn:
-            changed=conn.execute("UPDATE orders SET status='paid',error=NULL,next_attempt=0 WHERE id=? AND status='pending'", (order['id'],)).rowcount
-            if changed:referrals.award_locked(conn,order['id'])
-    elif payment.get('status') == 'canceled':
-        execute("UPDATE orders SET status='canceled' WHERE id=? AND status='pending'", (order['id'],))
+        return 'paid'
+    return 'canceled' if payment.get('status') == 'canceled' else 'pending'
 
 
 def primary_identity(sub):
@@ -356,7 +368,12 @@ async def disable_subscription_peers(sub):
 async def tick():
     now = int(time.time())
     enqueue_free_renewals(now)
-    for order in all_rows("SELECT * FROM orders WHERE status='pending' AND method IN ('yookassa','sbp') AND payment_id IS NOT NULL AND next_attempt<=? ORDER BY next_attempt,created LIMIT 50", (now,)):
+    # An abandoned creation cannot have exposed a payment URL. Give any
+    # in-flight request time to finish persisting it before expiring the order.
+    execute("""UPDATE orders SET status='canceled'
+        WHERE method='platega' AND status='pending' AND payment_id IS NULL AND created<=?""",
+        (now - int(platega.LINK_LIFETIME.total_seconds()) - 3600,))
+    for order in all_rows("SELECT * FROM orders WHERE status='pending' AND method IN ('yookassa','sbp','platega') AND payment_id IS NOT NULL AND next_attempt<=? ORDER BY next_attempt,created LIMIT 50", (now,)):
         execute('UPDATE orders SET next_attempt=? WHERE id=?', (now + 60, order['id']))
         try:
             await reconcile_payment(order)

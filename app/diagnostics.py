@@ -3,12 +3,12 @@ import os
 import time
 import sqlite3
 from contextlib import closing
-from . import config as c, shop_settings, payment_policy, server_routing, protocols as protocol_catalog
+from . import config as c, shop_settings, payment_policy, platega, server_routing, protocols as protocol_catalog
 
-VERSION='v2.021'
+VERSION='v2.022'
 QUEUE_SPECS={
     'issuance':('orders',"status='paid'"),
-    'payment_poll':('orders',"status='pending' AND method IN ('yookassa','sbp') AND payment_id IS NOT NULL"),
+    'payment_poll':('orders',"status='pending' AND method IN ('yookassa','sbp','platega') AND payment_id IS NOT NULL"),
     'devices':('devices',"state IN ('pending','revoking') AND NOT EXISTS (SELECT 1 FROM device_rotations r WHERE r.device_id=devices.id AND r.state NOT IN ('completed','canceled'))"),
     'device_rotations':('device_rotations',"state NOT IN ('completed','canceled')"),
     'primary_rotations':('primary_rotations',"state NOT IN ('completed','canceled')")}
@@ -66,6 +66,7 @@ def report(worker):
         except Exception:
             mode='invalid'
     payment_configured=mode=='manual' or (mode in ('yookassa','sbp') and bool(os.getenv('YOOKASSA_SHOP_ID') and os.getenv('YOOKASSA_SECRET')))
+    if mode=='platega':payment_configured=platega.configured()
     if not payment_configured:warn('payment_settings_incomplete')
     telegram=bool(c.BOT_TOKEN);stars_ready=bool(telegram and c.BOT_USERNAME and shop_settings.terms_configured())
     if telegram and not stars_ready:warn('telegram_sales_settings_incomplete')

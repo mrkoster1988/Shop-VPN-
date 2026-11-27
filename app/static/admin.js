@@ -666,12 +666,13 @@ function clearPaymentPolicy(){
  $('shop-payment-save').disabled=true;
 }
 function renderPaymentPolicy(data){
- if(!Number.isSafeInteger(data.version)||data.version<0||!['inherit','manual','sbp','yookassa'].includes(data.web_mode))throw new Error('Не удалось прочитать политику оплаты');
+ if(!Number.isSafeInteger(data.version)||data.version<0||!['inherit','manual','sbp','yookassa','platega'].includes(data.web_mode))throw new Error('Не удалось прочитать политику оплаты');
  paymentPolicyVersion=data.version;
  $('shop-payment-mode').value=data.web_mode;$('shop-payment-web').checked=data.web_enabled===true;
  $('shop-payment-stars').checked=data.stars_enabled===true;$('shop-payment-manual').value=data.manual_text;
  $('shop-payment-readiness').textContent='Текущий метод: '+data.effective_web_mode+' · Незакрытые счета: '+data.open_web_orders+
  ' · ЮKassa/СБП (локальные реквизиты и HTTPS): '+(data.merchant_configured?'настроены':'не настроены')+
+ ' · Platega (локальные реквизиты и HTTPS): '+(data.platega_configured?'настроены':'не настроены')+
  ' · Telegram-бот: '+(data.stars_bot_configured?'настроен':'не настроен')+'. Реальные платежи требуют проверки.';
  $('shop-payment-save').disabled=false;
 }
@@ -2007,7 +2008,7 @@ $('referral-policy-editor').onsubmit=async event=>{
 const diagnosticWarnings={worker_disabled:'Фоновые задачи выключены настройками',encryption_key_invalid:'Неверный формат ключа шифрования',worker_failed:'Последний цикл worker завершился ошибкой',worker_not_observed:'Цикл worker ещё не наблюдался в этом процессе',worker_slow:'Цикл worker выполняется больше 3 минут',worker_stale:'Нет свежего успешного цикла worker',queue_errors:'В очереди есть задания с ошибками',queue_wait_over_10m:'Задания выдачи или устройств ожидают больше 10 минут',expiry_wait_over_10m:'Есть доступы с просроченным отзывом больше 10 минут',queues_paused:'Фоновые задачи выключены при непустой очереди',server_probe_not_recent_ok:'Не все включённые серверы имеют успешную API-проверку за сутки',no_new_assignments_xui:'Нет сервера VLESS для новых назначений',no_new_assignments_wg:'Нет сервера WireGuard для новых назначений',no_new_assignments_vmess:'Нет сервера VMess для новых назначений',no_new_assignments_hysteria2:'Нет сервера Hysteria2 для новых назначений',no_new_assignments_tuic:'Нет сервера TUIC для новых назначений',no_active_plans:'Нет опубликованных тарифов',no_assignable_servers:'Нет серверов для новых назначений',payment_settings_incomplete:'Не заполнены настройки оплаты',telegram_sales_settings_incomplete:'Не заполнены настройки продаж в Telegram'};
 const diagnosticWorker={disabled:'Выключен настройками',not_observed:'Ещё не наблюдался',failed:'Ошибка последнего цикла',busy:'Выполняет цикл',slow:'Длительный цикл',stale:'Нет свежего успешного цикла',recent_success:'Недавно завершил цикл'};
 function diagnosticsMarkup(r) {
-  const labels={issuance:'Выдача и продление',payment_poll:'Сверка ЮKassa',devices:'Создание/отзыв устройств',device_rotations:'Смена ключей устройств',primary_rotations:'Смена основного ключа'};
+  const labels={issuance:'Выдача и продление',payment_poll:'Сверка платежей',devices:'Создание/отзыв устройств',device_rotations:'Смена ключей устройств',primary_rotations:'Смена основного ключа'};
   return `<p><b>${r.status==='local_checks_ok'?'Локальные проверки без замечаний':'Требуется внимание'}</b> · ${esc(new Date(r.generated_at*1000).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})+' МСК')}</p><p>Worker: ${esc(diagnosticWorker[r.worker.state] || r.worker.state)}. Последний успешный цикл: ${r.worker.last_success?esc(new Date(r.worker.last_success*1000).toLocaleString('ru-RU',{timeZone:'Europe/Moscow'})+' МСК'):'не наблюдался'}.</p>${r.warnings.length?'<ul>'+r.warnings.map(w=>'<li>'+esc(diagnosticWarnings[w] || w)+'</li>').join('')+'</ul>':''}<div class="table-scroll"><table><thead><tr><th>Очередь</th><th>Ожидает</th><th>Срок повтора наступил</th><th>С ошибкой</th><th>Возраст старейшего, сек.</th></tr></thead><tbody>${Object.entries(r.queues).map(([key,q])=>`<tr><td>${esc(labels[key] || key)}</td><td>${esc(q.pending)}</td><td>${esc(q.due)}</td><td>${esc(q.with_error)}</td><td>${esc(q.oldest_age_seconds ?? '—')}</td></tr>`).join('')}</tbody></table></div><p>Подписок с истёкшим сроком в состоянии active: ${esc(r.expiry.pending)}. Это очередь проверки отзыва, а не доказательство текущего доступа на узле.</p><p>Серверы для новых назначений / недавние успешные API-проверки: ${Object.entries(r.servers).map(([id,s])=>esc(protocolLabel(id))+": "+esc(s.assignable)+" / "+esc(s.cached_api_ok_24h)).join(" · ")}.</p><p>Статус относится только к локальным наблюдениям. Проверка трафика, платежа и восстановления копии выполняется отдельно.</p>`;
 }
 async function refreshDiagnostics() {

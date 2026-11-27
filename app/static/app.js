@@ -331,8 +331,8 @@ async function beginCheckout(id) {
   if(promoIntent){$('promo-code').value=promoIntent;$('promo-status').textContent='Промокод из ссылки. Нажмите «Применить», чтобы проверить скидку и итоговую цену.';}
   clearPayment(); $('checkout-form').hidden = false;
   checkoutPolicyVersion=Number.isSafeInteger(catalog.payment_policy_version)?catalog.payment_policy_version:null;
-  $('checkout-submit').textContent=selectedPlan.price===0?'Получить бесплатно →':catalog.payment_mode==='sbp'?'Создать счёт СБП →':'Оформить заказ →';
-  $('terms-text').textContent=catalog.terms; $('accept-terms').checked=false; $('accept-terms').required=selectedPlan.price!==0 && catalog.payment_mode==='stars';
+  $('checkout-submit').textContent=selectedPlan.price===0?'Получить бесплатно →':catalog.payment_mode==='sbp'?'Создать счёт СБП →':catalog.payment_mode==='platega'?'Создать счёт Platega →':'Оформить заказ →';
+  $('terms-text').textContent=catalog.terms; $('accept-terms').checked=false; $('accept-terms').required=selectedPlan.price!==0 && ['stars','platega'].includes(catalog.payment_mode);
   $('receipt-label').hidden = selectedPlan.price===0 || !catalog.receipts; $('receipt-label').querySelector('input').required = selectedPlan.price!==0 && catalog.receipts;
   $('receipt-label').querySelector('input').value = me.email || '';
   show('checkout-dialog');
@@ -348,7 +348,7 @@ function paymentResult(order) {
   if (order.payment_url && order.status === 'pending') {
     const link = document.createElement('a');
     let url;try{url=new URL(order.payment_url);}catch{}
-    if (url?.protocol === 'https:') { link.href = url.href; link.textContent = order.method==='sbp'?'Оплатить через СБП ↗':'Перейти к оплате ↗'; link.className = 'button'; link.target = '_blank'; link.rel = 'noopener noreferrer'; if(order.method==='stars' && window.Telegram?.WebApp?.initData) { link.onclick=event=>{event.preventDefault(); window.Telegram.WebApp.openInvoice(url.href,()=>refreshMe());}; } $('payment-result').append(link); }
+    if (url?.protocol === 'https:') { link.href = url.href; link.textContent = order.method==='sbp'?'Оплатить через СБП ↗':order.method==='platega'?'Оплатить через Platega ↗':'Перейти к оплате ↗'; link.className = 'button'; link.target = '_blank'; link.rel = 'noopener noreferrer'; if(order.method==='stars' && window.Telegram?.WebApp?.initData) { link.onclick=event=>{event.preventDefault(); window.Telegram.WebApp.openInvoice(url.href,()=>refreshMe());}; } $('payment-result').append(link); }
   }
   const button = document.createElement('button'); button.className = 'text-link'; button.textContent = 'Проверить статус';
   button.disabled=paymentBusy; button.onclick=async()=>{button.disabled=true;try{await refreshPaymentOrder();}finally{button.disabled=false;}};
