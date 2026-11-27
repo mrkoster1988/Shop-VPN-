@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-from . import config as c
+from . import config as c, bank_review
 from .db import db
 
 METHODS=('manual','yookassa','sbp')
@@ -91,6 +91,8 @@ def method_for(user,conn=None):
 
 
 def require_new(conn,user,method,expected_version=None):
+    if bank_review.enabled() and method != 'stars':
+        raise HTTPException(409, bank_review.NOTICE)
     p=read(conn)
     if expected_version is not None and p['version']!=expected_version:
         raise HTTPException(409,'Настройки оплаты изменились. Повторите оформление.')
@@ -106,6 +108,7 @@ def catalog(user):
     with db() as conn:
         p=read(conn);method='stars' if user and user['telegram_id'] else effective_mode(p)
         enabled=p['stars_enabled' if method=='stars' else 'web_enabled']
+        if bank_review.enabled() and method != 'stars':enabled=False
         if method in ('yookassa','sbp') and p['web_mode']!='inherit' and not merchant_configured():enabled=False
         return {'payment_mode':method,'payment_available':enabled,'payment_policy_version':p['version'],
                 'payment_notice':DEFAULT_NOTICE}
