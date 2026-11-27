@@ -1,6 +1,7 @@
 """Bank review storefront: no payment creation and no simulated success."""
 import os
 from html import escape
+from urllib.parse import quote
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import HTMLResponse
 from . import config as c, shop_settings
@@ -55,14 +56,14 @@ def review():
     for plan in plans:
         if plan['is_free'] or not MIN_RUB <= plan['price'] <= MAX_RUB:
             continue
-        cards.append(f'<article><h2>{escape(str(plan["name"]))}</h2><p>Подписка на VPN-подключение, срок {int(plan["days"])} дн.</p><p class="price">{int(plan["price"])} ₽</p><a class="buy" href="{escape(c.BASE_PATH, quote=True)}/bank-review/payment/{int(plan["id"])}">Оплатить</a></article>')
+        cards.append(f'<article><h2>{escape(str(plan["name"]))}</h2><p>Подписка на VPN-подключение, срок {int(plan["days"])} дн.</p><p class="price">{int(plan["price"])} ₽</p><a class="buy" href="{escape(c.BASE_PATH, quote=True)}/bank-review/payment/{quote(str(plan["id"]), safe="")}">Оплатить</a></article>')
     marker = os.getenv('BANK_REVIEW_CODE', '').strip()
     return page('Тарифы и оплата', '<p>Проверка подключения платёжной системы. Реальные списания здесь не выполняются.</p>' +
                 ''.join(cards or ['<p>Платные тарифы пока не опубликованы.</p>']) +
                 (f'<p>Код проверки: {escape(marker)}</p>' if marker else ''))
 
 @router.get('/bank-review/payment/{plan_id}')
-def review_payment(plan_id: int):
+def review_payment(plan_id: str):
     if not enabled():
         raise HTTPException(404)
     plans = all_rows('SELECT name,days,price,is_free FROM plans WHERE id=? AND enabled=1', (plan_id,))
