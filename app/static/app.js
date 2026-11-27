@@ -164,9 +164,13 @@ function renderPlans() {
     if (p.price === 0 && p.free_traffic_gb) limits.push('Лимит '+p.free_traffic_gb+' ГБ на профиль');
     if (p.price === 0 && p.free_activation_limit) limits.push('Всего активаций: '+p.free_activation_limit);
     const enabled = paymentReady || p.price === 0;
-    return `<article class="plan"><h3>${esc(p.name)}</h3><div class="price">${money}</div>
-      <p>${p.days} дн. · ${esc(protocolName(protocol))}</p><ul>${limits.map(l => '<li>'+esc(l)+'</li>').join('')}</ul>
-      <button data-plan="${esc(p.id)}" ${enabled?'':'disabled'}>${!enabled?'Оплата на паузе':p.price===0?'Получить бесплатно':'Выбрать тариф'}</button></article>`;
+    const active = me?.subscriptions?.find(sub => sub.protocol === protocol && sub.state === 'active' && sub.expires * 1000 > Date.now());
+    const end = active && new Date((active.expires + p.days * 86400) * 1000).toLocaleDateString('ru-RU', {timeZone:'Europe/Moscow'});
+    const action = !enabled ? 'Оплата на паузе' : p.price === 0 ? 'Получить бесплатно' : end ? 'Продлить до '+end : 'Подключить';
+    const monthly = p.days > 30 && p.price > 0 ? (p.price * 30 / p.days).toLocaleString('ru-RU',{maximumFractionDigits:2})+' '+(catalog.currency==='XTR'?'★':'₽')+' за 30 дней' : '';
+    return `<article class="plan flow-tariff ${p.days >= 90 ? 'long-term' : ''}"><h3>${esc(p.name)}</h3><div class="price">${money}</div>
+      <p>${p.days} дн. · ${esc(protocolName(protocol))}${monthly ? '<br>'+monthly : ''}</p><ul>${limits.map(l => '<li>'+esc(l)+'</li>').join('')}</ul>
+      <button data-plan="${esc(p.id)}" ${enabled?'':'disabled'}>${esc(action)}</button></article>`;
   }).join('') || '<p class="plans-empty">Сейчас нет доступных тарифов. <a href="#help">Связаться с поддержкой</a></p>';
   renderTrial();
 }

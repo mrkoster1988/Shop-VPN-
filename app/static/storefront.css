@@ -71,3 +71,22 @@ html body.shop-public-ui :is(.shop-mobile-nav,#miniapp-nav) [aria-current=page]:
   body.shop-public-ui .plan ul {margin:5px 0 0}
   body.shop-public-ui .plan button {margin:auto 0}
 }
+
+body.shop-public-ui #plan-list {grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr))}
+body.shop-public-ui #plan-list .flow-tariff {
+  --art:url(flow-map.webp);
+  background-color:#081735;
+  background-image:linear-gradient(90deg,#081735 38%,rgba(8,23,53,.93) 50%,transparent 75%),var(--art);
+  background-position:center,right center;
+  background-size:100% 100%,auto 100%;
+  background-repeat:no-repeat;
+  color:#fff;
+
+  display:flex;flex-direction:column;align-items:flex-start;min-height:210px;padding:18px;border-radius:18px;
+}
+body.shop-public-ui #plan-list .flow-tariff.long-term {--art:url(flow-stars.webp)}
+body.shop-public-ui #plan-list .flow-tariff > * {width:60%;max-width:21em;overflow-wrap:anywhere}
+body.shop-public-ui #plan-list .flow-tariff h3 {color:white;font-size:1.25rem;margin:0;padding:0}
+body.shop-public-ui #plan-list .flow-tariff :is(.price,.price small) {color:#3ff1e0}
+body.shop-public-ui #plan-list .flow-tariff :is(p,ul) {color:#deebfa;line-height:1.35;margin:4px 0}
+html body.shop-public-ui #plan-list .flow-tariff button {color:#081735;background:#3ff1e0;min-height:44px;margin:8px 0 0;width:fit-content;max-width:65%;align-self:flex-start}

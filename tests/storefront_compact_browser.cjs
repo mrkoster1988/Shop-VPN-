@@ -45,7 +45,7 @@ const customer={id:'fixture',telegram_id:123,subscriptions:[],orders:[],can_chan
     if(p==='/shop/')return route.fulfill({contentType:'text/html',body:fs.readFileSync(root+'/app/static/index.html','utf8').replaceAll('__BASE_PATH__','/shop')});
     if(p.startsWith('/shop/static/')){
      const file=p.split('/').at(-1);
-     if(['app.js','flow-links.js','style.css','storefront.css','pushok-cat.webp','pushok-icons.svg'].includes(file)){
+     if(['app.js','flow-links.js','style.css','storefront.css','pushok-cat.webp','pushok-icons.svg','flow-map.webp','flow-stars.webp'].includes(file)){
       const contentType=file.endsWith('.js')?'text/javascript':file.endsWith('.webp')?'image/webp':file.endsWith('.svg')?'image/svg+xml':'text/css';
       return route.fulfill({contentType,body:fs.readFileSync(root+'/app/static/'+file)});
      }

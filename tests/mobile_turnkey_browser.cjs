@@ -12,7 +12,7 @@ const catalog={protocols:[{id:'xui',available:true},{id:'wg',available:true}],pl
 const subscription={id:'fixture-wg',protocol:'wg',state:'active',expires:expiry,device_limit:4,primary_key_state:'active',access_source:'purchase'};
 const order={id:'fixture-order',protocol:'wg',plan:'month',plan_name:'Месяц',days:30,device_limit:4,amount:179,base_amount:199,discount:20,promo_code:'MOBILE',currency:'RUB',status:'pending',method:'manual',kind:'purchase',created:1,instructions:'Только тестовый платёж.',progress:{title:'Ожидает оплаты',message:'Тестовый счёт'}};
 const customer={id:1,email:'fixture@example.invalid',telegram_id:123,subscriptions:[subscription,{...subscription,id:'fixture-pending',state:'pending'}],orders:[],can_change_password:true,pushok_id:{linked:false},referrals:{policy:{enabled:true,days:1,min_rub:1,min_stars:1},balance_days:2,earned_days:2,spent_days:0,invited:1,rewarded:1,history:[],can_bind:false,can_share:false}};
-const assets=new Set(['app.js','admin.js','flow-links.js','style.css','storefront.css','pushok-cat.webp','pushok-icons.svg']);
+const assets=new Set(['app.js','admin.js','flow-links.js','style.css','storefront.css','pushok-cat.webp','pushok-icons.svg','flow-map.webp','flow-stars.webp']);
 async function staticResponse(route,url){
  const p=url.pathname;
  if(p===base+'/'||p===base+'/admin'){
