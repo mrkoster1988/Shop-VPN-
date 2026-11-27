@@ -178,9 +178,17 @@ async def fulfill(order_id):
                     raise RuntimeError('ServerBindingMissing')
                 if sub['primary_key_state']=='rotating' or conn.execute("SELECT 1 FROM primary_rotations WHERE subscription_id=? AND state NOT IN ('completed','canceled')",(sub['id'],)).fetchone():
                     raise RuntimeError('PrimaryRotationPending')
+                other=conn.execute("SELECT 1 FROM orders WHERE user_id=? AND protocol=? AND status='paid' AND id!=? AND target_expires IS NOT NULL AND method='hall_gift'",(order['user_id'],order['protocol'],order_id)).fetchone()
+                if other and order['target_expires'] is None:
+                    return
                 target = order['target_expires']
+                if order['kind']=='trial' and target and target<=int(time.time()):
+                    conn.execute("UPDATE orders SET status='canceled' WHERE id=?",(order_id,))
+                    conn.execute("UPDATE subscriptions SET state='expired',expires=? WHERE id=? AND state='pending'",(target,sub['id']))
+                    return
                 if target is None:
-                    target = max(int(time.time()),sub['expires']) + order['days']*86400
+                    base = order['created'] if order['method']=='hall_gift' else int(time.time())
+                    target = max(base,sub['expires']) + order['days']*86400
                     conn.execute('UPDATE orders SET target_expires=? WHERE id=?',(target,order_id))
             quota = sub['free_traffic_gb'] if order['kind']=='referral' else (order['free_traffic_gb'] if order['method']=='free' else 0)
             identity = primary_identity(sub)

@@ -112,7 +112,8 @@ def enqueue(user_id: int) -> str:
     now = int(time.time())
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
-        if conn.execute('SELECT id FROM users WHERE id=?', (user_id,)).fetchone() is None:
+        user = conn.execute('SELECT created FROM users WHERE id=?', (user_id,)).fetchone()
+        if user is None:
             raise HTTPException(401, 'Аккаунт не найден')
         grant = conn.execute('SELECT state FROM flow_auto_grants WHERE user_id=?',
                              (user_id,)).fetchone()
@@ -134,17 +135,20 @@ def enqueue(user_id: int) -> str:
                 return 'not_mtproxy'
         if conn.execute('SELECT count(*) FROM flow_auto_grants').fetchone()[0] >= setting['max_users']:
             return 'limit'
+        expires = user['created'] + int(setting['days']) * 86400
+        if expires <= now:
+            return 'expired'
         node = _node(conn)
         if node is None:
             return 'unavailable'
-        reserve(conn, user_id, node, setting, now, int(setting['days']))
+        reserve(conn, user_id, node, setting, now, int(setting['days']), expires=expires)
         return 'pending'
 
 
-def reserve(conn, user_id, node, setting, now, days, *, guest=False):
+def reserve(conn, user_id, node, setting, now, days, *, guest=False, expires=None):
     """Reserve the subscription and its worker job inside the caller's transaction."""
     sid = str(uuid.uuid4())
-    target = now + days * 86400
+    target = expires if expires is not None else now + days * 86400
     conn.execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state,"
                  "server_id,device_limit,access_source,wg_configuration) VALUES (?,?,'wg',0,'pending',?,0,'trial',?)",
                  (sid, user_id, node['id'], servers.GUEST_CONFIGURATION if guest else None))

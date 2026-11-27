@@ -32,6 +32,11 @@ class Identity(BaseModel):
     nonce: UUID
 
 
+class Gift(Identity):
+    gift_id: UUID
+    days: Literal[30,90]
+
+
 class Checkout(Identity):
     choice: PlanChoice
 
@@ -56,6 +61,34 @@ def router_for(purchase_model, purchase, order_status):
 
     def reply(value):
         return JSONResponse(value,headers={'Cache-Control':'private, no-store'})
+
+    @router.post('/gift')
+    async def gift(data: Gift, request: Request):
+        from . import service, premium
+        user = await account('gift',data,request)
+        uid = user['id']
+        from . import flow_auto_provision
+        if flow_auto_provision.enqueue(uid) == 'pending':
+            return reply({'expires':None})
+        oid = str(uuid5(NAMESPACE_URL, 'pushok:hall-gift:'+str(data.gift_id)))
+        with db() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            order = conn.execute('SELECT * FROM orders WHERE id=?',(oid,)).fetchone()
+            if order and (order['user_id']!=uid or order['days']!=data.days or order['method']!='hall_gift'):
+                raise HTTPException(409,'gift_conflict')
+            if not order:
+                if premium.checkout_blocked(uid):
+                    raise HTTPException(409,'premium_subscription')
+                sub=conn.execute("SELECT * FROM subscriptions WHERE user_id=? AND protocol='wg'",(uid,)).fetchone()
+                if sub and sub['state'] not in ('active','expired'):
+                    raise HTTPException(409,'subscription_unavailable')
+                service.check_access_order(conn,uid,ending=True)
+                conn.execute("INSERT INTO orders(id,user_id,protocol,plan,plan_name,days,amount,base_amount,currency,method,status,created,kind,device_limit) VALUES (?,?,'wg','hall_gift','Подарок за приглашения',?,0,0,'BONUS','hall_gift','paid',?,'referral',?)",
+                             (oid,uid,data.days,int(time.time()),sub['device_limit'] if sub else 0))
+        await service.fulfill(oid)
+        with db() as conn:
+            order=conn.execute('SELECT status,target_expires FROM orders WHERE id=?',(oid,)).fetchone()
+        return reply({'expires':order['target_expires'] if order['status']=='active' else None})
 
     @router.post('/plans')
     async def plans(identity: Identity, request: Request):

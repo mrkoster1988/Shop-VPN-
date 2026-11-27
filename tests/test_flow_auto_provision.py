@@ -203,3 +203,14 @@ def test_owner_issuance_diagnostics_do_not_expose_credentials(client, monkeypatc
     assert data['pending']==1 and data['retrying']==0
     assert data['existing_wg_subscriptions']==1
     assert 'z'*40 not in json.dumps(data)
+
+
+def test_trial_starts_at_registration(client,monkeypatch):
+    register(client)
+    uid=one('SELECT id FROM users')['id']
+    registered=int(time.time())-86400
+    execute('UPDATE users SET created=? WHERE id=?',(registered,uid))
+    _node()
+    assert _policy(client,monkeypatch,days=3).status_code==200
+    assert auto.enqueue(uid)=='pending'
+    assert one('SELECT target_expires FROM flow_auto_grants')['target_expires']==registered+3*86400

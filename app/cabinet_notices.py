@@ -82,6 +82,11 @@ def date(stamp):
     return datetime.fromtimestamp(stamp, ZoneInfo('Europe/Moscow')).strftime('%d.%m.%Y в %H:%M МСК')
 
 
+def trial_activated(kind, data):
+    return (kind == 'changed' and data['old']['state'] == 'pending'
+            and data['new']['state'] == 'active' and data['new'].get('access_source') == 'trial')
+
+
 def message(row, policy):
     kind, data = row['kind'], json.loads(row['payload'])
     if kind == 'reminder':
@@ -116,7 +121,9 @@ def message(row, policy):
                           'expired':'⏳ Срок подписки закончился. Её можно продлить в кабинете.',
                           'revoked':'🔒 Подписка отозвана. Прежний профиль отключён.',
                           'pending':'🐾 Готовим ваш профиль подключения.'}.get(new['state'],'🐾 Подписка обновлена.'))
-        if old['expires']!=new['expires'] and new['expires']: lines.append('🗓 Доступ до '+date(new['expires'])+'.')
+        if trial_activated(kind, data):
+            lines = ['🎁 Добро пожаловать в Pushok Flow!', 'Ваш пробный доступ активирован. Откройте Flow, чтобы подключиться.']
+        if new['expires'] and (old['expires']!=new['expires'] or trial_activated(kind, data)): lines.append('🗓 Доступ до '+date(new['expires'])+'.')
         if old['device_limit']!=new['device_limit']: lines.append(f"📱 Дополнительные профили · {old['device_limit']} → {new['device_limit']}.")
         if old['free_traffic_gb']!=new['free_traffic_gb']: lines.append('Лимит трафика: '+(str(new['free_traffic_gb'])+' ГБ' if new['free_traffic_gb'] else 'без ограничения')+'.')
         if old['free_auto_renew']!=new['free_auto_renew']: lines.append('Автопродление включено.' if new['free_auto_renew'] else 'Автопродление выключено.')
@@ -164,7 +171,7 @@ def claim(now, scheduled_by_cabinet=False, cabinet_sender=False):
             if row['kind'] in ('changed','created','renewal_plan','device','link','removed') and rendered:
                 rendered[0] = '<b>'+rendered[0]+'</b>'
             items.append({'id':row['id'],'lease':lease,'telegram_id':row['telegram_id'],
-                          'category':row['kind'],'text':text,'formatted_body':'\n\n'.join(rendered),'renew':row['kind']=='reminder' or row['kind']=='changed'
+                          'category':'trial_gift' if trial_activated(row['kind'], json.loads(row['payload'])) else row['kind'],'text':text,'formatted_body':'\n\n'.join(rendered),'renew':row['kind']=='reminder' or row['kind']=='changed'
                           and json.loads(row['payload'])['new']['state']=='expired'})
         return items
 
