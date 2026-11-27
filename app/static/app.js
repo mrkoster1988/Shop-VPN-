@@ -116,7 +116,7 @@ function accessTerm(ts){return ts===253402214400?'Premium · бессрочно'
 function date(ts) { return new Date(ts*1000).toLocaleDateString('ru-RU',{timeZone:'Europe/Moscow'}); }
 function protocolName(id) { return ({wg:'Pushok Flow',xui:'VLESS',vmess:'VMess',hysteria2:'Hysteria2',tuic:'TUIC v5'})[id] || id; }
 function profileAllowance(limit) { return limit===0 ? 'Только основной профиль' : 'Основной + до '+limit+' дополнительных профилей'; }
-function displayOrderStatus(order) { if(order.progress?.title)return order.progress.title; return order.method==='free'&&order.status==='paid'?'Бесплатный доступ готовится':order.kind==='referral'&&order.status==='paid'?'Добавляем бонусные дни':order.kind==='referral'&&order.status==='active'?'Бонусные дни добавлены':order.kind==='trial'&&order.status==='paid'?'Готовим пробный VPN':order.kind==='trial'&&order.status==='active'?'Пробный доступ выдан':statusLabel[order.status] || order.status; }
+function displayOrderStatus(order) { if(order.progress?.title)return order.progress.title; return order.method==='free'&&order.status==='paid'?'Бесплатный доступ готовится':order.kind==='referral'&&order.status==='paid'?'Добавляем бонусные дни':order.kind==='referral'&&order.status==='active'?'Бонусные дни добавлены':order.kind==='trial'&&order.status==='paid'?'Готовим пробный VPN':order.kind==='trial'&&order.status==='active'?'Пробник выдан':statusLabel[order.status] || order.status; }
 function renderAppearance(){
  const config=catalog?.appearance;
  if(!config)return;
@@ -276,7 +276,7 @@ function renderAccount() {
     ].filter(Boolean);
     const renewal=s.state!=='pending'?'<button type="button" class="small secondary" data-renew="'+esc(s.protocol)+'">'+(active?'Продлить подписку':'Возобновить подписку')+'</button>':'';
     return '<article class="subscription"><div class="subscription-top"><h3>'+esc(protocolName(s.protocol))+'</h3><span class="status '+stateClass+'">'+accessLabel+'</span></div>'+
-      (s.access_source==='trial'?'<p class="subscription-kind">Пробный доступ</p>':'')+
+      (s.access_source==='trial'?'<p class="subscription-kind">Пробник</p>':'')+
       '<p class="subscription-expiry">'+(active?(s.expires===253402214400?'Premium · бессрочно':'Доступ до '+date(s.expires)):s.state==='pending'?'Подключение готовится':s.state==='revoked'?'Доступ отозван':'Подписка закончилась')+'</p><p>'+esc(profileAllowance(s.device_limit ?? 4))+'</p>'+
       (s.primary_key_state==='rotating'?'<p>Меняем основной ключ'+(s.primary_retrying?' · повторим после ошибки':'')+'. Дополнительные профили не меняются.</p>':'')+
       '<div class="subscription-primary">'+flow+configure+renewal+'</div>'+
@@ -699,8 +699,8 @@ function renderTrial() {
   $('trial-offer').hidden=paidRenewal || !trial || (!trial.enabled&&!trial.claim);
   if(!trial)return;
   const available=trialProtocolAvailable();
-  const messages={telegram_required:catalog.mtproxy_login?'Войдите через MTProxy, чтобы попробовать VPN.':'Войдите через Telegram, чтобы попробовать VPN.',existing_customer:'Пробный доступ доступен аккаунтам без прежних заказов и подписок.',limit_reached:'Пробные активации временно недоступны.',not_configured:'Пробный доступ готовится к запуску.',disabled:'Пробный доступ отключён.'};
-  $('trial-info').textContent=trial.claim?'Пробный доступ уже выбран: '+protocolName(trial.claim.protocol)+'. Статус и настройки — в кабинете.':trial.eligible?trial.days+' дн. · '+protocolName(protocol)+' · только основной профиль.':messages[trial.reason] || 'Пробный доступ уже использован.';
+  const messages={telegram_required:catalog.mtproxy_login?'Войдите через MTProxy, чтобы попробовать VPN.':'Войдите через Telegram, чтобы попробовать VPN.',existing_customer:'Пробник доступен аккаунтам без прежних заказов и подписок.',limit_reached:'Пробные активации временно недоступны.',not_configured:'Пробник готовится к запуску.',disabled:'Пробник отключён.'};
+  $('trial-info').textContent=trial.claim?'Пробник уже выбран: '+protocolName(trial.claim.protocol)+'. Статус и настройки — в кабинете.':trial.eligible?trial.days+' дн. · '+protocolName(protocol)+' · только основной профиль.':messages[trial.reason] || 'Пробник уже использован.';
   $('trial-start').textContent=trial.claim?'Открыть кабинет':trial.reason==='telegram_required'?(catalog.mtproxy_login?'Войти через MTProxy':'Войти через Telegram'):'Попробовать бесплатно';
   const loginAvailable=Boolean(catalog.mtproxy_login || catalog.bot_username);
   if(!trial.claim && trial.reason==='telegram_required' && !loginAvailable){
@@ -737,11 +737,11 @@ async function beginTrial() {
     }
     return;
   }
-  if(!trial?.eligible || !trialProtocolAvailable())throw new Error('Пробный доступ сейчас недоступен.');
+  if(!trial?.eligible || !trialProtocolAvailable())throw new Error('Пробник сейчас недоступен.');
   selectedPlan=null;checkoutTrial={protocol,version:trial.version};$('promo-controls').hidden=true;
-  $('checkout-info').textContent='Пробный доступ / '+trial.days+' дн. / '+protocolName(protocol)+' / без оплаты / только основной профиль';
+  $('checkout-info').textContent='Пробник / '+trial.days+' дн. / '+protocolName(protocol)+' / без оплаты / только основной профиль';
   clearPayment();$('checkout-form').hidden=false;$('receipt-label').hidden=true;$('receipt-label').querySelector('input').required=false;
-  $('terms-text').textContent=catalog.terms;$('accept-terms').checked=false;$('accept-terms').required=true;$('checkout-submit').textContent='Получить пробный доступ →';show('checkout-dialog');
+  $('terms-text').textContent=catalog.terms;$('accept-terms').checked=false;$('accept-terms').required=true;$('checkout-submit').textContent='Получить пробник →';show('checkout-dialog');
 }
 $('trial-start').onclick=()=>beginTrial().catch(e=>toast(e.message));
 function clearFlowLink() {
@@ -1016,7 +1016,7 @@ $('logout').onclick = async () => {
     if(/^[A-Z0-9][A-Z0-9_-]{3,31}$/.test(incomingPromo)){
       promoIntent=incomingPromo;toast('В ссылке есть промокод. Выберите тариф и примените его перед оформлением.');
     }
-    if(/^[a-f0-9]{24}$/.test(new URLSearchParams(location.search).get('ref') || '')) {if(me)setShopAccountPane('referrals-panel');show(me?'account-dialog':'auth-dialog');toast('Примите приглашение в кабинете до первого заказа или пробного доступа.');}
+    if(/^[a-f0-9]{24}$/.test(new URLSearchParams(location.search).get('ref') || '')) {if(me)setShopAccountPane('referrals-panel');show(me?'account-dialog':'auth-dialog');toast('Примите приглашение в кабинете до первого заказа или пробника.');}
     if(new URLSearchParams(location.search).has('payment')) { if(me)setShopAccountPane('orders');history.replaceState(null,'',basePath+'/'); show(me?'account-dialog':'auth-dialog'); }
     setInterval(async()=>{ if(me && ( $('account-dialog').open || $('checkout-dialog').open || $('config-dialog').open || $('devices-dialog').open )) { try { await refreshMe(); await refreshPaymentOrder(true); } catch {} } },15000);
   } catch(e) { toast(e.message); }

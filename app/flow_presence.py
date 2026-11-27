@@ -91,7 +91,9 @@ async def snapshot(maintenance=False):
         subscriptions=all_rows("""SELECT s.*,u.telegram_id,b.mtproxy_uuid,x.request_id,x.days,x.before_expires,x.target_expires,n.kind AS notice_kind,n.payload AS notice_payload,n.created AS notice_created,n.outcome AS notice_outcome,n.delivered AS notice_finished,c.version AS renewal_version,c.assigned_name,rp.name AS renewal_name,rp.id AS renewal_plan_id,
             EXISTS(SELECT 1 FROM flow_auto_grants g WHERE g.subscription_id=s.id
                    AND g.state IN ('pending','expired')) AS first_grant_waiting,
-            (SELECT COALESCE(NULLIF(TRIM(o.plan_name),''),p.name) FROM orders o LEFT JOIN plans p ON p.id=o.plan
+            (SELECT CASE WHEN o.kind='trial' AND o.plan='trial' AND o.plan_name='Пробный доступ'
+                         THEN 'Пробник' ELSE COALESCE(NULLIF(TRIM(o.plan_name),''),p.name) END
+             FROM orders o LEFT JOIN plans p ON p.id=o.plan
              WHERE o.user_id=s.user_id AND o.protocol=s.protocol AND o.status='active'
              AND o.kind NOT IN ('referral','free_renewal')
              ORDER BY o.target_expires DESC,o.created DESC,o.id DESC LIMIT 1) AS tariff
@@ -129,7 +131,7 @@ async def snapshot(maintenance=False):
             row['is_premium']=premium.active(sub)
             row['tariff_name']=('Premium' if row['is_premium'] else None) or sub['assigned_name'] or sub['tariff'] or (
                 'Гостевой доступ' if sub['wg_configuration']==servers.GUEST_CONFIGURATION else
-                'Пробный доступ' if sub['access_source']=='trial' else None)
+                'Пробник' if sub['access_source']=='trial' else None)
             # An auto-grant reservation can exist before there is a profile to download.
             row['first_profile_unissued'] = bool(
                 state in ('pending','expired') and sub['first_grant_waiting']

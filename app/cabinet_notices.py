@@ -122,7 +122,7 @@ def message(row, policy):
                           'revoked':'🔒 Подписка отозвана. Прежний профиль отключён.',
                           'pending':'🐾 Готовим ваш профиль подключения.'}.get(new['state'],'🐾 Подписка обновлена.'))
         if trial_activated(kind, data):
-            lines = ['🎁 Добро пожаловать в Pushok Flow!', 'Ваш пробный доступ активирован. Откройте Flow, чтобы подключиться.']
+            lines = ['🎁 Добро пожаловать в Pushok Flow!', 'Ваш пробник активирован. Откройте Flow, чтобы подключиться.']
         if new['expires'] and (old['expires']!=new['expires'] or trial_activated(kind, data)): lines.append('🗓 Доступ до '+date(new['expires'])+'.')
         if old['device_limit']!=new['device_limit']: lines.append(f"📱 Дополнительные профили · {old['device_limit']} → {new['device_limit']}.")
         if old['free_traffic_gb']!=new['free_traffic_gb']: lines.append('Лимит трафика: '+(str(new['free_traffic_gb'])+' ГБ' if new['free_traffic_gb'] else 'без ограничения')+'.')

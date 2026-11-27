@@ -11,6 +11,39 @@ from test_flow_owner_extension import prepared, SID, _VALID
 from test_shop import client
 
 
+@pytest.mark.parametrize('source,plan,kind,name,assigned,expected', [
+    ('trial', None, None, None, None, 'Пробник'),
+    ('trial', 'trial', 'trial', 'Пробный доступ', None, 'Пробник'),
+    ('trial', 'trial', 'trial', 'Пробник', None, 'Пробник'),
+    ('trial', 'trial', 'trial', 'Пробный доступ для команды', None, 'Пробный доступ для команды'),
+    ('trial', 'trial', 'trial', 'Пробный доступ', 'Семейный', 'Семейный'),
+    ('trial', 'trial', 'trial', 'Пробный доступ', 'Пробный доступ', 'Пробный доступ'),
+    ('purchase', 'trial', 'purchase', 'Пробный доступ', None, 'Пробный доступ'),
+    ('purchase', 'custom', 'trial', 'Пробный доступ', None, 'Пробный доступ'),
+    ('trial', 'custom', 'purchase', 'Пробный доступ', None, 'Пробный доступ'),
+])
+def test_trial_tariff_display_preserves_saved_orders_and_custom_names(
+        client, monkeypatch, source, plan, kind, name, assigned, expected):
+    import asyncio
+    from app import flow_presence
+    user=service.telegram_account(987654321)
+    sid,subject=str(uuid4()),str(uuid4())
+    execute("""INSERT INTO subscriptions(id,user_id,protocol,expires,state,access_source)
+               VALUES (?,?,'wg',1,'expired',?)""",(sid,user['id'],source))
+    execute('INSERT INTO flow_bridge_identities VALUES (?,?,?,?)',
+            (subject,user['telegram_id'],user['id'],int(time.time())))
+    if plan:
+        execute("""INSERT INTO orders(id,user_id,protocol,plan,plan_name,days,amount,created,status,kind)
+                   VALUES ('trial-label-order',?,'wg',?,?,1,0,1,'active',?)""",(user['id'],plan,name,kind))
+    if assigned:
+        execute('INSERT INTO vpn_renewal_choices VALUES (?,NULL,1,?,?,NULL)',(sid,str(uuid4()),assigned))
+    monkeypatch.setattr(flow_presence,'_until',0)
+    snapshot=asyncio.run(flow_presence.snapshot())
+    assert snapshot['accounts'][subject]['tariff_name']==expected
+    if plan:
+        assert one("SELECT plan_name FROM orders WHERE id='trial-label-order'")['plan_name']==name
+
+
 def test_cabinet_commands_are_scoped_and_repeatable(client, monkeypatch):
     plan = prepared(client)
     secret = 'ab' * 32

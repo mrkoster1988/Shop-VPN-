@@ -98,7 +98,7 @@ def bind(user,data):
         if not p['enabled'] or p['version']!=data.policy_version:raise HTTPException(409,'Условия приглашений изменились. Обновите кабинет.')
         inviter=conn.execute('SELECT user_id FROM referral_codes WHERE code=?',(data.code,)).fetchone()
         if not inviter or inviter['user_id']==uid:raise HTTPException(409,'Приглашение недоступно')
-        if conn.execute('SELECT 1 FROM orders WHERE user_id=? UNION ALL SELECT 1 FROM subscriptions WHERE user_id=? LIMIT 1',(uid,uid)).fetchone():raise HTTPException(409,'Приглашение принимают до первого заказа или пробного доступа')
+        if conn.execute('SELECT 1 FROM orders WHERE user_id=? UNION ALL SELECT 1 FROM subscriptions WHERE user_id=? LIMIT 1',(uid,uid)).fetchone():raise HTTPException(409,'Приглашение принимают до первого заказа или пробника')
         if not purchased(conn,inviter['user_id']):raise HTTPException(409,'Приглашение недоступно')
         if conn.execute('SELECT count(*) FROM referral_bindings').fetchone()[0]>=p['max_invites']:raise HTTPException(409,'Лимит приглашений исчерпан')
         conn.execute('INSERT INTO referral_bindings(invitee_id,inviter_id,days,min_rub,min_stars,policy_version,created) VALUES (?,?,?,?,?,?,?)',

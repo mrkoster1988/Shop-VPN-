@@ -35,7 +35,7 @@ def update(data):
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
         before=dict(conn.execute('SELECT * FROM trial_policy WHERE id=1').fetchone())
-        if before['version']!=data.version:raise HTTPException(409,'Условия пробного доступа изменились. Обновите страницу.')
+        if before['version']!=data.version:raise HTTPException(409,'Условия пробника изменились. Обновите страницу.')
         if all(before[key]==value for key,value in data.model_dump(exclude={'version'}).items()):return policy()
         conn.execute('UPDATE trial_policy SET enabled=?,days=?,max_claims=?,version=version+1,updated=? WHERE id=1',
             (int(data.enabled),data.days,data.max_claims,int(time.time())))
@@ -62,29 +62,29 @@ def offer(user):
 
 
 def claim(user,data):
-    if not user['telegram_id']:raise HTTPException(403,'Пробный доступ доступен только через Telegram')
+    if not user['telegram_id']:raise HTTPException(403,'Пробник доступен только через Telegram')
     with db() as conn:
         conn.execute('BEGIN IMMEDIATE')
         previous=conn.execute('SELECT order_id,protocol FROM trial_claims WHERE user_id=?',(user['id'],)).fetchone()
         if previous:
-            if previous['protocol']!=data.protocol:raise HTTPException(409,'Пробный доступ уже выбран для другого протокола')
+            if previous['protocol']!=data.protocol:raise HTTPException(409,'Пробник уже выбран для другого протокола')
             return previous['order_id']
         p=dict(conn.execute('SELECT * FROM trial_policy WHERE id=1').fetchone())
-        if not p['enabled'] or not shop_settings.terms_configured():raise HTTPException(409,'Пробный доступ сейчас недоступен')
-        if p['version']!=data.policy_version:raise HTTPException(409,'Условия пробного доступа изменились. Обновите каталог.')
-        if not data.accept_terms:raise HTTPException(422,'Подтвердите условия пробного доступа')
+        if not p['enabled'] or not shop_settings.terms_configured():raise HTTPException(409,'Пробник сейчас недоступен')
+        if p['version']!=data.policy_version:raise HTTPException(409,'Условия пробника изменились. Обновите каталог.')
+        if not data.accept_terms:raise HTTPException(422,'Подтвердите условия пробника')
         if conn.execute('SELECT 1 FROM orders WHERE user_id=? UNION ALL SELECT 1 FROM subscriptions WHERE user_id=? LIMIT 1',(user['id'],user['id'])).fetchone():
-            raise HTTPException(409,'Пробный доступ предназначен для аккаунтов без предыдущих заказов и подписок')
+            raise HTTPException(409,'Пробник предназначен для аккаунтов без предыдущих заказов и подписок')
         if conn.execute('SELECT count(*) FROM trial_claims').fetchone()[0]>=p['max_claims']:
             raise HTTPException(409,'Лимит пробных активаций исчерпан')
         registration=conn.execute('SELECT created FROM users WHERE id=?',(user['id'],)).fetchone()['created']
         target=registration+p['days']*86400
         if target<=int(time.time()):raise HTTPException(409,'Пробный период с даты регистрации уже закончился')
         server=servers.select(conn,data.protocol)
-        if not server:raise HTTPException(409,'Для пробного доступа сейчас нет свободного сервера')
+        if not server:raise HTTPException(409,'Для пробника сейчас нет свободного сервера')
         sid,oid=str(uuid.uuid4()),str(uuid.uuid4());now=int(time.time())
         conn.execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state,server_id,device_limit,access_source) VALUES (?,?,?,0,'pending',?,0,'trial')",(sid,user['id'],data.protocol,server['id']))
-        conn.execute("INSERT INTO orders(id,user_id,protocol,plan,plan_name,days,amount,currency,method,status,created,plan_version,device_limit,kind,base_amount,target_expires) VALUES (?,?,?,'trial','Пробный доступ',?,0,'XTR','trial','paid',?,?,0,'trial',0,?)",
+        conn.execute("INSERT INTO orders(id,user_id,protocol,plan,plan_name,days,amount,currency,method,status,created,plan_version,device_limit,kind,base_amount,target_expires) VALUES (?,?,?,'trial','Пробник',?,0,'XTR','trial','paid',?,?,0,'trial',0,?)",
             (oid,user['id'],data.protocol,p['days'],now,p['version'],target))
         conn.execute('INSERT INTO trial_claims(user_id,order_id,protocol,created,policy_version,terms_snapshot) VALUES (?,?,?,?,?,?)',
             (user['id'],oid,data.protocol,now,p['version'],shop_settings.terms()))

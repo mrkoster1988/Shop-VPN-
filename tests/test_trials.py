@@ -45,6 +45,8 @@ def test_single_trial_is_real_queued_issuance_without_invoice(trial_env,protocol
     client,calls,_=trial_env;telegram(client);assert policy(client,enabled=True).status_code==200
     result=claim(client,protocol);assert result.status_code==200,result.text
     order=result.json();assert order['kind']=='trial' and order['method']=='trial' and order['amount']==0 and order['status']=='paid' and not order['payment_url']
+    assert order['plan_name']=='Пробник'
+    assert one('SELECT plan_name FROM orders WHERE id=?',(order['id'],))['plan_name']=='Пробник'
     sub=one('SELECT * FROM subscriptions');assert sub['state']=='pending' and sub['server_id']=='test-'+protocol and sub['device_limit']==0
     assert client.get('/api/subscriptions/'+sub['id']+'/config').status_code==404
     asyncio.run(service.fulfill(order['id']))

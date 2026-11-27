@@ -447,7 +447,7 @@ test('trial account shows no payment claim or paid profile features',async()=>{
   p.state.customer.orders=[{id:'trial-order',protocol:'xui',amount:0,currency:'XTR',kind:'trial',status:'paid',created:100}];
   await p.run('refreshMe()');
   const subscriptions=p.element('subscriptions').innerHTML,orders=p.element('orders').innerHTML;
-  assert.ok(subscriptions.includes('Пробный доступ')&&!subscriptions.includes('data-primary-rotate')&&!subscriptions.includes('data-link='));
+  assert.ok(subscriptions.includes('Пробник')&&!subscriptions.includes('data-primary-rotate')&&!subscriptions.includes('data-link='));
   assert.ok(orders.includes('Без оплаты')&&orders.includes('Готовим пробный VPN')&&!orders.includes('Оплачено'));
 });
 
