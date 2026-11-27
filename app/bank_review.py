@@ -22,6 +22,10 @@ def require_rub_amount(amount):
 def link(path, label):
     return f'<a href="{escape(c.BASE_PATH + path, quote=True)}">{escape(label)}</a>'
 
+def review_marker():
+    marker = os.getenv('BANK_REVIEW_CODE', '').strip()
+    return f'<p>Код проверки: {escape(marker)}</p>' if marker else ''
+
 def page(title, content):
     nav = ' · '.join(link(p, t) for p, t in [
         ('/', 'Магазин'), ('/legal/privacy', 'Политика конфиденциальности'),
@@ -57,10 +61,9 @@ def review():
         if plan['is_free'] or not MIN_RUB <= plan['price'] <= MAX_RUB:
             continue
         cards.append(f'<article><h2>{escape(str(plan["name"]))}</h2><p>Подписка на VPN-подключение, срок {int(plan["days"])} дн.</p><p class="price">{int(plan["price"])} ₽</p><a class="buy" href="{escape(c.BASE_PATH, quote=True)}/bank-review/payment/{quote(str(plan["id"]), safe="")}">Оплатить</a></article>')
-    marker = os.getenv('BANK_REVIEW_CODE', '').strip()
     return page('Тарифы и оплата', '<p>Проверка подключения платёжной системы. Реальные списания здесь не выполняются.</p>' +
                 ''.join(cards or ['<p>Платные тарифы пока не опубликованы.</p>']) +
-                (f'<p>Код проверки: {escape(marker)}</p>' if marker else ''))
+                review_marker())
 
 @router.get('/bank-review/payment/{plan_id}')
 def review_payment(plan_id: str):
@@ -71,4 +74,4 @@ def review_payment(plan_id: str):
         raise HTTPException(404)
     plan = plans[0]
     require_rub_amount(plan['price'])
-    return page('Оплата', f'<article><h2>{escape(str(plan["name"]))}</h2><p>Срок: {int(plan["days"])} дн.</p><p class="price">{int(plan["price"])} ₽</p><p role="status">{NOTICE}</p>{link("/bank-review", "Вернуться к тарифам")}</article>')
+    return page('Оплата', f'<article><h2>{escape(str(plan["name"]))}</h2><p>Срок: {int(plan["days"])} дн.</p><p class="price">{int(plan["price"])} ₽</p><p role="status">{NOTICE}</p>{link("/bank-review", "Вернуться к тарифам")}</article>' + review_marker())
