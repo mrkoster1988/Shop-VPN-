@@ -26,6 +26,7 @@ from pydantic import BaseModel, Field, field_validator, ValidationError, model_v
 from starlette.applications import Starlette
 from starlette.routing import Mount
 from . import ads_bookings as bookings, ads_finance as finance
+from . import bank_review
 from . import wg_client_platform
 from . import support as support_cases
 from . import shop_settings, runtime_settings, payment_policy, shop_finance, platforms, protocols, bot_menu as menu_editor, payment_events
@@ -288,6 +289,7 @@ def html_page(name, *, staff_cookie=False):
     for asset, fingerprint in ASSET_VERSIONS.items():
         marker = '__BASE_PATH__/static/' + asset + '"'
         html = html.replace(marker, marker[:-1] + '?v=' + fingerprint + '"')
+    html = html.replace('__BANK_REVIEW_LINK__', '<a class="text-link" href="__BASE_PATH__/bank-review">Тарифы и оплата</a>' if bank_review.enabled() else '')
     headers = {'Cache-Control': 'no-cache'}
     if name == 'admin.html':
         html = html.replace('__STAFF_SESSION__', '1' if staff_cookie else '0')
@@ -1665,6 +1667,7 @@ async def retry(oid: str):
         conn.execute("UPDATE orders SET next_attempt=0 WHERE id IN (?,?)", (first['id'],oid))
     return {'ok': True}
 
+app.include_router(bank_review.router)
 app.mount('/static', StaticFiles(directory=STATIC), name='static')
 
 
