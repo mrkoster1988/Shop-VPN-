@@ -40,7 +40,7 @@ def test_review_rub_bounds(monkeypatch,amount,valid):
 
 def test_review_blocks_new_rub_checkout(monkeypatch):
     monkeypatch.setenv('BANK_REVIEW_MODE','true')
-    for method in ('manual','yookassa','sbp'):
+    for method in ('manual','yookassa','sbp','platega'):
         with pytest.raises(HTTPException) as error:
             payment_policy.require_new(None,None,method)
         assert error.value.status_code == 409

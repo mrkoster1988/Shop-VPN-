@@ -26,7 +26,7 @@ from pydantic import BaseModel, Field, field_validator, ValidationError, model_v
 from starlette.applications import Starlette
 from starlette.routing import Mount
 from . import ads_bookings as bookings, ads_finance as finance
-from . import bank_review
+from . import bank_review, platega
 from . import wg_client_platform
 from . import support as support_cases
 from . import shop_settings, runtime_settings, payment_policy, shop_finance, platforms, protocols, bot_menu as menu_editor, payment_events
@@ -52,10 +52,12 @@ async def lifespan(app):
     mail.validate_configuration()
     if len(c.ADMIN_TOKEN) < 32:
         raise RuntimeError('ADMIN_TOKEN must contain at least 32 characters')
-    if c.PAYMENT_MODE not in ('manual', 'yookassa', 'sbp'):
-        raise RuntimeError('PAYMENT_MODE must be manual, yookassa or sbp')
+    if c.PAYMENT_MODE not in payment_policy.METHODS:
+        raise RuntimeError('PAYMENT_MODE must be manual, yookassa, sbp or platega')
     if c.PAYMENT_MODE in ('yookassa', 'sbp') and not all(os.getenv(k) for k in ('YOOKASSA_SHOP_ID', 'YOOKASSA_SECRET')):
         raise RuntimeError('Configure YooKassa credentials')
+    if c.PAYMENT_MODE == 'platega' and not platega.configured():
+        raise RuntimeError('Configure Platega credentials and HTTPS')
     try:
         servers.import_environment()
     except Exception:
@@ -825,7 +827,9 @@ async def purchase_for_user(data, user, *, order_id=None, cabinet_checkout=False
         shared_bot = method == 'stars' and (cabinet_checkout or not c.BOT_TOKEN) and cabinet_stars.available(user, data.protocol)
         if method == 'stars' and (not (c.BOT_TOKEN or shared_bot) or not shop_settings.terms_configured()):
             raise HTTPException(503, 'Владелец ещё не настроил оплату и условия продажи в Telegram')
-        if method == 'stars' and not data.accept_terms:
+        if method == 'platega' and not shop_settings.terms_configured():
+            raise HTTPException(503, 'Владелец ещё не опубликовал условия продажи')
+        if method in ('stars', 'platega') and not data.accept_terms:
             raise HTTPException(422, 'Подтвердите согласие с условиями продажи')
         email = email_address(data.receipt_email) if data.receipt_email else user['email']
         if not is_free and method in ('yookassa', 'sbp') and os.getenv('YOOKASSA_RECEIPTS') == 'true' and not email:
@@ -845,11 +849,16 @@ async def purchase_for_user(data, user, *, order_id=None, cabinet_checkout=False
             except Exception as exc:
                 logging.warning('Stars invoice order=%s error=%s', order['id'], type(exc).__name__)
                 raise HTTPException(502, 'Не удалось создать счёт Telegram. Повторите запрос.')
-        if method in ('yookassa', 'sbp') and order['status']=='pending' and not order['payment_id']:
+        if method in ('yookassa', 'sbp', 'platega') and order['status']=='pending' and not order['payment_id']:
             try:
-                result = await providers.payment(order, order['receipt_email'])
+                if method == 'platega':
+                    payment_id, payment_url = await platega.create(order)
+                else:
+                    result = await providers.payment(order, order['receipt_email'])
+                    payment_id = result['id']
+                    payment_url = result.get('confirmation', {}).get('confirmation_url')
                 execute('UPDATE orders SET payment_id=?,payment_url=? WHERE id=?',
-                        (result['id'], result.get('confirmation', {}).get('confirmation_url'), order['id']))
+                        (payment_id, payment_url, order['id']))
             except Exception as exc:
                 logging.warning('Payment creation order=%s error=%s', order['id'], type(exc).__name__)
                 raise HTTPException(502, 'Не удалось создать оплату. Повторите запрос: заказ сохранён.')
@@ -866,6 +875,11 @@ async def order_status(order_id: str, user=Depends(current_user)):
         if order['method'] == 'manual' and order['status'] in ('pending','checkout') else ''}
 
 app.include_router(miniapp_vpn.router_for(Purchase,purchase_for_user,order_status))
+
+@app.post('/api/payments/platega/notify')
+async def platega_notify(request: Request):
+    return await platega.receive(request)
+
 
 @app.post('/api/payments/yookassa/notify')
 async def yookassa_notify(request: Request):
@@ -1590,7 +1604,7 @@ async def admin_user(user_id: int = APIPath(ge=1, le=9223372036854775807),
 @app.get('/api/admin/orders', dependencies=[Depends(admin)])
 async def admin_orders(q: str = Query(default='', max_length=100),
                        status: Literal['', 'pending', 'checkout', 'paid', 'active', 'canceled'] = '',
-                       method: Literal['', 'manual', 'yookassa', 'sbp', 'stars','trial','referral'] = '',
+                       method: Literal['', 'manual', 'yookassa', 'sbp', 'platega', 'stars','trial','referral'] = '',
                        protocol: Literal['', 'xui', 'wg', 'vmess', 'hysteria2','tuic'] = '',
                        page: int = Query(default=1, ge=1, le=1000000),
                        page_size: int = Query(default=25, ge=1, le=100)):

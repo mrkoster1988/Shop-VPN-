@@ -6,17 +6,17 @@ from typing import Literal
 from fastapi import HTTPException
 from pydantic import BaseModel, Field, field_validator
 
-from . import config as c, bank_review
+from . import config as c, bank_review, platega
 from .db import db
 
-METHODS=('manual','yookassa','sbp')
+METHODS=('manual','yookassa','sbp','platega')
 DEFAULT_NOTICE='Оплата временно недоступна. Обратитесь в поддержку.'
 
 
 class Update(BaseModel):
     model_config={'extra':'forbid'}
     version:int=Field(ge=0,strict=True)
-    web_mode:Literal['inherit','manual','yookassa','sbp']
+    web_mode:Literal['inherit','manual','yookassa','sbp','platega']
     web_enabled:bool=Field(strict=True)
     stars_enabled:bool=Field(strict=True)
     manual_text:str=Field(max_length=1000,strict=True)
@@ -49,12 +49,13 @@ def read(conn):
 
 def open_web_orders(conn):
     return conn.execute("""SELECT count(*) FROM orders WHERE kind='purchase'
-        AND method IN ('manual','yookassa','sbp') AND status IN ('pending','checkout')""").fetchone()[0]
+        AND method IN ('manual','yookassa','sbp','platega') AND status IN ('pending','checkout')""").fetchone()[0]
 
 
 def view(conn):
     p=read(conn)
     return p | {'effective_web_mode':effective_mode(p),'merchant_configured':merchant_configured(),
+                'platega_configured':platega.configured(),
                 'stars_bot_configured':bool(c.BOT_TOKEN),'open_web_orders':open_web_orders(conn)}
 
 
@@ -71,6 +72,8 @@ def update(data):
         mode=effective_mode(values)
         if values['web_enabled'] and mode in ('yookassa','sbp') and values['web_mode']!='inherit' and not merchant_configured():
             raise HTTPException(409,'Для включения ЮKassa/СБП требуется HTTPS и настроенные реквизиты продавца.')
+        if values['web_enabled'] and mode == 'platega' and not platega.configured():
+            raise HTTPException(409,'Для Platega нужны HTTPS, Merchant ID и API-ключ.')
         if (mode!=effective_mode(old) or values['manual_text']!=old['manual_text']) and open_web_orders(conn):
             raise HTTPException(409,'Сначала завершите незакрытые рублёвые счета. Их условия нельзя менять.')
         if any(old[k]!=v for k,v in values.items()):
@@ -100,6 +103,8 @@ def require_new(conn,user,method,expected_version=None):
         raise HTTPException(409,'Способ оплаты изменился. Повторите оформление.')
     if not p['stars_enabled' if method=='stars' else 'web_enabled']:
         raise HTTPException(409,DEFAULT_NOTICE)
+    if method == 'platega' and not platega.configured():
+        raise HTTPException(503,DEFAULT_NOTICE)
     if method in ('yookassa','sbp') and p['web_mode']!='inherit' and not merchant_configured():
         raise HTTPException(503,DEFAULT_NOTICE)
 
@@ -109,6 +114,7 @@ def catalog(user):
         p=read(conn);method='stars' if user and user['telegram_id'] else effective_mode(p)
         enabled=p['stars_enabled' if method=='stars' else 'web_enabled']
         if bank_review.enabled() and method != 'stars':enabled=False
+        if method == 'platega' and not platega.configured():enabled=False
         if method in ('yookassa','sbp') and p['web_mode']!='inherit' and not merchant_configured():enabled=False
         return {'payment_mode':method,'payment_available':enabled,'payment_policy_version':p['version'],
                 'payment_notice':DEFAULT_NOTICE}

@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from .db import db
 from .commerce_analytics import MAX_TIME
 
-METHODS=('manual','yookassa','sbp','stars')
+METHODS=('manual','yookassa','sbp','platega','stars')
 CURRENCIES=('RUB','XTR')
 CATEGORIES=('server','commission','marketing','tax','refund','other')
 
@@ -158,7 +158,7 @@ def report(start=None,end=None,page=1):
             FROM order_milestones m JOIN orders o ON o.id=m.order_id
             WHERE m.event='paid' AND m.recorded_at>=? AND m.recorded_at<?
               AND o.kind='purchase' AND o.status IN ('paid','active')
-              AND o.method IN ('manual','yookassa','sbp','stars') AND o.currency IN ('RUB','XTR')
+              AND o.method IN ('manual','yookassa','sbp','platega','stars') AND o.currency IN ('RUB','XTR')
             GROUP BY o.currency,o.method ORDER BY o.currency,o.method""",(start,end)).fetchall()
         for r in income:totals[r['currency']]['receipts']+=r['amount_minor']
         deductions=conn.execute("""SELECT currency,kind,sum(amount_minor) AS amount
@@ -167,7 +167,7 @@ def report(start=None,end=None,page=1):
         for r in deductions:totals[r['currency']][{'refund':'refunds','fee':'fees','expense':'expenses'}[r['kind']]]+=r['amount']
         for t in totals.values():t['net_recorded']=t['receipts']-t['refunds']-t['fees']-t['expenses']
         missing=conn.execute("""SELECT count(*) FROM orders o WHERE o.kind='purchase'
-            AND o.status IN ('paid','active') AND o.method IN ('manual','yookassa','sbp','stars')
+            AND o.status IN ('paid','active') AND o.method IN ('manual','yookassa','sbp','platega','stars')
             AND NOT EXISTS (SELECT 1 FROM order_milestones m WHERE m.order_id=o.id AND m.event='paid')""").fetchone()[0]
         since=conn.execute('SELECT recorded_since FROM order_history_state WHERE id=1').fetchone()
         count=conn.execute('SELECT count(*) FROM shop_finance_entries WHERE occurred_at>=? AND occurred_at<?',(start,end)).fetchone()[0]

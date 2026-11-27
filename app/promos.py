@@ -6,7 +6,7 @@ import uuid
 from typing import Literal
 from fastapi import HTTPException
 from pydantic import BaseModel,Field,field_validator
-from . import config as c, protocols, runtime_settings, payment_policy
+from . import config as c, protocols, runtime_settings, payment_policy, platega
 from .db import db,all_rows
 
 class CouponFields(BaseModel):
@@ -101,6 +101,8 @@ def quote_locked(conn,data,user):
             raise HTTPException(409,'Этот код уже использован аккаунтом. Откройте заказ в истории.')
         discount=base*coupon['percent']//100
     amount=max(0,base-discount)
+    if amount and payment_policy.method_for(user, conn) == 'platega' and not platega.MIN_RUB <= amount <= platega.MAX_RUB:
+        raise HTTPException(422,'Сумма оплаты через Platega должна быть от 1 до 10 000 ₽.')
     result={'plan':plan['id'],'plan_name':plan['name'],'days':plan['days'],'device_limit':plan['device_limit'],
         'free_traffic_gb':plan['free_traffic_gb'] if plan['is_free'] else 0,
         'free_auto_renew':int(plan['free_auto_renew']) if plan['is_free'] else 0,
@@ -149,8 +151,12 @@ def make_order(data,user,method,email,*,order_id=None):
         if data.quote_currency is not None and data.quote_currency!=result['currency']:raise HTTPException(409,'Валюта изменилась. Рассчитайте стоимость заново.')
         if not code and order_id is None:
             if data.promo_version is not None:raise HTTPException(422,'Версия промокода указана без кода')
-            previous=conn.execute("SELECT * FROM orders WHERE user_id=? AND protocol=? AND plan=? AND method=? AND plan_version=? AND promo_id IS NULL AND kind='purchase' AND status='pending' AND created>? ORDER BY created DESC,id LIMIT 1",
-                (user['id'],data.protocol,data.plan,method,data.plan_version,int(time.time())-1800)).fetchone()
+            now = int(time.time())
+            retry_start = now - (int(platega.LINK_LIFETIME.total_seconds()) if method == 'platega' else 1800)
+            previous = conn.execute("""SELECT * FROM orders WHERE user_id=? AND protocol=? AND plan=? AND method=?
+                AND plan_version=? AND promo_id IS NULL AND kind='purchase' AND status='pending'
+                AND (created>? OR (method='platega' AND payment_id IS NOT NULL)) ORDER BY created DESC,id LIMIT 1""",
+                (user['id'],data.protocol,data.plan,method,data.plan_version,retry_start)).fetchone()
             if previous:return dict(previous)
         runtime_settings.require_sale(conn,user,data.protocol)
         if method=='free':

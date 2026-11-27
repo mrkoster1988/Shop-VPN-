@@ -375,10 +375,6 @@ def init_db():
         CREATE INDEX IF NOT EXISTS admin_audit_created ON admin_audit(created,id);
         CREATE TABLE IF NOT EXISTS audit (
           id INTEGER PRIMARY KEY, created INTEGER NOT NULL, action TEXT NOT NULL, order_id TEXT);
-        CREATE TABLE IF NOT EXISTS shop_payment_policy (
-          id INTEGER PRIMARY KEY CHECK(id=1),web_mode TEXT NOT NULL CHECK(web_mode IN ('inherit','manual','yookassa','sbp')),
-          web_enabled INTEGER NOT NULL CHECK(web_enabled IN (0,1)),stars_enabled INTEGER NOT NULL CHECK(stars_enabled IN (0,1)),
-          manual_text TEXT NOT NULL,version INTEGER NOT NULL CHECK(version>0),updated INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS shop_finance_entries (
           id TEXT PRIMARY KEY,kind TEXT NOT NULL CHECK(kind IN ('expense','fee','refund')),
           category TEXT NOT NULL,currency TEXT NOT NULL CHECK(currency IN ('RUB','XTR')),
@@ -413,6 +409,7 @@ def init_db():
         CREATE INDEX IF NOT EXISTS orders_user ON orders(user_id, created);
         CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires);
         ''')
+        migrate_platega_policy(conn)
         if 'error' not in {r['name'] for r in conn.execute('PRAGMA table_info(flow_auto_grants)')}:
             conn.execute('ALTER TABLE flow_auto_grants ADD COLUMN error TEXT')
         # Additive migration for installations created before editable tariffs.
@@ -527,13 +524,13 @@ def init_db():
         DROP TRIGGER IF EXISTS order_paid_insert;
         DROP TRIGGER IF EXISTS order_paid_update;
         CREATE TRIGGER IF NOT EXISTS order_paid_insert AFTER INSERT ON orders
-        WHEN NEW.status='paid' AND NEW.kind='purchase' AND NEW.method IN ('manual','yookassa','sbp','stars')
+        WHEN NEW.status='paid' AND NEW.kind='purchase' AND NEW.method IN ('manual','yookassa','sbp','platega','stars')
         BEGIN
           INSERT OR IGNORE INTO order_milestones VALUES (NEW.id,'paid',CAST(strftime('%s','now') AS INTEGER));
         END;
         CREATE TRIGGER IF NOT EXISTS order_paid_update AFTER UPDATE OF status ON orders
         WHEN NEW.status='paid' AND OLD.status!='paid' AND NEW.kind='purchase'
-          AND NEW.method IN ('manual','yookassa','sbp','stars')
+          AND NEW.method IN ('manual','yookassa','sbp','platega','stars')
         BEGIN
           INSERT OR IGNORE INTO order_milestones VALUES (NEW.id,'paid',CAST(strftime('%s','now') AS INTEGER));
         END;
@@ -605,3 +602,24 @@ def migrate_booking_actions(conn):
     conn.execute('INSERT INTO ads_booking_actions_v037(rowid,operation_id,request_id,action,fingerprint,note,details,created) SELECT rowid,operation_id,request_id,action,fingerprint,note,details,created FROM ads_booking_actions ORDER BY rowid')
     conn.execute('DROP TABLE ads_booking_actions')
     conn.execute('ALTER TABLE ads_booking_actions_v037 RENAME TO ads_booking_actions')
+
+
+SHOP_PAYMENT_POLICY_SCHEMA = """
+CREATE TABLE IF NOT EXISTS shop_payment_policy (
+          id INTEGER PRIMARY KEY CHECK(id=1),web_mode TEXT NOT NULL CHECK(web_mode IN ('inherit','manual','yookassa','sbp','platega')),
+          web_enabled INTEGER NOT NULL CHECK(web_enabled IN (0,1)),stars_enabled INTEGER NOT NULL CHECK(stars_enabled IN (0,1)),
+          manual_text TEXT NOT NULL,version INTEGER NOT NULL CHECK(version>0),updated INTEGER NOT NULL);
+"""
+
+
+def migrate_platega_policy(conn):
+    conn.execute('BEGIN IMMEDIATE')
+    table = conn.execute("SELECT sql FROM sqlite_master WHERE name='shop_payment_policy'").fetchone()
+    if table is None:
+        conn.execute(SHOP_PAYMENT_POLICY_SCHEMA)
+    elif "'platega'" not in table['sql']:
+        conn.execute('ALTER TABLE shop_payment_policy RENAME TO shop_payment_policy_legacy')
+        conn.execute(SHOP_PAYMENT_POLICY_SCHEMA)
+        conn.execute('INSERT INTO shop_payment_policy SELECT * FROM shop_payment_policy_legacy')
+        conn.execute('DROP TABLE shop_payment_policy_legacy')
+    conn.commit()
