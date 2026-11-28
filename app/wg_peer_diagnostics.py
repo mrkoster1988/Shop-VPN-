@@ -4,12 +4,19 @@ Reading the panel never creates a key, a peer or a subscription. The result
 contains no private/public keys, panel URLs, API tokens or WireGuard configs.
 An existing subscription remains pinned to its original server.
 """
+import asyncio
+import base64
+import configparser
+import ipaddress
+import re
 import time
+from urllib.parse import urlsplit
 import httpx
 from fastapi import HTTPException
 
 from . import config as c, servers, service, wgdashboard
 from .db import db
+from .panel import PanelError
 
 
 def _subscription(conn, user_id):
@@ -52,8 +59,98 @@ async def _remote_peer(profile, public_key):
     return 'peer_restricted' if match[0] == 'configurationRestrictedPeers' else 'peer_found'
 
 
+def _key_value(value):
+    decoded = base64.b64decode(value, validate=True)
+    # Android Key.fromBase64 rejects noncanonical padding bits as well as length.
+    if len(decoded) != 32 or base64.b64encode(decoded).decode('ascii') != value:
+        raise ValueError('Invalid profile key')
+    return decoded
+
+
+def _integer_option(value, maximum):
+    # Python int accepts separators such as 14_20; the native parser does not.
+    if not re.fullmatch(r'[+-]?[0-9]+', value):
+        raise ValueError('Invalid numeric profile option')
+    number = int(value)
+    if not 0 <= number <= maximum:
+        raise ValueError('Invalid numeric profile option')
+    return number
+
+
+def _config_fields(raw, private_key):
+    """Canonical comparison values stay in memory; never include them in a report."""
+    if (not isinstance(raw, str) or len(raw) > 65536 or '\x00' in raw
+            or not raw.startswith('[Interface]')):
+        raise ValueError('Invalid stored profile')
+    validated = wgdashboard.WGDashboard.validate_config(raw, private_key)
+    # The download adapter repairs a small set of malformed endpoint formats.
+    # The saved profile is delivered verbatim: a repair that has not been saved
+    # must not make a broken local endpoint appear to match the current export.
+    if validated != raw:
+        raise ValueError('Profile requires normalization')
+    parser = configparser.ConfigParser(interpolation=None, strict=True)
+    parser.optionxform = str
+    parser.read_string(raw)
+    interface, remote = parser['Interface'], parser['Peer']
+    # An absent PSK is valid; a present but empty value is not a native key.
+    psk = _key_value(remote['PresharedKey']) if 'PresharedKey' in remote else None
+    # Flow uses WireGuard Android Config.parse: MTU is a nonnegative Java int;
+    # listen port and keepalive are unsigned 16-bit values. Zero means unset.
+    mtu = _integer_option(interface.get('MTU', '0'), 2147483647)
+    listen_port = _integer_option(interface.get('ListenPort', '0'), 65535)
+    keepalive = _integer_option(remote.get('PersistentKeepalive', '0'), 65535)
+    endpoint = urlsplit('//' + remote['Endpoint'])
+    try:
+        host = str(ipaddress.ip_address(endpoint.hostname))
+    except ValueError:
+        host = endpoint.hostname.lower()
+    return {
+        'address': frozenset(str(ipaddress.ip_interface(value.strip()))
+                             for value in interface['Address'].split(',')),
+        'dns': tuple(value.strip().lower() for value in interface.get('DNS', '').split(',')
+                     if value.strip()),
+        'mtu': mtu or None,
+        'listen_port': listen_port,
+        'server_public_key': _key_value(remote['PublicKey']),
+        # An all-zero WireGuard preshared key disables PSK, like an absent value.
+        'preshared_key': None if psk == bytes(32) else psk,
+        'allowed_ips': frozenset(str(ipaddress.ip_network(value.strip(), strict=False))
+                                 for value in remote['AllowedIPs'].split(',')),
+        'endpoint': (host, endpoint.port),
+        'persistent_keepalive': keepalive,
+    }
+
+
+async def _compare_profile(sub, profile, private_key):
+    """Presence alone cannot establish that Flow's stored profile is still current."""
+    result = {'profile_status': 'local_invalid', 'profile_differences': []}
+    if not sub['secret']:
+        return {**result, 'profile_status': 'local_missing'}
+    try:
+        local = _config_fields(c.decrypt(sub['secret']), private_key)
+    except PanelError as exc:
+        if exc.args == ('WGDashboardConfigPrivateKey',):
+            result['profile_status'] = 'local_key_mismatch'
+        return result
+    except Exception:
+        return result
+    try:
+        # Bound the entire export check, including the adapter's read-only
+        # interface/peer rechecks, rather than multiplying per-request timeouts.
+        async with asyncio.timeout(12):
+            current = await _download_existing_config(profile, private_key)
+        remote = _config_fields(current, private_key)
+    except Exception:
+        # Failed reads or invalid exports never imply a matching profile. Raw
+        # exceptions can contain panel credentials, endpoint addresses or keys.
+        return {**result, 'profile_status': 'unavailable'}
+    differences = [field for field in local if local[field] != remote[field]]
+    return {'profile_status': 'differs_from_panel' if differences else 'matches_panel',
+            'profile_differences': differences}
+
+
 async def inspect(user_id):
-    """A safe snapshot plus a single remote read of the pinned WGDashboard node."""
+    """Read-only presence and profile comparison on the pinned WGDashboard node."""
     checked = int(time.time())
     with db() as conn:
         sub = _subscription(conn, user_id)
@@ -62,7 +159,8 @@ async def inspect(user_id):
             return {'status': 'no_subscription', 'checked_at': checked,
                     'subscription_state': None, 'local_ready': False,
                     'server_name': None, 'server_state': None, 'grant': grant,
-                    'can_retry': False, 'can_restore': False}
+                    'can_retry': False, 'can_restore': False,
+                    'profile_status': 'not_checked', 'profile_differences': []}
         row = conn.execute('SELECT * FROM servers WHERE id=?',
                            (sub['server_id'],)).fetchone() if sub['server_id'] else None
         server = dict(row) if row else None
@@ -82,6 +180,7 @@ async def inspect(user_id):
     base = {'checked_at': checked, 'subscription_state': sub['state'],
             'local_ready': bool(local_ready), 'server_name': server['name'] if server else None,
             'server_state': server['state'] if server else None,
+            'profile_status': 'not_checked', 'profile_differences': [],
             'grant': grant, 'can_restore': False, 'can_retry': bool(
                 auto_enabled and grant and grant['state'] == 'pending'
                 and sub['state'] == 'pending' and not sub['secret']
@@ -106,7 +205,8 @@ async def inspect(user_id):
     if not key:
         return {**base, 'status': 'key_not_created'}
     try:
-        public_key = wgdashboard.WGDashboard.identity(c.decrypt(key['private_key']))
+        private_key = c.decrypt(key['private_key'])
+        public_key = wgdashboard.WGDashboard.identity(private_key)
     except Exception:
         return {**base, 'status': 'key_unreadable', 'can_retry': False}
     try:
@@ -127,6 +227,8 @@ async def inspect(user_id):
     base['can_restore'] = bool(
         status in ('peer_missing','peer_found') and local_ready and
         server['state'] in ('active', 'draining') and server['health'] != 'error')
+    if status == 'peer_found':
+        base.update(await _compare_profile(sub, profile, private_key))
     return {**base, 'status': status}
 
 

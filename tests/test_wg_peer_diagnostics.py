@@ -1,4 +1,5 @@
 """Developer diagnostics for WireGuard peers: read only, pinned and secret free."""
+import base64
 import json
 import time
 
@@ -37,6 +38,257 @@ def setup_user(client, *, state='active', use_wgdashboard=True, secret=True):
         (SID, int(time.time()) + 3600, state,
          c.encrypt('test-connection') if secret else None, c.encrypt(SID)))
     return SID
+
+
+def config_text(private_key, **changes):
+    values = {
+        'Address': '10.0.0.2/32, 2001:db8::2/128',
+        'DNS': '1.1.1.1', 'MTU': '1420', 'ListenPort': '0',
+        'PublicKey': base64.b64encode(bytes([2]) * 32).decode(),
+        'PresharedKey': base64.b64encode(bytes([3]) * 32).decode(),
+        'AllowedIPs': '0.0.0.0/0, ::/0',
+        'Endpoint': 'vpn.example:51820', 'PersistentKeepalive': '25',
+        **changes,
+    }
+    interface = '\n'.join(f'{name} = {values.pop(name)}'
+                          for name in ('Address', 'DNS', 'MTU', 'ListenPort'))
+    remote = '\n'.join(f'{name} = {value}' for name, value in values.items()
+                       if value is not None)
+    return f'[Interface]\nPrivateKey = {private_key}\n{interface}\n[Peer]\n{remote}\n'
+
+
+def panel_reader(monkeypatch, private_key, exported, *, configuration='wg0', error=None):
+    public_key = wgdashboard.WGDashboard.identity(private_key)
+    calls = []
+
+    def handler(request):
+        assert request.method == 'GET', 'Diagnostics/refresh must not rewrite a panel peer'
+        calls.append(request.url.path)
+        route = request.url.path.split('/api/')[1]
+        if route == 'getWireguardConfigurations':
+            data = [{'Name': configuration, 'Protocol': 'wg', 'Status': True}]
+        elif route == 'getWireguardConfigurationInfo':
+            assert request.url.params['configurationName'] == configuration
+            data = {'configurationInfo': {'Name': configuration, 'Protocol': 'wg'},
+                    'configurationPeers': [{'id': public_key}],
+                    'configurationRestrictedPeers': []}
+        elif route == f'downloadPeer/{configuration}':
+            assert request.url.params['id'] == public_key
+            if error:
+                raise httpx.ReadTimeout('PRIVATE-ENDPOINT-KEY-TOKEN', request=request)
+            data = {'file': exported}
+        else:
+            raise AssertionError(route)
+        return httpx.Response(200, json={'status': True, 'data': data})
+
+    monkeypatch.setattr(peer, '_new_client', lambda: httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), timeout=12,
+        follow_redirects=False, trust_env=False))
+    return calls
+
+
+@pytest.mark.parametrize('field,value,expected', [
+    ('PublicKey', base64.b64encode(bytes([4]) * 32).decode(), 'server_public_key'),
+    ('PresharedKey', base64.b64encode(bytes([5]) * 32).decode(), 'preshared_key'),
+    ('PresharedKey', None, 'preshared_key'),
+    ('Address', '10.0.0.3/32', 'address'),
+    ('AllowedIPs', '10.0.0.0/24', 'allowed_ips'),
+    ('Endpoint', 'old-vpn.example:65353', 'endpoint'),
+])
+def test_peer_found_does_not_hide_stale_flow_profile(client, monkeypatch, field, value, expected):
+    setup_user(client)
+    private = wgdashboard.stored_private_key('test-wg', SID)
+    fresh = config_text(private)
+    stale = config_text(private, **{field: value})
+    execute('UPDATE subscriptions SET secret=? WHERE id=?', (c.encrypt(stale), SID))
+    before = dict(one('SELECT * FROM subscriptions WHERE id=?', (SID,)))
+    key_before = dict(one('SELECT * FROM wgdashboard_keys WHERE credential_id=?', (SID,)))
+    calls = panel_reader(monkeypatch, private, fresh)
+
+    response = client.get('/api/admin/users/1/wireguard/peer', headers=owner())
+    assert response.status_code == 200, response.text
+    report = response.json()
+    assert report['status'] == 'peer_found' and report['local_ready'] is True
+    assert report['profile_status'] == 'differs_from_panel'
+    assert report['profile_differences'] == [expected]
+    assert report['can_restore'] is True
+    assert f'/api/downloadPeer/wg0' in calls
+    for secret in (private, wgdashboard.WGDashboard.identity(private),
+                   'AgICAgICAg', 'AwMDAwMDAw', 'BAQEBAQEBA', 'BQUFBQUFBQ',
+                   'old-vpn.example', 'vpn.example', 'wg.example', '10.0.0.', 'do-not-leak'):
+        assert secret not in response.text
+    assert dict(one('SELECT * FROM subscriptions WHERE id=?', (SID,))) == before
+    assert dict(one('SELECT * FROM wgdashboard_keys WHERE credential_id=?', (SID,))) == key_before
+
+
+def test_profile_comparison_ignores_format_and_uses_pinned_guest_interface(client, monkeypatch):
+    setup_user(client)
+    private = wgdashboard.stored_private_key('test-wg', SID)
+    fresh = config_text(private, PresharedKey=None)
+    local = config_text(private, Address='2001:0db8:0:0:0:0:0:2/128, 10.0.0.2/32',
+                        AllowedIPs='::/0, 0.0.0.0/0', Endpoint='VPN.EXAMPLE:51820',
+                        PresharedKey=base64.b64encode(bytes(32)).decode())
+    local = local.replace('[Interface]\n', '[Interface]\n# Saved profile\n\n').replace(' = ', '=')
+    execute("UPDATE subscriptions SET secret=?,wg_configuration='wg-guest' WHERE id=?",
+            (c.encrypt(local), SID))
+    calls = panel_reader(monkeypatch, private, fresh, configuration='wg-guest')
+    response = client.get('/api/admin/users/1/wireguard/peer', headers=owner())
+    assert response.status_code == 200, response.text
+    assert response.json()['profile_status'] == 'matches_panel'
+    assert response.json()['profile_differences'] == []
+    assert '/api/downloadPeer/wg-guest' in calls
+    assert '/api/downloadPeer/wg0' not in calls
+
+
+@pytest.mark.parametrize('bad_local,expected', [
+    ('not a configuration', 'local_invalid'),
+    ('wrong-key', 'local_key_mismatch'),
+    ('bad-endpoint', 'local_invalid'),
+    ('bad-psk', 'local_invalid'),
+])
+def test_profile_comparison_never_matches_invalid_local_profile(client, monkeypatch, bad_local, expected):
+    setup_user(client)
+    private = wgdashboard.stored_private_key('test-wg', SID)
+    local = {
+        'wrong-key': config_text(base64.b64encode(bytes([9]) * 32).decode()),
+        'bad-endpoint': config_text(private, Endpoint='vpn.example:51820:51820'),
+        'bad-psk': config_text(private, PresharedKey='not-a-key'),
+    }.get(bad_local, bad_local)
+    execute('UPDATE subscriptions SET secret=? WHERE id=?', (c.encrypt(local), SID))
+    calls = panel_reader(monkeypatch, private, config_text(private))
+    response = client.get('/api/admin/users/1/wireguard/peer', headers=owner())
+    assert response.status_code == 200
+    assert response.json()['status'] == 'peer_found'
+    assert response.json()['profile_status'] == expected
+    assert response.json()['profile_differences'] == []
+    assert not any('/downloadPeer/' in call for call in calls)
+
+
+@pytest.mark.parametrize('export_kind', ['timeout', 'malformed', 'wrong-key', 'bad-psk'])
+def test_failed_export_never_claims_matching_profile(client, monkeypatch, export_kind):
+    setup_user(client)
+    private = wgdashboard.stored_private_key('test-wg', SID)
+    local = config_text(private)
+    execute('UPDATE subscriptions SET secret=? WHERE id=?', (c.encrypt(local), SID))
+    exported = {
+        'malformed': 'PRIVATE-ENDPOINT-KEY-TOKEN',
+        'wrong-key': config_text(base64.b64encode(bytes([9]) * 32).decode()),
+        'bad-psk': config_text(private, PresharedKey='PRIVATE-ENDPOINT-KEY-TOKEN'),
+    }.get(export_kind, local)
+    panel_reader(monkeypatch, private, exported, error=export_kind == 'timeout')
+    response = client.get('/api/admin/users/1/wireguard/peer', headers=owner())
+    assert response.status_code == 200
+    assert response.json()['status'] == 'peer_found'
+    assert response.json()['profile_status'] == 'unavailable'
+    assert response.json()['profile_differences'] == []
+    assert 'PRIVATE-ENDPOINT-KEY-TOKEN' not in response.text
+    assert c.decrypt(one('SELECT secret FROM subscriptions WHERE id=?', (SID,))['secret']) == local
+
+
+@pytest.mark.parametrize('field,value', [
+    ('MTU', '-1'), ('MTU', '2147483648'),
+    ('ListenPort', '-1'), ('ListenPort', '65536'),
+    ('PersistentKeepalive', '-1'), ('PersistentKeepalive', '65536'),
+])
+@pytest.mark.parametrize('invalid_local', [True, False], ids=['both-invalid', 'invalid-export'])
+def test_out_of_range_numbers_never_report_matching_profiles(client, monkeypatch, field, value, invalid_local):
+    setup_user(client)
+    private = wgdashboard.stored_private_key('test-wg', SID)
+    invalid = config_text(private, **{field: value})
+    local = invalid if invalid_local else config_text(private)
+    execute('UPDATE subscriptions SET secret=? WHERE id=?', (c.encrypt(local), SID))
+    calls = panel_reader(monkeypatch, private, invalid)
+    response = client.get('/api/admin/users/1/wireguard/peer', headers=owner())
+    assert response.status_code == 200
+    report = response.json()
+    assert report['status'] == 'peer_found'
+    assert report['profile_status'] == ('local_invalid' if invalid_local else 'unavailable')
+    assert report['profile_differences'] == []
+    assert any('/downloadPeer/' in call for call in calls) is not invalid_local
+    assert c.decrypt(one('SELECT secret FROM subscriptions WHERE id=?', (SID,))['secret']) == local
+
+
+@pytest.mark.parametrize('changes,valid_changes', [
+    ({'MTU': '14_20'}, {}),
+    ({'ListenPort': '65_535'}, {'ListenPort': '65535'}),
+    ({'PersistentKeepalive': '2_5'}, {}),
+    ({'PresharedKey': ''}, {'PresharedKey': None}),
+    # Low padding bits differ, while Python's decoder returns the same 32 bytes.
+    ({'PublicKey': base64.b64encode(bytes([2]) * 32).decode()[:-2] + 'J='}, {}),
+    ({'PresharedKey': base64.b64encode(bytes([3]) * 32).decode()[:-2] + 'N='}, {}),
+], ids=['mtu-separator', 'port-separator', 'keepalive-separator', 'empty-psk',
+        'public-key-padding', 'psk-padding'])
+@pytest.mark.parametrize('invalid_local', [True, False], ids=['both-invalid', 'invalid-export'])
+def test_native_parser_rejected_aliases_never_match(client, monkeypatch, changes, valid_changes, invalid_local):
+    setup_user(client)
+    private = wgdashboard.stored_private_key('test-wg', SID)
+    invalid = config_text(private, **changes)
+    local = invalid if invalid_local else config_text(private, **valid_changes)
+    execute('UPDATE subscriptions SET secret=? WHERE id=?', (c.encrypt(local), SID))
+    panel_reader(monkeypatch, private, invalid)
+    response = client.get('/api/admin/users/1/wireguard/peer', headers=owner())
+    assert response.status_code == 200
+    assert response.json()['status'] == 'peer_found'
+    assert response.json()['profile_status'] == ('local_invalid' if invalid_local else 'unavailable')
+    assert response.json()['profile_differences'] == []
+    assert private not in response.text
+    assert c.decrypt(one('SELECT secret FROM subscriptions WHERE id=?', (SID,))['secret']) == local
+
+
+@pytest.mark.parametrize('mtu,port,keepalive', [
+    ('0', '0', '0'), ('2147483647', '65535', '65535'), ('+0001420', '+65535', '00025'),
+])
+def test_native_parser_numeric_boundaries_remain_valid(client, monkeypatch, mtu, port, keepalive):
+    setup_user(client)
+    private = wgdashboard.stored_private_key('test-wg', SID)
+    local = config_text(private, MTU=mtu, ListenPort=port, PersistentKeepalive=keepalive)
+    # Native Config.parse treats a zero MTU as automatic, like an omitted MTU.
+    exported = config_text(private, MTU=str(int(mtu)), ListenPort=str(int(port)),
+                           PersistentKeepalive=str(int(keepalive)))
+    if mtu == '0':
+        exported = exported.replace('MTU = 0\n', '')
+    execute('UPDATE subscriptions SET secret=? WHERE id=?', (c.encrypt(local), SID))
+    panel_reader(monkeypatch, private, exported)
+    response = client.get('/api/admin/users/1/wireguard/peer', headers=owner())
+    assert response.status_code == 200
+    assert response.json()['profile_status'] == 'matches_panel'
+    assert response.json()['profile_differences'] == []
+
+
+def test_explicit_refresh_repairs_feed_with_same_peer_key_and_entitlement(client, monkeypatch):
+    from app import providers
+    setup_user(client)
+    private = wgdashboard.stored_private_key('test-wg', SID)
+    fresh = config_text(private)
+    stale = config_text(private, PublicKey=base64.b64encode(bytes([8]) * 32).decode())
+    execute('UPDATE subscriptions SET secret=? WHERE id=?', (c.encrypt(stale), SID))
+    before = dict(one('SELECT * FROM subscriptions WHERE id=?', (SID,)))
+    key_before = dict(one('SELECT * FROM wgdashboard_keys WHERE credential_id=?', (SID,)))
+    panel_reader(monkeypatch, private, fresh)
+
+    async def forbid(_sub):
+        raise AssertionError('An existing peer must not be reprovisioned')
+
+    monkeypatch.setattr(providers, 'provision', forbid)
+    url = f'/api/flow/wireguard/subscriptions/{SID}'
+    old_feed = client.get(url).json()
+    assert old_feed['profiles'][0]['config'] == stale
+    report = client.get('/api/admin/users/1/wireguard/peer', headers=owner()).json()
+    assert report['profile_status'] == 'differs_from_panel'
+    assert client.get(url).json() == old_feed, 'Read-only diagnosis must preserve the feed'
+
+    restored = client.post('/api/admin/users/1/wireguard/restore', headers=owner())
+    assert restored.status_code == 200, restored.text
+    assert restored.json()['status'] == 'refreshed'
+    new_feed = client.get(url).json()
+    assert new_feed['profiles'][0]['config'] == fresh
+    assert new_feed['revision'] == old_feed['revision'] + 1
+    after = dict(one('SELECT * FROM subscriptions WHERE id=?', (SID,)))
+    assert {k: v for k, v in after.items() if k != 'secret'} == {
+        k: v for k, v in before.items() if k != 'secret'}
+    assert dict(one('SELECT * FROM wgdashboard_keys WHERE credential_id=?', (SID,))) == key_before
+    checked = client.get('/api/admin/users/1/wireguard/peer', headers=owner()).json()
+    assert checked['profile_status'] == 'matches_panel'
 
 
 def test_no_wireguard_is_read_only_and_nothing_is_allocated(client):
