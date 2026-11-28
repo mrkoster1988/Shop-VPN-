@@ -113,7 +113,7 @@ async def snapshot(maintenance=False):
             platform_observations = wg_client_platform.current(conn,now)
             notices_enabled=runtime_settings.read(conn,'notifications')['order_ready_enabled']
         latest_endpoint = {}
-        rows={}; accounts={}; nodes={}; unlinked={}; samples=[]; renames=[]
+        rows={}; accounts={}; nodes={}; unlinked={}; samples=[]
         for sub in subscriptions:
             sid=sub['id']
             state='expired' if sub['state']=='active' and sub['expires']<=now else sub['state']
@@ -187,11 +187,7 @@ async def snapshot(maintenance=False):
                         row.update(addresses)
                         row['endpoint_platform'] = wg_client_platform.match_peer(
                             platform_observations,peer['id'],addresses['endpoint_ip'],seen)
-                    if maintenance:
-                        name=wg_activity.display(sub['user_id'],ident,device['name'] if device else None)
-                        old=peer.get('name','')
-                        if old!=name and (not old or old.startswith(('pushok_','Pushok · '))):
-                            renames.append((panel,peer['id'],old,name))
+                    # A metadata refresh must never rewrite an existing WireGuard peer.
         async with httpx.AsyncClient(timeout=5,follow_redirects=False,trust_env=False) as client:
             if maintenance:
                 try:await wg_activity.refresh_names(client)
@@ -212,14 +208,6 @@ async def snapshot(maintenance=False):
                 'unlinked_telegram_ids':[int(tg) for tg in unlinked], 'unlinked_activity':unlinked}
         _cached=result
         _until=time.monotonic()+20
-    if renames:
-        async with httpx.AsyncClient(timeout=5,follow_redirects=False,trust_env=False) as client:
-            for panel,key,old,name in renames:
-                try:
-                    async with service.lock:
-                        await panel.rename_managed(client,key,old,name)
-                except (wgdashboard.PanelError,httpx.HTTPError,ValueError,TypeError):
-                    continue
     return result
 
 

@@ -282,3 +282,45 @@ def test_remote_peer_found_can_refresh_stale_config_without_recreating_peer(clie
     assert c.decrypt(updated['secret'])==fresh
     again=client.post('/api/admin/users/1/wireguard/restore',headers=owner())
     assert again.status_code==200 and again.json()['status']=='already_present'
+
+
+def test_background_username_refresh_never_rewrites_live_peer(client, monkeypatch):
+    import asyncio
+    from app import flow_presence, wg_activity
+
+    setup_user(client)
+    execute('UPDATE users SET telegram_id=? WHERE id=1', (123456789,))
+    private = wgdashboard.stored_private_key('test-wg', SID)
+    public = wgdashboard.WGDashboard.identity(private)
+    execute('INSERT OR REPLACE INTO wg_peer_owners VALUES (?,?,?)',
+            (1, '@new_username', int(time.time())))
+
+    async def refresh_names(_client):
+        # Nickname metadata remains available for newly created peers.
+        pass
+
+    monkeypatch.setattr(wg_activity, 'refresh_names', refresh_names)
+    monkeypatch.setattr(flow_presence, '_until', 0)
+    calls = []
+    peer_row = {'id': public, 'name': 'Pushok · old username',
+                'private_key': private, 'preshared_key': '', 'DNS': '1.1.1.1',
+                'allowed_ip': '10.0.0.2/32', 'endpoint_allowed_ip': '0.0.0.0/0',
+                'mtu': 1420, 'keepalive': 25, 'notes': '',
+                'latest_handshake': '0:00:12'}
+
+    def panel_request(request):
+        calls.append((request.method, request.url.path))
+        assert request.method == 'GET', 'Maintenance must not modify peer settings'
+        assert request.url.path.endswith('/getWireguardConfigurationInfo')
+        return httpx.Response(200, json={'status': True, 'data': {
+            'configurationInfo': {'Name': 'wg0', 'Protocol': 'wg'},
+            'configurationPeers': [peer_row], 'configurationRestrictedPeers': []}})
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(flow_presence.httpx, 'AsyncClient', lambda **kwargs:
+        real_client(transport=httpx.MockTransport(panel_request), **kwargs))
+    report = asyncio.run(flow_presence.snapshot(maintenance=True))
+    assert calls == [('GET', '/api/getWireguardConfigurationInfo')]
+    assert report['unlinked_activity']['123456789']['online'] is True
+    assert one('SELECT label FROM wg_peer_owners WHERE user_id=1')['label'] == '@new_username'
+    assert one('SELECT state FROM subscriptions WHERE id=?', (SID,))['state'] == 'active'
