@@ -34,6 +34,30 @@ function protocolCatalog() {
   ]};
 }
 
+test('peer profile differences show only known field labels and the explicit refresh path', () => {
+  const page=adminPage();
+  const result={status:'peer_found',profile_status:'differs_from_panel',
+    profile_differences:['endpoint','server_public_key','preshared_key','DO-NOT-LEAK','__proto__','toString'],
+    endpoint:'PRIVATE-HOST:51820',private_key:'PRIVATE-KEY'};
+  const summary=page.run('peerProfileSummary('+JSON.stringify(result)+')');
+  assert.match(summary,/отличается от текущего экспорта/);
+  assert.match(summary,/Обновите конфигурацию, затем подписку в Flow/);
+  assert.match(summary,/адрес подключения, публичный ключ сервера, общий ключ PSK/);
+  assert.doesNotMatch(summary,/PRIVATE|DO-NOT-LEAK|__proto__|toString|function/);
+});
+
+test('peer profile comparison never presents failed or skipped checks as matching', () => {
+  const page=adminPage();
+  const summary=status=>page.run('peerProfileSummary('+JSON.stringify({
+    status:'peer_found',profile_status:status,profile_differences:[]})+')');
+  assert.match(summary('unavailable'),/Совпадение конфигураций не подтверждено/);
+  assert.match(summary('local_invalid'),/не прошёл проверку/);
+  assert.match(summary('local_key_mismatch'),/не совпадает с сохранённым ключом пира/);
+  assert.match(summary('matches_panel'),/Handshake и прохождение трафика этой проверкой не подтверждаются/);
+  for(const status of ['not_checked','unknown','__proto__','toString'])assert.equal(summary(status),'');
+  assert.equal(page.run("peerProfileSummary({status:'peer_missing',profile_status:'matches_panel'})"),'');
+});
+
 test('protocol catalog filters implemented and planned adapters without purchase actions', async () => {
   const page=adminPage(), request=page.run("role='owner'; refreshProtocols()");
   assert.equal(page.requests[0], '/shop/api/admin/protocols');

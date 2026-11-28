@@ -1445,6 +1445,29 @@ const PEER_STATUS_LABELS = {
   panel_api_missing:'API WGDashboard не найден (404/405). Проверьте адрес панели без /api.',
   panel_timeout:'WGDashboard не ответил за время проверки. Проверьте соединение Shop → панель.'
 };
+const PEER_PROFILE_LABELS = {
+  matches_panel:'Сохранённый профиль Flow совпадает с текущим экспортом WGDashboard. Handshake и прохождение трафика этой проверкой не подтверждаются.',
+  differs_from_panel:'Сохранённый профиль Flow отличается от текущего экспорта WGDashboard. Обновите конфигурацию, затем подписку в Flow.',
+  local_missing:'Сохранённый профиль для Flow отсутствует.',
+  local_invalid:'Сохранённый профиль для Flow не прошёл проверку. Требуется обновление конфигурации.',
+  local_key_mismatch:'Ключ в выдаваемом профиле не совпадает с сохранённым ключом пира. Требуется обновление конфигурации.',
+  unavailable:'Профиль WGDashboard не удалось получить и проверить. Совпадение конфигураций не подтверждено.'
+};
+const PEER_PROFILE_FIELDS = {
+  address:'адрес клиента', dns:'DNS', mtu:'MTU', listen_port:'локальный порт',
+  server_public_key:'публичный ключ сервера', preshared_key:'общий ключ PSK',
+  allowed_ips:'маршруты AllowedIPs', endpoint:'адрес подключения',
+  persistent_keepalive:'интервал keepalive'
+};
+function peerProfileSummary(result){
+  if(result.status!=='peer_found' || !Object.hasOwn(PEER_PROFILE_LABELS,result.profile_status))return '';
+  const summary=PEER_PROFILE_LABELS[result.profile_status];
+  const fields=Array.isArray(result.profile_differences)
+    ? result.profile_differences.filter(field=>typeof field==='string' && Object.hasOwn(PEER_PROFILE_FIELDS,field))
+        .map(field=>PEER_PROFILE_FIELDS[field]) : [];
+  return ' '+summary+(result.profile_status==='differs_from_panel' && fields.length
+    ? ' Различаются: '+fields.join(', ')+'.' : '');
+}
 $('user-subscriptions').onclick = async event => {
   const check=event.target.closest('[data-peer-check]');
   const retry=event.target.closest('[data-peer-retry]');
@@ -1471,7 +1494,7 @@ $('user-subscriptions').onclick = async event => {
         panel.textContent=result.status==='already_present'
           ? 'Пир уже существует на закреплённом сервере. Данные не менялись.'
           : result.status==='refreshed'
-            ? 'Пир уже работал. Конфигурация обновлена с WGDashboard; обновите подписку в Flow.'
+            ? 'Пир существует. Конфигурация обновлена с WGDashboard; обновите подписку в Flow.'
             : 'Пир восстановлен с прежним ключом. Теперь обновите подписку в Pushok Flow.';
       } else {
         const state=PEER_STATUS_LABELS[result.status]||'Статус не определён.';
@@ -1479,7 +1502,7 @@ $('user-subscriptions').onclick = async event => {
         const attempts=result.grant?.state==='pending'
           ? ' В очереди, попыток: '+result.grant.attempts+'.':'';
         const error=result.grant?.state==='pending' && result.grant.error ? ' Ошибка выдачи: '+result.grant.error+'.':'';
-        panel.textContent=state+extra+attempts+error;
+        panel.textContent=state+peerProfileSummary(result)+extra+attempts+error;
         if(result.can_retry || result.can_restore){
           const action=document.createElement('button');
           action.type='button';
