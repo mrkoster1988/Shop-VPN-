@@ -70,7 +70,9 @@ async def provision(sub):
             elif profile.get('schedule_expiry'):
                 await adapter.ensure_expiration(
                     client, private_key, sub['expires'], row['id'], sub['id'])
-            return await adapter.download_config(client, private_key)
+            raw_config = await adapter.download_config(client, private_key)
+            from . import wg_fleet
+            return wg_fleet.render_config(row['id'], raw_config)
     async with httpx.AsyncClient(timeout=25, follow_redirects=False, trust_env=False) as client:
         r = await client.put(profile['url'] + '/peers/' + sub['id'],
                              headers={'Authorization': 'Bearer ' + profile['token']},

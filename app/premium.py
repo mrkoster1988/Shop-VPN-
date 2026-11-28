@@ -103,6 +103,8 @@ async def apply(job, sub):
             raise HTTPException(409,'vpn_policy_changed')
         conn.executemany('UPDATE devices SET secret=?,expires=?,error=NULL WHERE id=? AND state=\'active\'', extra)
         conn.execute("DELETE FROM admin_subscription_revocations WHERE subscription_id=?",(sub['id'],))
+        from . import wg_fleet
+        wg_fleet.new_access(conn,sub['id'])
         conn.execute("""UPDATE flow_auto_grants SET state='active',target_expires=? WHERE subscription_id=?
             AND state IN ('active','expired')""",(job['target'],sub['id']))
         conn.execute('INSERT OR REPLACE INTO vpn_renewal_choices VALUES(?,?,?,?,?,?)',

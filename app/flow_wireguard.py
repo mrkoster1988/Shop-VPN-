@@ -69,6 +69,10 @@ def _feed_locked(conn, user_id: int, subscription_id: str) -> dict:
             'protocol': 'wireguard',
             'config': config,
         }]
+        from . import wg_fleet
+        profiles = wg_fleet.feed_profiles(conn, subscription_id, profiles, int(row['expires']))
+        if wg_fleet.revocation_requested(conn, subscription_id):
+            state, profiles = 'revoked', []
     else:
         state = 'revoked' if row['state'] == 'revoked' else 'expired'
         profiles = []

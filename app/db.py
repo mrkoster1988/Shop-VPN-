@@ -555,6 +555,8 @@ def init_db():
         from . import vpn_plans
         vpn_plans.install(conn)
         vpn_lifecycle.install(conn)
+        from . import wg_fleet
+        wg_fleet.create_schema(conn)
 
 
 def reserve_deleted_user_id(conn, user_id):

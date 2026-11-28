@@ -32,6 +32,33 @@ def check(condition,message):
     if not condition:raise StageError(message)
 
 
+# A reviewed additive migration, never a prefix/wildcard exemption. Existing
+# tables (including sqlite_sequence) still pass the historical digest checks.
+WG_FLEET_EMPTY_TABLES=frozenset({
+    'wg_fleet_audit','wg_fleet_dns_records','wg_fleet_failures','wg_fleet_health',
+    'wg_fleet_moves','wg_fleet_nodes','wg_fleet_operations','wg_fleet_placements',
+    'wg_fleet_probe_tokens','wg_fleet_probes','wg_fleet_requests','wg_fleet_revocations',
+    'sqlite_sequence',
+})
+WG_FLEET_NEW_TABLES=WG_FLEET_EMPTY_TABLES|{'wg_fleet_policy'}
+WG_FLEET_POLICY_COLUMNS=['id','enabled','standby_count','version','updated']
+# Same row serialization as staging_data.snapshot(), so every stored policy
+# value is checked without adding a new privileged container-side query.
+WG_FLEET_INITIAL_POLICY_DIGEST=hashlib.sha256(json.dumps(
+    [json.dumps((1,0,1,1,0),ensure_ascii=True)],sort_keys=True).encode()).hexdigest()
+
+
+def check_new_wg_fleet_tables(snapshot,added):
+    for table in sorted(set(added)&WG_FLEET_EMPTY_TABLES):
+        check(snapshot['counts'].get(table)==0,
+              'Unexpected initial WG fleet data during migration: '+table)
+    if 'wg_fleet_policy' in added:
+        check(snapshot['counts'].get('wg_fleet_policy')==1 and
+              snapshot.get('table_columns',{}).get('wg_fleet_policy')==WG_FLEET_POLICY_COLUMNS and
+              snapshot['table_digests'].get('wg_fleet_policy')==WG_FLEET_INITIAL_POLICY_DIGEST,
+              'Unexpected initial WG fleet policy during migration')
+
+
 def version(source):
     tree=ast.parse((source/'scripts/install.py').read_text())
     for node in tree.body:
@@ -166,7 +193,9 @@ class Staging:
                      'flow_wireguard_versions','flow_wireguard_links',
                      'flow_wireguard_device_versions','flow_wireguard_device_links',
                      'flow_auto_policy','flow_auto_grants','flow_guest_trials','flow_owner_extensions','flow_bridge_identities','flow_bridge_devices','flow_bridge_nonces','staff_role_assignments','staff_role_policies','shop_runtime_settings','staff_permission_limits','shop_payment_policy','shop_finance_entries','shop_finance_actions','server_routing_policy','server_routing_nodes','server_probe_history','shop_id_policy','shop_id_links','shop_id_requests','shop_id_sessions','mtproxy_web_requests'}
+        allowed_new|=WG_FLEET_NEW_TABLES
         added=sorted(set(new)-set(old))
+        check_new_wg_fleet_tables(current,added)
         for table in ('cabinet_vpn_limits','cabinet_vpn_notices','cabinet_vpn_invoices','vpn_access_changes','vpn_renewal_choices','wg_client_platform','wg_observed_peers','wg_peer_owners','wg_daily_usage'):
             check(table not in added or current['counts'].get(table)==0,
                   'Unexpected VPN change or notification during migration')
@@ -213,6 +242,19 @@ class Staging:
             check(current['counts'].get(table,0)==(0 if cleared else expected['counts'].get(table,0)),'Unexpected SSO session or request during migration')
         if cleared:check(current['db_uid']==10001 and current['db_gid']==10001 and current['db_mode']==0o600 and current['directory_mode']==0o700,'Restored file permissions mismatch')
         return current
+    def compare_restored(self,expected,restored):
+        old=expected.get('table_digests',{});new=restored.get('table_digests',{})
+        changed=[name for name in set(old)&set(new) if old[name]!=new[name]]
+        missing=sorted(set(old)-set(new));added=sorted(set(new)-set(old))
+        allowed_new={'admin_audit','password_reset_tokens','staff_sessions','staff_users',
+                     'store_settings','support_cases','support_messages','partner_events'}|WG_FLEET_NEW_TABLES
+        check_new_wg_fleet_tables(restored,added)
+        check(not changed and not missing and set(added)<=allowed_new and restored['counts']['sessions']==0,
+              'Backup restore mismatch: changed='+','.join(sorted(changed))+
+              '; missing='+','.join(missing)+'; added='+','.join(added))
+        for table in ('shop_id_requests','shop_id_sessions','mtproxy_web_requests'):
+            check(restored['counts'].get(table,0)==0,'Restored a transient Pushok ID session')
+        return restored
     def start_proxy(self,port,certificate,key):
         class Proxy(BaseHTTPRequestHandler):
             def log_message(self,*args):pass
@@ -310,16 +352,7 @@ class Staging:
         self.json('verify backup',base+['verify','/tmp/final.pvb'],env=env)
         self.json('restore backup',base+['restore','/tmp/final.pvb','--target','/tmp/final-restore'],env=env)
         restored=self.data('snapshot',database='/tmp/final-restore/shop.db')
-        old=managed.get('table_digests',{});new=restored.get('table_digests',{})
-        changed=[name for name in set(old)&set(new) if old[name]!=new[name]]
-        missing=sorted(set(old)-set(new));added=sorted(set(new)-set(old))
-        allowed_new={'admin_audit','password_reset_tokens','staff_sessions','staff_users',
-                     'store_settings','support_cases','support_messages','partner_events'}
-        check(not changed and not missing and set(added)<=allowed_new and restored['counts']['sessions']==0,
-              'Backup restore mismatch: changed='+','.join(sorted(changed))+
-              '; missing='+','.join(missing)+'; added='+','.join(added))
-        for table in ('shop_id_requests','shop_id_sessions','mtproxy_web_requests'):
-            check(restored['counts'].get(table,0)==0,'Restored a transient Pushok ID session')
+        self.compare_restored(managed,restored)
         restored_settings=self.data('settings',database='/tmp/final-restore/shop.db')
         check(restored_settings=={'support_text':'Disposable CI fixture','terms_configured':False},
               'Store settings were not preserved by backup restore')

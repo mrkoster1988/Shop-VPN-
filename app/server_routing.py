@@ -121,6 +121,10 @@ def order_key(row,p):
 
 
 def candidates(conn,protocol,now=None):
+    if protocol == 'wg':
+        from . import wg_fleet
+        if wg_fleet.enabled(conn):
+            return wg_fleet.candidates(conn,now=now,guest=None)
     now=int(time.time()) if now is None else now
     p=policy(conn)
     eligible=[r for r in rows(conn,protocol,now) if blocked_reason(r,p,now) is None]

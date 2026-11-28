@@ -53,7 +53,7 @@ RULES={
                    ('PUT',r'/(?:referrals|trial|coupons/[^/]+)')],
     'starter': [('GET',r'/flow/wireguard/auto(?:/batch)?'),('PUT',r'/flow/wireguard/auto'),
                 ('POST',r'/flow/wireguard/auto/batch')],
-    'servers_read': [('GET',r'/(?:servers|protocols|server-routing)'),('GET',r'/server-routing/history/[^/]+')],
+    'servers_read': [('GET',r'/(?:servers|protocols|server-routing|wg-fleet)'),('GET',r'/server-routing/history/[^/]+')],
     'server_routing': [('PUT',r'/server-routing/policy'),('PUT',r'/server-routing/nodes/[^/]+')],
     'moderation': [('GET',r'/moderation/requests'),('PUT',r'/moderation/requests/[^/]+')],
     'support': [('GET',r'/support/tickets(?:/[^/]+)?'),('POST',r'/support/tickets/[^/]+/messages'),
