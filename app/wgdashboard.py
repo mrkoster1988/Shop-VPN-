@@ -143,29 +143,6 @@ class WGDashboard:
             raise PanelError('WGDashboardPeerWriteNotConfirmed')
         return public_key
 
-    async def rename_managed(self, client, key, expected_name, name):
-        """WGDashboard 4.x requires the complete peer settings even for a label edit."""
-        import base64
-        from urllib.parse import quote
-        current=await self.peer(client,key)
-        if not current or current[0]!='configurationPeers':return
-        row=current[1]
-        if row.get('name')!=expected_name or expected_name==name:return
-        fields=('id','private_key','preshared_key','DNS','allowed_ip','endpoint_allowed_ip','mtu','keepalive','notes')
-        if any(k not in row for k in fields):return
-        data={k:row[k] for k in fields}
-        for k in ('private_key','preshared_key'):
-            val=data[k]
-            if not isinstance(val,str) or (val and (len(base64.b64decode(val,validate=True))!=32)):
-                return
-        if data['private_key'] and self.identity(data['private_key'])!=key:return
-        for k in ('mtu','keepalive'):
-            data[k]=int(data[k])
-        data['name']=name
-        await self.request(client,'POST','updatePeerSettings/'+quote(self.profile['configuration'],safe=''),json=data)
-        confirmed=await self.peer(client,key)
-        if not confirmed or confirmed[1].get('name')!=name:raise PanelError('PeerNameUnconfirmed')
-
     async def revoke_peer(self, client, public_key):
         """Удаляет только выбранный peer и проверяет отсутствие после записи."""
         import base64
