@@ -1,7 +1,9 @@
 import importlib.util
+import copy
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import pytest
@@ -193,3 +195,163 @@ def test_upgrade_keeps_new_vpn_tables_empty(monkeypatch,table):
     snapshot['counts'][table]=1
     with pytest.raises(s.StageError,match='Unexpected VPN'):
         stage.compare(baseline,cleared=False)
+
+
+@pytest.fixture
+def fleet_migration_snapshot(tmp_path,monkeypatch):
+    """Real legacy-shaped rows plus the production additive fleet migration."""
+    from app import wg_fleet
+    spec=importlib.util.spec_from_file_location('fleet_staging_data',Path(__file__).with_name('staging_data.py'))
+    data=importlib.util.module_from_spec(spec);spec.loader.exec_module(data)
+    database=tmp_path/'fleet-migration.db'
+    with sqlite3.connect(database) as conn:
+        conn.executescript('''
+            CREATE TABLE users(id INTEGER PRIMARY KEY,email TEXT NOT NULL,password TEXT NOT NULL);
+            CREATE TABLE servers(id TEXT PRIMARY KEY);
+            CREATE TABLE subscriptions(id TEXT PRIMARY KEY);
+            CREATE TABLE devices(id TEXT PRIMARY KEY);
+            CREATE TABLE sessions(token TEXT PRIMARY KEY);
+            CREATE TABLE tickets(token TEXT PRIMARY KEY);
+            INSERT INTO users VALUES(1,'fixture@example.invalid','fixture-password-hash');
+            INSERT INTO servers VALUES('existing-node');
+            INSERT INTO subscriptions VALUES('existing-subscription');
+            INSERT INTO devices VALUES('existing-device');
+            INSERT INTO sessions VALUES('fixture-session');
+            INSERT INTO tickets VALUES('fixture-ticket');
+        ''')
+    before=data.snapshot(str(database))
+    with sqlite3.connect(database) as conn:
+        wg_fleet.create_schema(conn)
+    stage=s.Staging(type('Args',(),{})())
+    monkeypatch.setattr(stage,'snapshot',lambda:data.snapshot(str(database)))
+    def projected(command,payload=None):
+        assert command=='snapshot_projected'
+        return data.snapshot(str(database),projected_columns=payload['columns'])
+    monkeypatch.setattr(stage,'data',projected)
+    return stage,before,database,data
+
+
+def compare_fleet_snapshot(stage,before,current,monkeypatch,restore):
+    if restore:
+        restored=copy.deepcopy(current)
+        restored['counts'].update(sessions=0,tickets=0)
+        return stage.compare_restored(before,restored)
+    monkeypatch.setattr(stage,'snapshot',lambda:current)
+    return stage.compare(before,cleared=False)
+
+
+@pytest.mark.parametrize('restore',[False,True])
+def test_fleet_migration_allows_only_reviewed_empty_tables_and_exact_disabled_policy(
+        fleet_migration_snapshot,monkeypatch,restore):
+    stage,before,database,data=fleet_migration_snapshot
+    current=data.snapshot(str(database))
+    assert set(current['table_digests'])-set(before['table_digests'])=={
+        'wg_fleet_audit','wg_fleet_dns_records','wg_fleet_failures','wg_fleet_health',
+        'wg_fleet_moves','wg_fleet_nodes','wg_fleet_operations','wg_fleet_placements',
+        'wg_fleet_policy','wg_fleet_probe_tokens','wg_fleet_probes','wg_fleet_requests',
+        'wg_fleet_revocations','sqlite_sequence',
+    }
+    with sqlite3.connect(database) as conn:
+        assert conn.execute('SELECT * FROM wg_fleet_policy').fetchall()==[(1,0,1,1,0)]
+        assert conn.execute('SELECT * FROM sqlite_sequence').fetchall()==[]
+    compare_fleet_snapshot(stage,before,current,monkeypatch,restore)
+
+
+@pytest.mark.parametrize('restore',[False,True])
+@pytest.mark.parametrize('table',sorted(s.WG_FLEET_EMPTY_TABLES))
+def test_new_fleet_tables_and_sequence_must_stay_empty(
+        fleet_migration_snapshot,monkeypatch,restore,table):
+    stage,before,database,data=fleet_migration_snapshot
+    current=data.snapshot(str(database))
+    current['counts'][table]=1
+    with pytest.raises(s.StageError,match='Unexpected initial WG fleet data.*'+table):
+        compare_fleet_snapshot(stage,before,current,monkeypatch,restore)
+
+
+@pytest.mark.parametrize('restore',[False,True])
+@pytest.mark.parametrize('field,value',[('enabled',1),('version',2),('updated',1)])
+def test_new_fleet_policy_rejects_nondefault_values(
+        fleet_migration_snapshot,monkeypatch,restore,field,value):
+    stage,before,database,data=fleet_migration_snapshot
+    with sqlite3.connect(database) as conn:
+        conn.execute('UPDATE wg_fleet_policy SET '+field+'=?',(value,))
+    current=data.snapshot(str(database))
+    assert current['counts']['wg_fleet_policy']==1
+    with pytest.raises(s.StageError,match='Unexpected initial WG fleet policy'):
+        compare_fleet_snapshot(stage,before,current,monkeypatch,restore)
+
+
+@pytest.mark.parametrize('restore',[False,True])
+@pytest.mark.parametrize('mutation',['missing_row','extra_row','wrong_columns'])
+def test_new_fleet_policy_requires_one_row_with_the_exact_schema(
+        fleet_migration_snapshot,monkeypatch,restore,mutation):
+    stage,before,database,data=fleet_migration_snapshot
+    current=data.snapshot(str(database))
+    if mutation=='missing_row':current['counts']['wg_fleet_policy']=0
+    elif mutation=='extra_row':current['counts']['wg_fleet_policy']=2
+    else:current['table_columns']['wg_fleet_policy']=['id','enabled','reserve','version','updated']
+    with pytest.raises(s.StageError,match='Unexpected initial WG fleet policy'):
+        compare_fleet_snapshot(stage,before,current,monkeypatch,restore)
+
+
+@pytest.mark.parametrize('restore',[False,True])
+@pytest.mark.parametrize('table',['wg_fleet_unreviewed','unreviewed_table'])
+def test_new_fleet_allowlist_never_accepts_unknown_tables(
+        fleet_migration_snapshot,monkeypatch,restore,table):
+    stage,before,database,data=fleet_migration_snapshot
+    with sqlite3.connect(database) as conn:
+        conn.execute('CREATE TABLE '+table+'(id TEXT PRIMARY KEY)')
+    current=data.snapshot(str(database))
+    with pytest.raises(s.StageError,match='added=.*'+table):
+        compare_fleet_snapshot(stage,before,current,monkeypatch,restore)
+
+
+@pytest.mark.parametrize('restore',[False,True])
+@pytest.mark.parametrize('table',['wg_fleet_audit','wg_fleet_policy','sqlite_sequence'])
+def test_existing_fleet_rows_and_sequence_are_preserved_instead_of_reset(
+        fleet_migration_snapshot,monkeypatch,restore,table):
+    stage,_,database,data=fleet_migration_snapshot
+    with sqlite3.connect(database) as conn:
+        conn.execute("INSERT INTO wg_fleet_audit VALUES(1,'fixture','created','existing-node',1)")
+        conn.execute('UPDATE wg_fleet_policy SET enabled=1,version=3,updated=123')
+        conn.execute("INSERT INTO wg_fleet_nodes(server_id,created) VALUES('existing-node',1)")
+    before=data.snapshot(str(database))
+    compare_fleet_snapshot(stage,before,before,monkeypatch,restore)
+    with sqlite3.connect(database) as conn:
+        if table=='wg_fleet_audit':conn.execute("UPDATE wg_fleet_audit SET action='changed'")
+        elif table=='wg_fleet_policy':conn.execute('UPDATE wg_fleet_policy SET enabled=0')
+        else:conn.execute("UPDATE sqlite_sequence SET seq=2 WHERE name='wg_fleet_nodes'")
+    current=data.snapshot(str(database))
+    with pytest.raises(s.StageError,match='changed='+table):
+        compare_fleet_snapshot(stage,before,current,monkeypatch,restore)
+    current['table_digests'].pop(table)
+    with pytest.raises(s.StageError,match='missing='+table):
+        compare_fleet_snapshot(stage,before,current,monkeypatch,restore)
+
+
+def test_fleet_allowlist_still_projects_and_protects_historical_columns(fleet_migration_snapshot):
+    stage,before,database,data=fleet_migration_snapshot
+    with sqlite3.connect(database) as conn:
+        conn.execute("ALTER TABLE users ADD COLUMN label TEXT NOT NULL DEFAULT 'legacy'")
+    assert stage.compare(before,cleared=False)['table_digests']['users']!=before['table_digests']['users']
+    with sqlite3.connect(database) as conn:
+        conn.execute("UPDATE users SET email='changed@example.invalid' WHERE id=1")
+    with pytest.raises(s.StageError,match='changed=users'):
+        stage.compare(before,cleared=False)
+    with sqlite3.connect(database) as conn:
+        conn.execute('ALTER TABLE users RENAME COLUMN email TO replaced')
+    with pytest.raises(ValueError,match='Historical staging schema is missing columns'):
+        stage.compare(before,cleared=False)
+
+
+def test_restore_fleet_allowlist_keeps_session_cleanup_and_business_digest_checks(
+        fleet_migration_snapshot):
+    stage,before,database,data=fleet_migration_snapshot
+    current=data.snapshot(str(database))
+    with pytest.raises(s.StageError,match='Backup restore mismatch'):
+        stage.compare_restored(before,current)
+    with sqlite3.connect(database) as conn:
+        conn.execute('DELETE FROM sessions')
+        conn.execute("UPDATE users SET email='changed@example.invalid' WHERE id=1")
+    with pytest.raises(s.StageError,match='changed=users'):
+        stage.compare_restored(before,data.snapshot(str(database)))

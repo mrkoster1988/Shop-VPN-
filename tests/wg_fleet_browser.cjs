@@ -113,6 +113,14 @@ async function run(browser,width){
   await page.locator('#wg-fleet-section').waitFor({state:'visible'});
   await count(page,'.wg-fleet-card',state.nodes.length);
  }
+ async function home(){
+  // Mobile hides the header button; its visible Home action is in the bottom navigation.
+  const mobile=page.locator('#management-mobile-nav [data-admin-target="management-overview"]');
+  const control=await mobile.isVisible()?mobile:page.locator('#management-home');
+  await control.click();
+  await page.locator('#management-overview').waitFor({state:'visible'});
+  assert.equal(await page.locator('#wg-fleet-section').isVisible(),false);
+ }
  async function enrollment(){
   await page.locator('[data-node-id="server-1"]').getByRole('button',{name:'Подключить проверку трафика',exact:true}).click();
   const secret=page.getByLabel('Секрет проверки',{exact:true});await secret.waitFor({state:'visible'});
@@ -191,7 +199,7 @@ async function run(browser,width){
   await page.getByRole('button',{name:'Закрыть реквизиты',exact:true}).click();
   assert.equal(await secret.evaluate(input=>input.value),'');await secret.dispose();
   assert.equal(await page.getByLabel('Секрет проверки',{exact:true}).count(),0);
-  secret=await enrollment();await page.locator('#management-home').click();
+  secret=await enrollment();await home();
   assert.equal(await secret.evaluate(input=>input.value),'');await secret.dispose();
   await count(page,'.wg-fleet-card',0);
 
@@ -203,6 +211,7 @@ async function run(browser,width){
   assert.match(await page.locator('#wg-fleet-section').textContent(),/Просмотр серверов/);
   assert.equal(writes.length,writesBefore);
   await page.screenshot({path:path.join(output,'wg-fleet-'+width+'-readonly.png'),fullPage:true});
+  await home();await count(page,'.wg-fleet-card',0);
 
   await role('owner');await open();secret=await enrollment();await page.locator('#exit').click();
   assert.equal(await secret.evaluate(input=>input.value),'');await secret.dispose();
