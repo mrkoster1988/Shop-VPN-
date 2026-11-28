@@ -942,11 +942,14 @@ test('ready WireGuard card shows Flow, manual configuration and management separ
  p.state.customer.subscriptions[0].protocol='wg';p.state.customer.subscriptions[0].primary_key_state='active';
  await p.run('refreshMe()');
  const markup=p.element('subscriptions').innerHTML;
- assert.match(markup,/class="small subscription-flow" data-link="sub-a"/);
+ assert.match(markup,/class="small subscription-flow" data-flow-account="sub-a"/);
+ assert.match(markup,/data-link="sub-a">Ссылка для ручного импорта/);
+ assert.ok(markup.indexOf('data-flow-account') < markup.indexOf('<details'));
+ assert.ok(markup.indexOf('data-link="sub-a"') > markup.indexOf('<details'));
  assert.match(markup,/data-config="sub-a"/);
  assert.match(markup,/<details class="subscription-options" data-subscription-options="sub-a"/);
  p.state.customer.subscriptions[0].state='pending';await p.run('refreshMe()');
- assert.doesNotMatch(p.element('subscriptions').innerHTML,/data-link="sub-a"|data-config="sub-a"/);
+ assert.doesNotMatch(p.element('subscriptions').innerHTML,/data-flow-account="sub-a"|data-link="sub-a"|data-config="sub-a"/);
 });
 
 test('MTProxy login gives feedback inside the dialog and permits retry after a slow response',async()=>{
@@ -996,4 +999,27 @@ test('storefront selects an active Flow sale, hides disabled protocols and handl
  assert.match(p.element('plan-list').innerHTML,/Связаться с поддержкой/);
  items[0].available=true;
  assert.equal(p.run('defaultConnection()'),'xui');
+});
+
+
+test('Flow account entry launches app directly without fetching or disclosing a bearer link',async()=>{
+ for(const options of [{},{telegram:true}]){
+  const p=await customerPage(options);
+  const sub=p.state.customer.subscriptions[0];sub.protocol='wg';sub.primary_key_state='active';
+  await p.run('refreshMe()');
+  const before=p.calls.length;
+  const button={dataset:{flowAccount:'sub-a'}};
+  await p.element('subscriptions').onclick({target:{closest:s=>s==='[data-flow-account]'?button:null}});
+  assert.deepEqual(p.state.opened,[['pushokflow://subscription']]);
+  assert.equal(p.calls.length,before);
+  assert.equal(p.element('link-dialog').open,false);
+  assert.equal(p.element('link-value').value,'');
+  assert.equal(p.state.telegramOpened.length,0);
+  for(const change of [{state:'pending'},{state:'revoked'},{expires:0},{protocol:'xui'},{primary_key_state:'rotating'}]){
+    const previous={...sub};Object.assign(sub,change);
+    p.run("openFlowAccount('sub-a')");Object.assign(sub,previous);
+  }
+  p.run("openFlowAccount('missing')");
+  assert.equal(p.state.opened.length,1);
+ }
 });

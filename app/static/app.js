@@ -267,8 +267,9 @@ function renderAccount() {
     const accessLabel=active?'Активно':s.state==='pending'?'Готовится':s.state==='revoked'?'Отозвано':'Истекло';
     const stateClass=active?'active':s.state==='pending'?'pending':'canceled';
     const configure=primaryReady?'<button type="button" class="small" data-config="'+esc(s.id)+'">Настроить подключение ↗</button>':'';
-    const flow=s.protocol==='wg'&&primaryReady?'<button type="button" class="small subscription-flow" data-link="'+esc(s.id)+'">Открыть в Pushok Flow</button>':'';
+    const flow=s.protocol==='wg'&&primaryReady?'<button type="button" class="small subscription-flow" data-flow-account="'+esc(s.id)+'">Открыть в Pushok Flow</button><p class="subscription-kind">В приложении нажмите «Подключить»: личный профиль загрузится после входа.</p>':'';
     const options=[
+      s.protocol==='wg'&&primaryReady?'<button type="button" class="text-link" data-link="'+esc(s.id)+'">Ссылка для ручного импорта</button>':'',
       primaryReady&&s.access_source!=='trial'?'<button type="button" class="text-link" data-primary-rotate="'+esc(s.id)+'">Сменить основной ключ</button>':'',
       s.protocol==='xui'&&s.state!=='pending'&&s.access_source!=='trial'?'<button type="button" class="text-link" data-link="'+esc(s.id)+'">Ссылка подписки</button>':'',
       active&&s.access_source!=='trial'&&me.referrals?.balance_days>0?'<button type="button" class="text-link" data-referral="'+esc(s.id)+'">Потратить бонус</button>':'',
@@ -639,6 +640,8 @@ $('subscriptions').onclick = async event => {
     $('plans').scrollIntoView({behavior:'smooth',block:'start'});return;
   }
   const bonus=event.target.closest('[data-referral]');if(bonus){bonus.disabled=true;try {await redeemReferral(bonus.dataset.referral);}catch(e){toast(e.message);}finally{bonus.disabled=false;}return;}
+  const flowAccount=event.target.closest('[data-flow-account]');
+  if(flowAccount){openFlowAccount(flowAccount.dataset.flowAccount);return;}
   const link=event.target.closest('[data-link]');
   if(link){await openLink(link.dataset.link).catch(e=>toast(e.message));return;}
   const rotate=event.target.closest('[data-primary-rotate]');
@@ -744,6 +747,17 @@ async function beginTrial() {
   $('terms-text').textContent=catalog.terms;$('accept-terms').checked=false;$('accept-terms').required=true;$('checkout-submit').textContent='Получить пробник →';show('checkout-dialog');
 }
 $('trial-start').onclick=()=>beginTrial().catch(e=>toast(e.message));
+// The existing Android scheme/host opens Flow even without an import query.
+ // No personal URL, token or identity is sent. The native account flow obtains
+ // the profile only after the user's own login and connection request.
+function openFlowAccount(sid) {
+  const sub=me?.subscriptions.find(s=>s.id===sid);
+  if (!sub || sub.protocol!=='wg' || sub.state!=='active' ||
+      !Number.isFinite(sub.expires) || sub.expires*1000<=Date.now() ||
+      (sub.primary_key_state || 'active')!=='active') return;
+  toast('Откройте Pushok Flow и нажмите «Подключить». Если приложение не открылось, запустите его вручную.');
+  try { location.assign('pushokflow://subscription'); } catch (_) { /* A webview may block app links. */ }
+}
 function clearFlowLink() {
   flowLaunchUrl=null;
   $('flow-open').disabled=true;
