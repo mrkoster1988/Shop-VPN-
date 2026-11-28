@@ -43,7 +43,7 @@ logging.getLogger('httpcore').setLevel(logging.WARNING)
 STATIC = Path(__file__).parent / 'static'
 # Content fingerprints prevent older cached CSS/JS from surviving a deployment.
 ASSET_VERSIONS = {name: hashlib.sha256((STATIC / name).read_bytes()).hexdigest()[:16]
-                  for name in ('style.css', 'storefront.css', 'admin.js', 'app.js', 'flow-links.js')}
+                  for name in ('style.css', 'storefront.css', 'admin.js', 'app.js', 'flow-links.js', 'wg-fleet.js', 'wg-fleet.css')}
 
 @asynccontextmanager
 async def lifespan(app):
@@ -66,6 +66,9 @@ async def lifespan(app):
     tasks = []
     if os.getenv('BACKGROUND_TASKS', 'true') == 'true' and os.getenv('MAINTENANCE_MODE')!='true':
         from . import flow_presence
+        from . import wg_fleet
+        tasks.append(asyncio.create_task(wg_fleet.worker()))
+        tasks.append(asyncio.create_task(wg_fleet.dns_worker()))
         tasks.append(asyncio.create_task(flow_presence.worker()))
         tasks.append(asyncio.create_task(service.worker()))
         tasks.append(asyncio.create_task(updates.worker()))
@@ -80,11 +83,13 @@ async def lifespan(app):
             await task
 
 app = FastAPI(title='Pushok VPN', lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+from . import wg_fleet_management
+app.include_router(wg_fleet_management.router)
 @app.exception_handler(RequestValidationError)
 async def safe_validation(request, exc):
     if request.url.path.removeprefix(c.BASE_PATH).startswith('/api/partner/'):
         return JSONResponse({'detail':'Проверьте подпись и данные события партнёра.'},status_code=422)
-    if request.url.path.removeprefix(c.BASE_PATH).startswith('/api/admin/servers'):
+    if request.url.path.removeprefix(c.BASE_PATH).startswith(('/api/admin/servers','/api/admin/wg-fleet')):
         return JSONResponse({'detail':'Проверьте поля сервера и профиль подключения.'},status_code=422)
     if request.url.path.removeprefix(c.BASE_PATH).startswith(('/api/ads/','/api/admin/ads/')):
         return JSONResponse({'detail':'Проверьте поля рекламной заявки или настроек.'},status_code=422)
@@ -115,11 +120,17 @@ async def safety(request, call_next):
     if private_feed or path.startswith('/api/'):
         ip = request.client.host if request.client else 'unknown'
         category='sub' if private_feed else 'id_approval' if path=='/api/auth/pushok-id/approve' else 'id_auth' if path.startswith('/api/auth/pushok-id/') else 'auth' if path.startswith('/api/auth/') else 'api'
+        if path in ('/api/admin/wg-fleet/probes/assignment','/api/admin/wg-fleet/probes/report'):
+            # Many enrolled probes may share one monitoring host/NAT. Bound
+            # their rate independently; authentication is still mandatory.
+            credential=request.headers.get('authorization','')[:220]
+            category='wg_probe'
+            ip=ip+':'+hashlib.sha256(credential.encode()).hexdigest()
         bucket=hits[(ip,category)]
         now = time.monotonic()
         while bucket and bucket[0] < now - 60:
             bucket.popleft()
-        limit = 60 if private_feed else 120 if category=='id_approval' else 30 if category=='id_auth' else 20 if path.startswith(('/api/auth/','/api/admin/auth/')) else 180
+        limit = 60 if private_feed or category=='wg_probe' else 120 if category=='id_approval' else 30 if category=='id_auth' else 20 if path.startswith(('/api/auth/','/api/admin/auth/')) else 180
         if len(bucket) >= limit:
             return JSONResponse({'detail': 'Слишком много запросов. Подождите минуту.'}, status_code=429,headers={'Cache-Control':'no-store','Referrer-Policy':'no-referrer'})
         bucket.append(now)
@@ -506,7 +517,10 @@ async def catalog(request: Request):
     options,sale_notice=runtime_settings.catalog_options(customer,providers.available)
     appearance=runtime_settings.get('appearance')
     payment=payment_policy.catalog(customer)
+    with db() as conn:
+        fleet_access=wg_fleet_management.fleet.enabled(conn)
     return {'plans': plans, 'currency': 'XTR' if tg else 'RUB', 'protocols': options,
+            'wireguard_account_access':fleet_access,
             'appearance':{k:v for k,v in appearance.items() if k not in ('version','updated')},
             'sale_notice':sale_notice,'pushok_id':pushok_identity.public_capabilities(),
             'guest_access':c.SECURE_COOKIE, 'mtproxy_login':mtproxy_web_login.enabled(), 'trial':trials.offer(customer), **payment, 'bot_username': c.BOT_USERNAME if c.BOT_TOKEN else None,
@@ -785,6 +799,10 @@ async def logout(request: Request):
 async def me(user=Depends(current_user)):
     subs = all_rows('SELECT s.id,s.protocol,s.expires,s.state,s.device_limit,s.primary_key_state,s.access_source,(s.rotation_error IS NOT NULL) AS primary_retrying,coalesce(l.enabled,0) AS link_enabled,coalesce(l.follow_rotation,0) AS link_follows_rotation FROM subscriptions s LEFT JOIN subscription_links l ON l.subscription_id=s.id WHERE s.user_id=?', (user['id'],))
     orders = all_rows('SELECT id,protocol,plan,plan_name,days,amount,currency,method,status,created,payment_url,attempts,device_limit,kind,base_amount,discount,promo_code,promo_percent FROM orders WHERE user_id=? ORDER BY created DESC LIMIT 50', (user['id'],))
+    with db() as conn:
+        if wg_fleet_management.fleet.enabled(conn):
+            for item in subs+orders:
+                if item['protocol']=='wg':item['unlimited_devices']=True
     return {'id': user['id'], 'email': user['email'], 'telegram_id': user['telegram_id'], 'can_change_password': bool(user['email'] and user['password']), 'pushok_id':pushok_identity.own_link(user['id']), 'subscriptions': subs, 'orders': [{**row,'progress':order_progress.public(row)} for row in orders], 'referrals':referrals.summary(user)}
 
 @app.post('/api/referrals/code')
@@ -964,7 +982,9 @@ def public_device(row,sub):
 async def device_list(sid: str,user=Depends(current_user)):
     sub=owned_subscription(sid,user)
     rows=all_rows("SELECT * FROM devices WHERE subscription_id=? AND state!='revoked' ORDER BY created,id",(sid,))
-    return {'devices':[public_device(row,sub) for row in rows],'max_extra':sub['device_limit']}
+    with db() as conn:
+        unlimited=sub['protocol']=='wg' and wg_fleet_management.fleet.enabled(conn)
+    return {'devices':[public_device(row,sub) for row in rows],'max_extra':None if unlimited else sub['device_limit']}
 
 @app.post('/api/subscriptions/{sid}/devices')
 async def device_create(sid: str,data: DeviceCreate,user=Depends(current_user)):
@@ -979,8 +999,11 @@ async def device_create(sid: str,data: DeviceCreate,user=Depends(current_user)):
                 return public_device(dict(row),sub)
             if sub['state']!='active' or sub['expires']<=time.time() or not sub['server_id']:
                 raise HTTPException(409,'Нужна действующая подписка с сервером')
-            if conn.execute("SELECT count(*) FROM devices WHERE subscription_id=? AND state!='revoked'",(sid,)).fetchone()[0]>=sub['device_limit']:
+            unlimited=sub['protocol']=='wg' and wg_fleet_management.fleet.enabled(conn)
+            if not unlimited and conn.execute("SELECT count(*) FROM devices WHERE subscription_id=? AND state!='revoked'",(sid,)).fetchone()[0]>=sub['device_limit']:
                 raise HTTPException(409,'Достигнут лимит дополнительных профилей')
+            if sub['protocol']=='wg' and wg_fleet_management.fleet.revocation_requested(conn,sid):
+                raise HTTPException(409,'Доступ отзывается. Создание профиля недоступно.')
             did=str(uuid.uuid4())
             conn.execute('INSERT INTO devices(id,subscription_id,request_id,name,created,credential_id) VALUES (?,?,?,?,?,?)',(did,sid,str(data.request_id),data.name,int(time.time()),c.encrypt(did)))
             row=dict(conn.execute('SELECT * FROM devices WHERE id=?',(did,)).fetchone())
@@ -998,6 +1021,8 @@ async def rotate_primary(sid: str,data: RotationCreate,user=Depends(current_user
             raw=conn.execute('SELECT * FROM subscriptions WHERE id=? AND user_id=?',(sid,user['id'])).fetchone()
             if not raw:raise HTTPException(404,'Подписка не найдена')
             sub=dict(raw)
+            if sub['protocol']=='wg' and wg_fleet_management.fleet.revocation_requested(conn,sid):
+                raise HTTPException(409,'Доступ отзывается. Смена ключа недоступна.')
             if sub['access_source']=='trial':raise HTTPException(409,'Перевыпуск станет доступен после покупки тарифа')
             previous=conn.execute('SELECT id,state FROM primary_rotations WHERE subscription_id=? AND request_id=?',(sid,str(data.request_id))).fetchone()
             if previous:return {'rotation':dict(previous),'subscription_id':sid}
@@ -1021,6 +1046,8 @@ async def rotate_device(did: str,data: RotationCreate,user=Depends(current_user)
             if not raw:raise HTTPException(404,'Устройство не найдено')
             device=dict(raw)
             sub=dict(conn.execute('SELECT * FROM subscriptions WHERE id=?',(device['subscription_id'],)).fetchone())
+            if sub['protocol']=='wg' and wg_fleet_management.fleet.revocation_requested(conn,sub['id']):
+                raise HTTPException(409,'Доступ отзывается. Смена ключа недоступна.')
             if sub['access_source']=='trial':raise HTTPException(409,'Перевыпуск станет доступен после покупки тарифа')
             previous=conn.execute('SELECT id,state FROM device_rotations WHERE device_id=? AND request_id=?',(did,str(data.request_id))).fetchone()
             if previous:return {'rotation':dict(previous),'device':public_device(device,sub)}

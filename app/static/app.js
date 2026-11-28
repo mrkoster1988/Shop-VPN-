@@ -115,7 +115,7 @@ function show(id) {
 function accessTerm(ts){return ts===253402214400?'Premium · бессрочно':'доступ до '+date(ts);}
 function date(ts) { return new Date(ts*1000).toLocaleDateString('ru-RU',{timeZone:'Europe/Moscow'}); }
 function protocolName(id) { return ({wg:'Pushok Flow',xui:'VLESS',vmess:'VMess',hysteria2:'Hysteria2',tuic:'TUIC v5'})[id] || id; }
-function profileAllowance(limit) { return limit===0 ? 'Только основной профиль' : 'Основной + до '+limit+' дополнительных профилей'; }
+function profileAllowance(limit,unlimited=false) { return unlimited ? 'Подписка аккаунта · без лимита устройств' : limit===0 ? 'Только основной профиль' : 'Основной + до '+limit+' дополнительных профилей'; }
 function displayOrderStatus(order) { if(order.progress?.title)return order.progress.title; return order.method==='free'&&order.status==='paid'?'Бесплатный доступ готовится':order.kind==='referral'&&order.status==='paid'?'Добавляем бонусные дни':order.kind==='referral'&&order.status==='active'?'Бонусные дни добавлены':order.kind==='trial'&&order.status==='paid'?'Готовим пробный VPN':order.kind==='trial'&&order.status==='active'?'Пробник выдан':statusLabel[order.status] || order.status; }
 function renderAppearance(){
  const config=catalog?.appearance;
@@ -159,7 +159,7 @@ function renderPlans() {
     !(p.price === 0 && p.free_traffic_gb > 0 && !['xui','vmess'].includes(protocol))) : [];
   $('plan-list').innerHTML = visiblePlans.map(p => {
     const money = p.price === 0 ? 'Бесплатно' : p.price.toLocaleString('ru-RU') + ' <small>' + (catalog.currency==='XTR'?'★':'₽') + '</small>';
-    const limits = [profileAllowance(p.device_limit ?? 4)];
+    const limits = [profileAllowance(p.device_limit ?? 4,protocol==='wg'&&catalog.wireguard_account_access)];
     if (p.price === 0 && p.free_auto_renew) limits.push('Автопродление: '+p.free_max_renewals+' раз(а)');
     if (p.price === 0 && p.free_traffic_gb) limits.push('Лимит '+p.free_traffic_gb+' ГБ на профиль');
     if (p.price === 0 && p.free_activation_limit) limits.push('Всего активаций: '+p.free_activation_limit);
@@ -272,12 +272,12 @@ function renderAccount() {
       primaryReady&&s.access_source!=='trial'?'<button type="button" class="text-link" data-primary-rotate="'+esc(s.id)+'">Сменить основной ключ</button>':'',
       s.protocol==='xui'&&s.state!=='pending'&&s.access_source!=='trial'?'<button type="button" class="text-link" data-link="'+esc(s.id)+'">Ссылка подписки</button>':'',
       active&&s.access_source!=='trial'&&me.referrals?.balance_days>0?'<button type="button" class="text-link" data-referral="'+esc(s.id)+'">Потратить бонус</button>':'',
-      s.state!=='pending'&&s.access_source!=='trial'?'<button type="button" class="small secondary" data-devices="'+esc(s.id)+'">Устройства</button>':''
+      s.state!=='pending'&&(s.access_source!=='trial'||s.unlimited_devices)?'<button type="button" class="small secondary" data-devices="'+esc(s.id)+'">Устройства</button>':''
     ].filter(Boolean);
     const renewal=s.state!=='pending'?'<button type="button" class="small secondary" data-renew="'+esc(s.protocol)+'">'+(active?'Продлить подписку':'Возобновить подписку')+'</button>':'';
     return '<article class="subscription"><div class="subscription-top"><h3>'+esc(protocolName(s.protocol))+'</h3><span class="status '+stateClass+'">'+accessLabel+'</span></div>'+
       (s.access_source==='trial'?'<p class="subscription-kind">Пробник</p>':'')+
-      '<p class="subscription-expiry">'+(active?(s.expires===253402214400?'Premium · бессрочно':'Доступ до '+date(s.expires)):s.state==='pending'?'Подключение готовится':s.state==='revoked'?'Доступ отозван':'Подписка закончилась')+'</p><p>'+esc(profileAllowance(s.device_limit ?? 4))+'</p>'+
+      '<p class="subscription-expiry">'+(active?(s.expires===253402214400?'Premium · бессрочно':'Доступ до '+date(s.expires)):s.state==='pending'?'Подключение готовится':s.state==='revoked'?'Доступ отозван':'Подписка закончилась')+'</p><p>'+esc(profileAllowance(s.device_limit ?? 4,s.unlimited_devices))+'</p>'+
       (s.primary_key_state==='rotating'?'<p>Меняем основной ключ'+(s.primary_retrying?' · повторим после ошибки':'')+'. Дополнительные профили не меняются.</p>':'')+
       '<div class="subscription-primary">'+flow+configure+renewal+'</div>'+
       (options.length?'<details class="subscription-options" data-subscription-options="'+esc(s.id)+'"'+(expanded.has(s.id)?' open':'')+'><summary>Управление подключением</summary><div class="actions">'+options.join('')+'</div></details>':'')+'</article>';
@@ -347,7 +347,7 @@ function paymentResult(order) {
   $('payment-result').replaceChildren();
   const paragraph = document.createElement('p');
   paragraph.className='payment-summary';
-  paragraph.textContent = `Заказ: ${order.id}\nТариф: ${order.plan_name || protocolName(order.protocol)} · ${order.days} дней\n${profileAllowance(order.device_limit ?? 4)}\nСумма: ${order.kind==='referral'?'Бонусные дни':order.kind==='trial'?'Без оплаты':order.amount===0?'Бесплатно':money(order.amount,order.currency)}\n${displayOrderStatus(order)}${order.promo_code?'\nПромокод: '+order.promo_code+' · скидка '+money(order.discount,order.currency)+' от '+money(order.base_amount,order.currency):''}\n\n${order.progress?.message || ''}\n${order.instructions || ''}`;
+  paragraph.textContent = `Заказ: ${order.id}\nТариф: ${order.plan_name || protocolName(order.protocol)} · ${order.days} дней\n${profileAllowance(order.device_limit ?? 4,order.unlimited_devices||(order.protocol==='wg'&&catalog?.wireguard_account_access))}\nСумма: ${order.kind==='referral'?'Бонусные дни':order.kind==='trial'?'Без оплаты':order.amount===0?'Бесплатно':money(order.amount,order.currency)}\n${displayOrderStatus(order)}${order.promo_code?'\nПромокод: '+order.promo_code+' · скидка '+money(order.discount,order.currency)+' от '+money(order.base_amount,order.currency):''}\n\n${order.progress?.message || ''}\n${order.instructions || ''}`;
   $('payment-result').append(paragraph);
   if (order.payment_url && order.status === 'pending') {
     const link = document.createElement('a');
@@ -670,7 +670,7 @@ $('subscriptions').onclick = async event => {
 };
 function renderCheckoutAmount() {
   if(!selectedPlan || checkoutTrial)return;
-  const summary=selectedPlan.name+' / '+selectedPlan.days+' дней / '+protocolName(protocol)+' / '+profileAllowance(selectedPlan.device_limit ?? 4);
+  const summary=selectedPlan.name+' / '+selectedPlan.days+' дней / '+protocolName(protocol)+' / '+profileAllowance(selectedPlan.device_limit ?? 4,protocol==='wg'&&catalog.wireguard_account_access);
   $('checkout-info').textContent=summary+' / '+(checkoutQuote?'Было '+money(checkoutQuote.base_amount,checkoutQuote.currency)+' · скидка '+money(checkoutQuote.discount,checkoutQuote.currency)+' · к оплате '+money(checkoutQuote.amount,checkoutQuote.currency):selectedPlan.price===0?'Бесплатно':money(selectedPlan.price,catalog.currency));
 }
 function resetQuote(clearInput=true) {
@@ -887,10 +887,10 @@ async function refreshDevices() {
   if (request!==deviceRequest || sid!==deviceSubscription) return;
   deviceCache=result.devices;
   const parent=me?.subscriptions.find(s=>s.id===sid);
-  $('device-form').hidden=!parent || parent.state!=='active' || parent.expires*1000<=Date.now() || result.devices.length>=result.max_extra;
+  $('device-form').hidden=!parent || parent.state!=='active' || parent.expires*1000<=Date.now() || (result.max_extra!==null&&result.devices.length>=result.max_extra);
   const labels={pending:'Готовим профиль',active:'Профиль выдан',revoking:'Отключаем доступ',revoked:'Доступ отозван',rotating:'Меняем ключ'};
   $('devices-list').innerHTML=result.devices.map(d=>`<article class="subscription"><h3>${esc(d.name)}</h3><p>${esc(labels[d.state] || d.state)}${d.retrying?' · повторим после ошибки':''}${d.state==='active'&&!d.ready?' · срок доступа истёк':''}</p><div class="actions">${d.ready?`<button class="small" data-device-config="${esc(d.id)}">Подключить ↗</button><button class="small secondary" data-device-rotate="${esc(d.id)}">Перевыпустить ключ</button>${d.protocol==='wg'?`<button class="small secondary" data-device-link="${esc(d.id)}">Открыть в Pushok Flow</button>`:''}`:''}${['pending','active','rotating'].includes(d.state)?`<button class="small secondary" data-device-revoke="${esc(d.id)}">Отозвать доступ</button>`:''}</div></article>`).join('') || '<p>Дополнительных профилей пока нет.</p>';
-  $('devices-status').textContent='Дополнительные профили: '+result.devices.length+' из '+result.max_extra+'. Основной профиль — отдельно.'+(result.devices.length>result.max_extra?' Уже выданные профили работают; новые недоступны до освобождения лимита.':'');
+  $('devices-status').textContent=result.max_extra===null?'Профилей устройств: '+result.devices.length+'. Все используют срок подписки аккаунта.':'Дополнительные профили: '+result.devices.length+' из '+result.max_extra+'. Основной профиль — отдельно.'+(result.devices.length>result.max_extra?' Уже выданные профили работают; новые недоступны до освобождения лимита.':'');
   if (linkDeviceId && linkSubscription===sid) {
     if(!linkTargetReady(parent)){ $('link-dialog').close();clearLink(); }
     else if(linkState)renderFlowLink(linkState,parent);

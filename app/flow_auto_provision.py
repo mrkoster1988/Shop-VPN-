@@ -77,7 +77,10 @@ def _node(conn, *, guest=False):
                 return row
             if guest and shared is None:
                 shared = row
-    return shared
+    from . import wg_fleet
+    # A successful probe for wg0 is not proof that a different wg-guest
+    # interface works. Strict fleet mode requires the measured configuration.
+    return None if wg_fleet.enabled(conn) else shared
 
 
 async def update_policy(data: PolicyUpdate):
@@ -140,7 +143,9 @@ def enqueue(user_id: int) -> str:
             return 'expired'
         node = _node(conn)
         if node is None:
-            return 'unavailable'
+            from . import wg_fleet
+            if not wg_fleet.enabled(conn):
+                return 'unavailable'
         reserve(conn, user_id, node, setting, now, int(setting['days']), expires=expires)
         return 'pending'
 
@@ -151,7 +156,7 @@ def reserve(conn, user_id, node, setting, now, days, *, guest=False, expires=Non
     target = expires if expires is not None else now + days * 86400
     conn.execute("INSERT INTO subscriptions(id,user_id,protocol,expires,state,"
                  "server_id,device_limit,access_source,wg_configuration) VALUES (?,?,'wg',0,'pending',?,0,'trial',?)",
-                 (sid, user_id, node['id'], servers.GUEST_CONFIGURATION if guest else None))
+                 (sid, user_id, node['id'] if node else None, servers.GUEST_CONFIGURATION if guest else None))
     conn.execute("INSERT INTO flow_auto_grants(user_id,subscription_id,target_expires,"
                  "policy_version,state,created,next_attempt,attempts) "
                  "VALUES (?,?,?,?,'pending',?,?,0)",
@@ -206,6 +211,13 @@ async def process_pending(max_jobs: int = 5) -> int:
                                      (job['target_expires'], sid))
                         continue
                     sub = dict(row)
+                    if not sub['server_id']:
+                        node = _node(conn, guest=bool(sub.get('wg_configuration')))
+                        if not node:
+                            conn.execute('UPDATE flow_auto_grants SET next_attempt=? WHERE user_id=?', (now+30,job['user_id']))
+                            continue
+                        conn.execute('UPDATE subscriptions SET server_id=? WHERE id=?', (node['id'],sid))
+                        sub['server_id'] = node['id']
                     # Reject a panel switch to an unprotected backend mid-queue.
                     _, profile = servers.for_subscription(sub)
                     if (profile.get('api') != 'wgdashboard'
@@ -235,7 +247,9 @@ async def process_pending(max_jobs: int = 5) -> int:
                     conn.execute("UPDATE subscriptions SET state='active',expires=?,secret=?,"
                                  "credential_id=?,primary_key_state='active',access_source='trial'"
                                  " WHERE id=?",
-                                 (job['target_expires'], encrypted, c.encrypt(sid), sid))
+                                 (job['target_expires'], encrypted, c.encrypt(service.primary_identity(sub)), sid))
+                    from . import wg_fleet
+                    wg_fleet.new_access(conn, sid)
                     conn.execute("UPDATE flow_auto_grants SET state='active',error=NULL WHERE user_id=?",
                                  (job['user_id'],))
                 completed += 1

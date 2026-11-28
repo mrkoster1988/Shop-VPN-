@@ -97,4 +97,6 @@ async def change(cmd):
                 (config.encrypt(job['identity']),config.encrypt(conf),job['target'],sid,cmd.before)).rowcount:
                 raise HTTPException(409,'vpn_changed')
             conn.execute('DELETE FROM admin_subscription_revocations WHERE subscription_id=?',(sid,))
+            from . import wg_fleet
+            wg_fleet.new_access(conn,sid)
             conn.execute('UPDATE vpn_access_changes SET applied=? WHERE request_id=?',(int(time.time()),rid))

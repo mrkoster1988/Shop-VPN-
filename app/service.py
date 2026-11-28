@@ -219,6 +219,9 @@ async def fulfill(order_id):
                     conn.execute('UPDATE vpn_renewal_choices SET assigned_name=NULL,plan_id=NULL,version=version+1 WHERE subscription_id=?',(sub['id'],))
                 if reissuing:
                     conn.execute('DELETE FROM admin_subscription_revocations WHERE subscription_id=?', (sub['id'],))
+                if order['protocol'] == 'wg':
+                    from . import wg_fleet
+                    wg_fleet.new_access(conn, sub['id'])
                 conn.execute("UPDATE orders SET status='active',error=NULL WHERE id=?", (order_id,))
         except Exception as exc:
             # Do not persist remote responses, URLs, private keys or credentials in logs.
@@ -368,9 +371,15 @@ def enqueue_free_renewals(now):
 
 
 async def disable_subscription_peers(sub):
+    if sub['protocol'] == 'wg':
+        from . import wg_fleet
+        await wg_fleet.revoke_placements(sub, include_primary=False)
     for device in all_rows("SELECT * FROM devices WHERE subscription_id=? AND state='active'",(sub['id'],)):
         await providers.disable({**sub,'wg_device_name':device.get('name'),'id':device_identity(device),'expires':device['expires']})
     await providers.disable({**sub,'id':primary_identity(sub)})
+    if sub['protocol']=='wg':
+        with db() as conn:
+            wg_fleet.confirmed_primary_revocation(conn,sub['id'])
 
 
 async def tick():

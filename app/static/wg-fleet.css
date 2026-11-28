@@ -1,0 +1,56 @@
+.wg-fleet {display:grid;gap:16px;min-width:0}
+.wg-fleet [hidden] {display:none!important}
+.wg-fleet :is(h2,h3,p,dl) {margin:0}
+.wg-fleet :is(section,article,form,div,label) {min-width:0}
+.wg-fleet-head,.wg-fleet-toolbar,.wg-fleet-actions,.wg-fleet-card-heading {display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.wg-fleet-head,.wg-fleet-card-heading {justify-content:space-between}
+.wg-fleet h2 {font-size:19px}.wg-fleet h3 {font-size:16px}
+.wg-fleet .wg-fleet-toolbar a,.wg-fleet button {width:auto;min-height:40px;white-space:normal;line-height:1.3}
+.wg-fleet-toolbar {margin-top:9px}
+.wg-fleet-summary,.wg-fleet-facts {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.wg-fleet-summary>div {padding:13px;border:1px solid var(--line-soft,#294252);border-radius:13px;background:var(--panel,#102538)}
+.wg-fleet dt {color:var(--muted,#a4bac8);font-size:12px}
+.wg-fleet dd {margin:5px 0 0;font-weight:700;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
+.wg-fleet-summary dd {font-size:23px}
+.wg-fleet-nodes {display:grid;gap:12px}
+.wg-fleet-card,.wg-fleet-operation,.wg-fleet-policy,.wg-fleet-add {padding:16px;border:1px solid var(--line-soft,#294252);border-radius:16px;background:var(--panel,#102538)}
+.wg-fleet-card {display:grid;gap:12px}
+.wg-fleet-card[data-archived=true]>.wg-fleet-actions {display:none}
+.wg-fleet-card-heading>div {display:grid;gap:4px}
+.wg-fleet-domain {font-size:13px;color:var(--mint,#65dec6);overflow-wrap:anywhere}
+.wg-fleet-pill {font-size:12px;border:1px solid var(--line-soft,#294252);border-radius:7px;padding:4px 7px;color:var(--muted,#a4bac8)}
+.wg-fleet-pill[data-state=active],.wg-fleet-health[data-health=ok] {color:#83e3af}
+.wg-fleet-pill[data-state=draining],.wg-fleet-warning {color:#ffc17c}
+.wg-fleet-health[data-health=error],.wg-fleet-error {color:#ff9ca7}
+.wg-fleet-health {font-size:13px}.wg-fleet-health-detail {font-size:12px;color:var(--muted,#a4bac8)}
+.wg-fleet-facts {grid-template-columns:repeat(4,minmax(0,1fr));padding:10px 0;border-block:1px solid var(--line-soft,#294252)}
+.wg-fleet-capacity {display:grid;gap:6px;font-size:12px;color:var(--muted,#a4bac8)}
+.wg-fleet meter,.wg-fleet progress {width:100%;height:10px;accent-color:var(--mint,#65dec6)}
+.wg-fleet-form,.wg-fleet-editor,.wg-fleet-operations,.wg-fleet-operation,.wg-fleet-policy {display:grid;gap:12px}
+.wg-fleet-form label {display:grid;gap:5px;font-size:13px}
+.wg-fleet-form :is(input,select) {width:100%;min-width:0;box-sizing:border-box}
+.wg-fleet-form-grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.wg-fleet-form label.wg-fleet-checkbox {display:flex;align-items:center;gap:8px}
+.wg-fleet-form .wg-fleet-checkbox input {width:18px;height:18px;flex:none;accent-color:var(--mint,#65dec6)}
+.wg-fleet-note {font-size:12px;line-height:1.5;color:var(--muted,#a4bac8);overflow-wrap:anywhere}
+.wg-fleet-add>summary {cursor:pointer;font-weight:650;min-height:26px}
+.wg-fleet-add[open]>div {margin-top:14px}
+.wg-fleet-feedback {font-size:13px;white-space:pre-line;overflow-wrap:anywhere;min-height:1.3em}
+.wg-fleet-editor:not(:empty) {border-top:1px solid var(--line-soft,#294252);padding-top:12px}
+.wg-fleet-operation h3 {font-size:14px}
+.wg-fleet-operation-meta {display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--muted,#a4bac8)}
+@media(min-width:850px){.wg-fleet-nodes{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:370px){.wg-fleet-form-grid{grid-template-columns:minmax(0,1fr)}.wg-fleet-card,.wg-fleet-policy,.wg-fleet-add,.wg-fleet-operation{padding:12px}.wg-fleet-facts{grid-template-columns:repeat(2,minmax(0,1fr))}.wg-fleet-summary{gap:6px}.wg-fleet-summary>div{padding:10px 8px}}
+
+.shop-admin-ui .wg-fleet {--panel:#fff;--line-soft:#dce4e9;--mint:#0b7c73;color:#1c2c3a}
+.shop-admin-ui .wg-fleet :is(h2,h3,p,dl) {margin:0}
+.shop-admin-ui .wg-fleet-head h2 {font-size:22px;letter-spacing:-.02em}
+.shop-admin-ui .wg-fleet :is(.wg-fleet-card,.wg-fleet-policy,.wg-fleet-operation,.wg-fleet-add) {background:#fff}
+.shop-admin-ui .wg-fleet-summary>div {background:#f7fafb}
+.shop-admin-ui .wg-fleet .wg-fleet-pill[data-state=active],.shop-admin-ui .wg-fleet-health[data-health=ok] {color:#096d57}
+.shop-admin-ui .wg-fleet-health[data-health=error],.shop-admin-ui .wg-fleet-error {color:#b32638}
+.shop-admin-ui .wg-fleet .wg-fleet-pill[data-state=draining],.shop-admin-ui .wg-fleet-warning {color:#956016}
+.shop-admin-ui .wg-fleet-form label {margin:0}
+.shop-admin-ui .wg-fleet-form :is(input,select) {margin-top:0}
+.shop-admin-ui .wg-fleet-toolbar a {display:inline-flex;align-items:center;border:1px solid #cbd9e0;border-radius:10px;padding:8px 12px;text-decoration:none;color:#284959}
+.shop-admin-ui #wg-fleet-status {margin-top:12px;font-size:13px;color:#075f59;overflow-wrap:anywhere}

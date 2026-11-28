@@ -102,6 +102,9 @@ async def revoke_locked(sid, request_id=None):
             raise HTTPException(409, 'Нельзя найти прежнюю привязку сервера. '
                                 'Запись сохранена до проверки узла.') from None
     try:
+        if sub['protocol'] == 'wg':
+            from . import wg_fleet
+            await wg_fleet.revoke_placements(sub, include_primary=False)
         if profile is None:
             _remote_identity(sub, server_profile={})
             if any(d.get('secret') or d.get('credential_id') or
@@ -135,6 +138,9 @@ async def revoke_locked(sid, request_id=None):
                      "free_max_renewals=0 WHERE id=?", (now, sid))
         conn.execute("UPDATE devices SET state='revoked',expires=0,secret=NULL,"
                      "next_attempt=0,error=NULL WHERE subscription_id=?", (sid,))
+        if sub['protocol']=='wg':
+            from . import wg_fleet
+            wg_fleet.confirmed_primary_revocation(conn,sid)
         conn.execute("UPDATE flow_auto_grants SET state='superseded' "
                      "WHERE subscription_id=?", (sid,))
         conn.execute('DELETE FROM flow_wireguard_links WHERE subscription_id=?', (sid,))
@@ -155,6 +161,8 @@ async def revoke_locked(sid, request_id=None):
 def purge_blocker(conn, sub):
     """A customer-safe reason why this subscription cannot be purged."""
     sid = sub['id']
+    if conn.execute("SELECT 1 FROM wg_fleet_placements WHERE subscription_id=? AND state!='revoked'",(sid,)).fetchone():
+        return 'Не все подключения на основном и резервных серверах подтверждённо отозваны.'
     if sub['state'] != 'revoked' or not conn.execute(
             'SELECT 1 FROM admin_subscription_revocations WHERE subscription_id=?',
             (sid,)).fetchone():

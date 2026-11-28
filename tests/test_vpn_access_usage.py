@@ -34,6 +34,11 @@ def test_restore_uses_fresh_key_once_and_preserves_expiry_on_retry(client,monkey
     sub=one('SELECT * FROM subscriptions WHERE id=?',(sid,))
     assert sub['state']=='active' and issued==[(service.primary_identity(sub),sub['expires'])]
     assert issued[0][0]!=sid and sub['expires']-restore.before in range(7*86400-5,7*86400+6)
+    from app import flow_wireguard
+    from app.db import db
+    with db() as conn:
+        conn.execute('BEGIN IMMEDIATE')
+        assert flow_wireguard._feed_locked(conn,sub['user_id'],sid)['state']=='active'
 
 
 def test_daily_counters_survive_key_and_counter_changes(client):

@@ -338,6 +338,8 @@ def update(sid, data):
                 replacement['panel_timezone'] = data.panel_timezone
             replacement = validated(before['protocol'], replacement)
         bound = conn.execute('SELECT count(*) FROM subscriptions WHERE server_id=?',(sid,)).fetchone()[0]
+        from . import wg_fleet
+        bound += conn.execute("SELECT count(*) FROM wg_fleet_placements WHERE server_id=? AND state!='revoked'",(sid,)).fetchone()[0]
         identity = (('url','api','squad_uuids') if profile.get('api') == 'remnawave'
                     else ('url','api','inbound_id','link_template','flow')) if before['protocol']=='xui' else ('url','api','configuration')
         if before['protocol'] == 'tuic':
@@ -354,10 +356,18 @@ def update(sid, data):
         health = 'unknown' if requires_recheck else before['health']
         if data.state == 'active' and (requires_recheck or before['state']!='active') and health != 'ok':
             raise HTTPException(409,'Сначала сохраните настройки и успешно проверьте сервер, затем включите продажи.')
+        managed = before['protocol']=='wg' and (wg_fleet.enabled(conn) or conn.execute('SELECT 1 FROM wg_fleet_nodes WHERE server_id=?',(sid,)).fetchone())
+        if managed and data.state=='active' and before['state']!='active':
+            from .wg_fleet_management import _activate
+            _activate(conn,before)
+        if managed and bound and data.state in ('disabled','maintenance') and data.state!=before['state']:
+            raise HTTPException(409,'У узла есть подключения. Используйте перенос в разделе пула WireGuard.')
         conn.execute('UPDATE servers SET name=?,location=?,state=?,capacity=?,settings=?,health=?,checked_at=?,error_code=?,version=version+1 WHERE id=?',
             (data.name,data.location,data.state,data.capacity,c.encrypt(json.dumps(replacement)),health,
              None if requires_recheck else before['checked_at'],None if requires_recheck else before['error_code'],sid))
         row = dict(conn.execute('SELECT * FROM servers WHERE id=?',(sid,)).fetchone())
+        if before['protocol']=='wg' and not requires_recheck:
+            wg_fleet.carry_version(conn,sid,before['version'],row['version'])
         conn.execute('INSERT INTO server_changes(server_id,created,action,version) VALUES (?,?,?,?)', (sid,int(time.time()),'updated',row['version']))
     return public(row)
 

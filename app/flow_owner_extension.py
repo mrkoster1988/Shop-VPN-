@@ -239,6 +239,8 @@ async def extend(user_id, command: Extension, staff_id=None):
             "UPDATE subscriptions SET expires=?,state='active',secret=?,primary_key_state='active' "
             "WHERE id=? AND user_id=? AND expires=?",
             (command.target_expires, encrypted, sub['id'], user_id, command.before_expires))
+        from . import wg_fleet
+        wg_fleet.new_access(conn, sub['id'])
         # Existing one-time grant remains ONE claim; no additional quota or
         # payment is created. Owner extension is recorded separately.
         conn.execute(

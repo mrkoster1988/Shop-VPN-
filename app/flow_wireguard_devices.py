@@ -19,7 +19,8 @@ def _owned_locked(conn, user_id, device_id):
            FROM devices d JOIN subscriptions s ON s.id=d.subscription_id
            WHERE d.id=? AND s.user_id=?""", (device_id, user_id),
     ).fetchone()
-    if not row or row['protocol']!='wg' or row['access_source']=='trial':
+    from . import wg_fleet
+    if not row or row['protocol']!='wg' or (row['access_source']=='trial' and not wg_fleet.enabled(conn)):
         raise HTTPException(404, 'WireGuard-устройство не найдено')
     return row
 
@@ -59,6 +60,10 @@ def _feed_locked(conn, user_id, device_id):
     if state=='active':
         profiles = [{'id':row['id'],'name':'Pushok WireGuard',
                      'protocol':'wireguard','config':_config(row)}]
+        from . import wg_fleet
+        profiles=wg_fleet.feed_profiles(conn,row['subscription_id'],profiles,expiry,device_id=device_id)
+        if wg_fleet.revocation_requested(conn,row['subscription_id']):
+            state,profiles='revoked',[]
     fingerprint = hashlib.sha256(json.dumps([state,expiry,profiles],ensure_ascii=False,
                                     separators=(',',':')).encode('utf-8')).hexdigest()
     ledger = conn.execute(

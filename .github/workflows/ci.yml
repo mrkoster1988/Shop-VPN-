@@ -37,6 +37,7 @@ jobs:
           STOREFRONT_UI_OUTPUT: ${{ runner.temp }}/shop-storefront-screenshots
         run: |
           node tests/panel_wizard_browser.cjs
+          node tests/wg_fleet_browser.cjs
           node tests/updates_browser.cjs
           node tests/storefront_compact_browser.cjs
           node tests/mobile_turnkey_browser.cjs
@@ -46,6 +47,14 @@ jobs:
         with:
           name: pushok-shop-storefront-screenshots
           path: ${{ runner.temp }}/shop-storefront-screenshots/
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Save synthetic WireGuard fleet desktop and mobile screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pushok-shop-wg-fleet-screenshots
+          path: ${{ runner.temp }}/panel-ui-screenshots/wg-fleet-*.png
           if-no-files-found: ignore
           retention-days: 14
 
@@ -68,6 +77,7 @@ jobs:
         run: |
           node --check app/static/app.js
           node --check app/static/admin.js
+          node --check app/static/wg-fleet.js
       - name: Test admin and customer UI data handling
         run: node --test tests/test_*_ui.cjs
       - name: Check Python and shell syntax

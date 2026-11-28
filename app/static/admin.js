@@ -245,7 +245,7 @@ const MANAGEMENT_SECTIONS=[
   ['role-policy-section','developer','Полномочия'],['moderation-section','moderation','Модерация'],
   ['support-admin','support','Поддержка'],['commerce-analytics','analytics','Аналитика'],
   ['plans-section','catalog','Тарифы'],['users-section','customers','Пользователи'],
-  ['orders-section','orders','Заказы'],['servers-section','servers_read','Серверы'],['server-routing-section','servers_read','Распределение'],
+  ['orders-section','orders','Заказы'],['servers-section','servers_read','Серверы'],['wg-fleet-section','servers_read','WireGuard и резерв'],['server-routing-section','servers_read','Распределение'],
   ['protocols-panel','servers_read','Протоколы'],['flow-auto-section','starter','Автовыдача'],
   ['coupons-section','promotions','Промокоды'],['referrals-section','promotions','Бонусы'],
   ['trial-section','promotions','Пробник'],['ads-requests-section','advertising','Реклама MTProxy'],
@@ -256,7 +256,7 @@ const MANAGEMENT_SECTIONS=[
 // Keep navigation metadata separate from permissions: the API remains the
 // sole authority. All menu items resolve to existing approved sections.
 const MANAGEMENT_NAV_GROUPS = [
-  ['Подключения', ['servers-section','server-routing-section','protocols-panel','flow-auto-section','trial-section']],
+  ['Подключения', ['servers-section','wg-fleet-section','server-routing-section','protocols-panel','flow-auto-section','trial-section']],
   ['Пользователи', ['users-section','orders-section','moderation-section','staff-management','support-admin']],
   ['Финансы', ['plans-section','payment-policy-section','shop-finance-section','commerce-analytics','coupons-section','referrals-section']],
   ['Реклама', ['ads-requests-section','ads-finance-section','ads-bookings-section','ads-stop-section','ads-sites-section']],
@@ -264,6 +264,7 @@ const MANAGEMENT_NAV_GROUPS = [
 ];
 const MANAGEMENT_SEARCH_TAGS={
   'servers-section':'wgdashboard wireguard wg0 3x-ui сервер api ключ',
+  'wg-fleet-section':'wireguard wgdashboard узлы резерв перенос миграция dns wg1 мониторинг',
   'server-routing-section':'узлы маршрутизация',
   'flow-auto-section':'wireguard flow 30 дней бесплатная выдача',
   'diagnostics-section':'состояние api здоровье',
@@ -273,6 +274,7 @@ const MANAGEMENT_SEARCH_TAGS={
 };
 const MANAGEMENT_QUICK = [
   ['servers-section','Подключить WGDashboard','Добавить WireGuard-сервер и проверить API','⚙'],
+  ['wg-fleet-section','WireGuard и резерв','Состояние узлов, резервные подключения и перенос','◈'],
   ['flow-auto-section','Flow · 30 дней','Настроить лимит бесплатных подключений','◈'],
   ['users-section','Пользователи','Аккаунты и персональные подключения','♙'],
   ['orders-section','Заказы','Ожидающие действия и выдача','▤'],
@@ -354,6 +356,8 @@ function showManagementSection(id,{scroll=false}={}){
     ?'Раздел: рабочий стол':'Раздел: '+info[2];
   if(scroll)$('management-search').value='';
   renderManagementNavItems();setManagementMenu(false);
+  if(currentManagementSection==='wg-fleet-section')void globalThis.pushokWgFleet?.show($('wg-fleet-content'));
+  else globalThis.pushokWgFleet?.reset();
   if(scroll){
     $(currentManagementSection).scrollIntoView?.({behavior:'smooth',block:'start'});
   }
@@ -1182,6 +1186,7 @@ $('reload').onclick = () => refresh().catch(error => $('error').textContent = er
 $('exit').onclick = () => { void fetch(basePath+'/api/admin/auth/logout',{method:'POST',credentials:'same-origin'}).catch(()=>{}); role='';
   flowExtensionAttempts.clear();
   clearUpdates(); clearManagement(); clearRuntime(); clearStaffIndividual(); clearPaymentPolicy(); clearShopFinance(); clearRouting(); clearIdPolicy();
+  globalThis.pushokWgFleet?.reset();$('wg-fleet-status').textContent='';
   protocolsRequest++; protocolCache = []; $('protocols-list').replaceChildren();
   $('protocols-status').textContent = ''; $('protocols-filter').value = 'all';
   $('protocols-panel').hidden = true; $('protocols-refresh').disabled = false;
